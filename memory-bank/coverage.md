@@ -9,11 +9,12 @@ belong to the test sources and test vectors.
 | --- | --- | --- | --- |
 | `Support layer` | Plane views and guarded buffers | C++17 RAII views and buffers | Unit checks for byte-pitch row addressing, invalid pitches, active-pixel snapshots, row padding, and allocation guards |
 | `Support layer` | Deterministic data and stable hashes | XorShift32 input generation and XXH3 64-bit hashing | Known-sequence and repeatability checks; hashes cover active bytes only and exclude padding |
-| `Support layer` | CPU features and variant registry | Scalar, SSE2, SSSE3, AVX2, and AVX-512 requirement predicates | Injectable feature sets verify exact requirements; unsupported SIMD variants remain visible as skipped |
+| `Support layer` | CPU features and variant registry | Scalar, SSE2, SSSE3, AVX2, AVX2+FMA3, and AVX-512 requirement predicates | Injectable feature sets verify exact requirements; unsupported SIMD variants remain visible as skipped |
 | `Turn` | Planar quarter-turn rotation, left and right | 8-, 16-, and 32-bit C, SSE2, and AVX2 kernels | Fixed deterministic input; independent coordinate reference; scalar differential comparison; active-output hash; padding, guards, and source immutability checks |
 | `Turn` | Packed RGB quarter-turn rotation, left and right | RGB24/RGB48 C kernels; RGB32/RGB64 C, SSE2, and AVX2 kernels | Fixed deterministic input; pixel-group coordinate reference using the upstream packed-RGB direction convention; scalar differential comparison; active-output hash; padding and guard checks |
 | `Turn` | Planar 180-degree rotation | 8-, 16-, 32-, and 64-bit C, SSE2, and AVX2 kernels; SSSE3 for 8- and 16-bit kernels | Fixed deterministic input with vector-tail dimensions; coordinate reference; scalar differential comparison; active-output hash; padding, guards, and source immutability checks |
 | `Merge` | Integer weighted plane merge | 8-, 10-, 12-, 14-, and 16-bit C, SSE2, and AVX2 kernels | Fixed deterministic two-plane input; independent integer reference; scalar differential comparison; active-output hash; padding, guards, and second-input immutability checks |
+| `Merge` | Floating-point weighted plane merge | C, SSE2, and AVX2+FMA3 kernels | Fixed finite random and mixed-magnitude/cancellation inputs; independent double reference; hybrid 4-ULP and `1e-4` absolute-floor comparison; scalar differential, finite-output, padding, guards, and second-input immutability checks; raw float hashes intentionally omitted |
 
 ## Deliberate Gaps
 

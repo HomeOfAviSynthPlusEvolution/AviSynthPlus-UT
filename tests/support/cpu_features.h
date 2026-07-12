@@ -8,6 +8,7 @@ enum class IsaRequirement {
   Ssse3,
   Sse41,
   Avx2,
+  Avx2Fma,
   Avx512F,
   Avx512Base,
   Avx512Vbmi,
@@ -19,6 +20,7 @@ struct CpuFeatures {
   bool ssse3{};
   bool sse41{};
   bool avx2{};
+  bool fma3{};
   bool avx512f{};
   bool avx512cd{};
   bool avx512bw{};
@@ -37,6 +39,7 @@ struct CpuFeatures {
       case IsaRequirement::Ssse3: return ssse3;
       case IsaRequirement::Sse41: return sse41;
       case IsaRequirement::Avx2: return avx2;
+      case IsaRequirement::Avx2Fma: return avx2 && fma3;
       case IsaRequirement::Avx512F: return avx512f;
       case IsaRequirement::Avx512Base:
         return avx512f && avx512cd && avx512bw && avx512dq && avx512vl;
@@ -57,6 +60,7 @@ struct CpuFeatures {
             static_cast<bool>(__builtin_cpu_supports("ssse3")),
             static_cast<bool>(__builtin_cpu_supports("sse4.1")),
             static_cast<bool>(__builtin_cpu_supports("avx2")),
+            static_cast<bool>(__builtin_cpu_supports("fma")),
             static_cast<bool>(__builtin_cpu_supports("avx512f")),
             static_cast<bool>(__builtin_cpu_supports("avx512cd")),
             static_cast<bool>(__builtin_cpu_supports("avx512bw")),
