@@ -22,6 +22,7 @@ belong to the test sources and test vectors.
 | `Merge` | Integer weighted plane merge | 8-, 10-, 12-, 14-, and 16-bit C, SSE2, and AVX2 kernels | Fixed deterministic two-plane input; independent integer reference; scalar differential comparison; active-output hash; padding, guards, and second-input immutability checks |
 | `Merge` | Floating-point weighted plane merge | C, SSE2, and AVX2+FMA3 kernels | Fixed finite random and mixed-magnitude/cancellation inputs; independent double reference; hybrid 4-ULP and `1e-4` absolute-floor comparison; scalar differential, finite-output, padding, guards, and second-input immutability checks; raw float hashes intentionally omitted |
 | `Resize/Resample` | Planar integer resampling with fixed Triangle coefficients in both directions | Vertical: 8-bit SSE2 and AVX2; 10- and 16-bit SSE2 and AVX2. Horizontal: 8-bit and 10-/16-bit SSSE3 and AVX2 | Fixed coefficient program built through the public resampling setup; independent fixed-point reference; active-output XXH3 hashes; source immutability, row padding, and allocation guard checks |
+| `Resize/Resample` | Planar float resampling with fixed Triangle coefficients in both directions | Vertical: SSE2 and AVX2+FMA3 memory-stream path; horizontal: SSSE3 and AVX2+FMA3 generic path | Fixed finite anchor pattern; independent double reference; 4-ULP comparison with `1e-4` absolute floor; finite-output, source immutability, row padding, and allocation guard checks; raw float hashes intentionally omitted |
 
 ## Deliberate Gaps
 

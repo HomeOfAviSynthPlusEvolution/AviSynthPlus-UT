@@ -23,8 +23,10 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <ostream>
@@ -135,6 +137,26 @@ struct ResizeHorizontal16Case {
   std::string name;
 };
 
+struct ResizeVerticalFloatCase {
+  std::size_t width_pixels{};
+  std::size_t source_height{};
+  std::size_t target_height{};
+  std::size_t source_pitch{};
+  std::size_t destination_pitch{};
+  Variant<ResizeFunction> variant;
+  std::string name;
+};
+
+struct ResizeHorizontalFloatCase {
+  std::size_t source_width{};
+  std::size_t target_width{};
+  std::size_t height{};
+  std::size_t source_pitch{};
+  std::size_t destination_pitch{};
+  Variant<ResizeFunction> variant;
+  std::string name;
+};
+
 template <typename Function>
 std::string resize_variant_name(const Variant<Function>& variant) {
   std::string result = "Variant";
@@ -214,6 +236,36 @@ inline std::string resize_horizontal16_case_name(
   return stream.str();
 }
 
+inline std::string resize_vertical_float_case_name(
+    std::size_t width_pixels, std::size_t source_height,
+    std::size_t target_height, std::size_t source_pitch,
+    std::size_t destination_pitch, const Variant<ResizeFunction>& variant) {
+  std::ostringstream stream;
+  stream << "PlaneFloatVertical_Width" << width_pixels
+         << "_SourceHeight" << source_height
+         << "_TargetHeight" << target_height
+         << "_SrcPitch" << source_pitch
+         << "_DstPitch" << destination_pitch
+         << "_FilterTriangle_PatternFiniteAnchors_"
+         << resize_variant_name(variant);
+  return stream.str();
+}
+
+inline std::string resize_horizontal_float_case_name(
+    std::size_t source_width, std::size_t target_width, std::size_t height,
+    std::size_t source_pitch, std::size_t destination_pitch,
+    const Variant<ResizeFunction>& variant) {
+  std::ostringstream stream;
+  stream << "PlaneFloatHorizontal_SourceWidth" << source_width
+         << "_TargetWidth" << target_width
+         << "_Height" << height
+         << "_SrcPitch" << source_pitch
+         << "_DstPitch" << destination_pitch
+         << "_FilterTriangle_PatternFiniteAnchors_"
+         << resize_variant_name(variant);
+  return stream.str();
+}
+
 inline ResizeVertical8Case make_resize_vertical8_case(
     std::size_t width_pixels, std::size_t source_height,
     std::size_t target_height, std::size_t source_pitch,
@@ -271,6 +323,32 @@ inline ResizeHorizontal16Case make_resize_horizontal16_case(
   return result;
 }
 
+inline ResizeVerticalFloatCase make_resize_vertical_float_case(
+    std::size_t width_pixels, std::size_t source_height,
+    std::size_t target_height, std::size_t source_pitch,
+    std::size_t destination_pitch, Variant<ResizeFunction> variant) {
+  ResizeVerticalFloatCase result{
+      width_pixels, source_height, target_height, source_pitch,
+      destination_pitch, std::move(variant), {}};
+  result.name = resize_vertical_float_case_name(
+      result.width_pixels, result.source_height, result.target_height,
+      result.source_pitch, result.destination_pitch, result.variant);
+  return result;
+}
+
+inline ResizeHorizontalFloatCase make_resize_horizontal_float_case(
+    std::size_t source_width, std::size_t target_width, std::size_t height,
+    std::size_t source_pitch, std::size_t destination_pitch,
+    Variant<ResizeFunction> variant) {
+  ResizeHorizontalFloatCase result{
+      source_width, target_width, height, source_pitch, destination_pitch,
+      std::move(variant), {}};
+  result.name = resize_horizontal_float_case_name(
+      result.source_width, result.target_width, result.height,
+      result.source_pitch, result.destination_pitch, result.variant);
+  return result;
+}
+
 inline void PrintTo(const ResizeVertical8Case& test_case,
                     std::ostream* stream) {
   *stream << test_case.name;
@@ -287,6 +365,16 @@ inline void PrintTo(const ResizeHorizontal8Case& test_case,
 }
 
 inline void PrintTo(const ResizeHorizontal16Case& test_case,
+                    std::ostream* stream) {
+  *stream << test_case.name;
+}
+
+inline void PrintTo(const ResizeVerticalFloatCase& test_case,
+                    std::ostream* stream) {
+  *stream << test_case.name;
+}
+
+inline void PrintTo(const ResizeHorizontalFloatCase& test_case,
                     std::ostream* stream) {
   *stream << test_case.name;
 }
@@ -309,6 +397,24 @@ void fill_resize_input(PlaneView<T> view, int bits_per_pixel) {
               ? anchors[(index / anchors.size()) % anchors.size()]
               : (x * 37U + y * 101U + index * 13U) % (max_value + 1U);
       view.row(y)[x] = static_cast<Value>(value);
+    }
+  }
+}
+
+inline void fill_resize_float_input(PlaneView<float> view) {
+  constexpr std::array<float, 11> anchors{
+      -1024.0F, -64.0F, -1.0F, -0.125F, -0.001F, 0.0F,
+      0.001F, 0.125F, 1.0F, 64.0F, 1024.0F};
+  for (std::size_t y = 0; y < view.height(); ++y) {
+    for (std::size_t x = 0; x < view.width(); ++x) {
+      const std::size_t index = y * view.width() + x;
+      if ((index % 7U) == 0U) {
+        view.row(y)[x] = anchors[(index / 7U) % anchors.size()];
+      } else {
+        const int ramp = static_cast<int>(
+            (x * 37U + y * 101U + index * 13U) % 29U) - 14;
+        view.row(y)[x] = static_cast<float>(ramp) * 0.375F;
+      }
     }
   }
 }
@@ -523,6 +629,164 @@ inline void run_resize_horizontal16_case(
       test_case.source_width, test_case.target_width, test_case.height,
       test_case.source_pitch, test_case.destination_pitch,
       test_case.bits_per_pixel, test_case.variant, test_case.expected_hash);
+}
+
+inline std::uint64_t resize_float_ulp_distance(float lhs, float rhs) noexcept {
+  if (lhs == rhs) {
+    return 0;
+  }
+  std::uint32_t lhs_bits{};
+  std::uint32_t rhs_bits{};
+  std::memcpy(&lhs_bits, &lhs, sizeof(lhs_bits));
+  std::memcpy(&rhs_bits, &rhs, sizeof(rhs_bits));
+  constexpr std::uint32_t sign_bit = 0x80000000U;
+  if ((lhs_bits & sign_bit) != (rhs_bits & sign_bit)) {
+    return std::numeric_limits<std::uint64_t>::max();
+  }
+  const std::uint32_t lhs_magnitude = lhs_bits & ~sign_bit;
+  const std::uint32_t rhs_magnitude = rhs_bits & ~sign_bit;
+  return lhs_magnitude >= rhs_magnitude
+             ? static_cast<std::uint64_t>(lhs_magnitude - rhs_magnitude)
+             : static_cast<std::uint64_t>(rhs_magnitude - lhs_magnitude);
+}
+
+inline ::testing::AssertionResult compare_resize_float_ulp(
+    PlaneView<const float> expected, PlaneView<const float> actual,
+    std::uint64_t maximum_ulps = 4, float absolute_floor = 1.0e-4F) {
+  if (expected.width() != actual.width() || expected.height() != actual.height()) {
+    return ::testing::AssertionFailure() << "dimension mismatch";
+  }
+  for (std::size_t y = 0; y < expected.height(); ++y) {
+    for (std::size_t x = 0; x < expected.width(); ++x) {
+      const float lhs = expected.row(y)[x];
+      const float rhs = actual.row(y)[x];
+      if (!std::isfinite(lhs) || !std::isfinite(rhs)) {
+        return ::testing::AssertionFailure()
+               << "row=" << y << " col=" << x
+               << " non-finite expected=" << lhs << " actual=" << rhs;
+      }
+      if (lhs == rhs) {
+        continue;
+      }
+      const float absolute_error = std::abs(lhs - rhs);
+      const auto ulps = resize_float_ulp_distance(lhs, rhs);
+      if (absolute_error <= absolute_floor || ulps <= maximum_ulps) {
+        continue;
+      }
+      return ::testing::AssertionFailure()
+             << "row=" << y << " col=" << x
+             << " expected=" << lhs << " actual=" << rhs
+             << " absolute_error=" << absolute_error
+             << " ulps=" << ulps << " allowed_ulps=" << maximum_ulps
+             << " absolute_floor=" << absolute_floor;
+    }
+  }
+  return ::testing::AssertionSuccess();
+}
+
+inline void apply_resize_vertical_float_reference(
+    PlaneView<const float> source, PlaneView<float> destination,
+    const ResamplingProgram& program) {
+  for (std::size_t y = 0; y < destination.height(); ++y) {
+    const int offset = program.pixel_offset[y];
+    const float* coefficients =
+        program.pixel_coefficient_float + y * program.filter_size;
+    for (std::size_t x = 0; x < destination.width(); ++x) {
+      double result = 0.0;
+      for (int i = 0; i < program.filter_size_real; ++i) {
+        result += static_cast<double>(source.row(offset + i)[x]) *
+                  static_cast<double>(coefficients[i]);
+      }
+      destination.row(y)[x] = static_cast<float>(result);
+    }
+  }
+}
+
+inline void apply_resize_horizontal_float_reference(
+    PlaneView<const float> source, PlaneView<float> destination,
+    const ResamplingProgram& program) {
+  for (std::size_t y = 0; y < destination.height(); ++y) {
+    for (std::size_t x = 0; x < destination.width(); ++x) {
+      const int offset = program.pixel_offset[x];
+      const float* coefficients =
+          program.pixel_coefficient_float + x * program.filter_size;
+      double result = 0.0;
+      for (int i = 0; i < program.filter_size_real; ++i) {
+        result += static_cast<double>(source.row(y)[offset + i]) *
+                  static_cast<double>(coefficients[i]);
+      }
+      destination.row(y)[x] = static_cast<float>(result);
+    }
+  }
+}
+
+inline void run_resize_vertical_float_case(
+    const ResizeVerticalFloatCase& test_case) {
+  GuardedVideoBuffer<float> source(
+      test_case.width_pixels, test_case.source_height, test_case.source_pitch,
+      64);
+  GuardedVideoBuffer<float> expected(
+      test_case.width_pixels, test_case.target_height,
+      test_case.destination_pitch, 64);
+  GuardedVideoBuffer<float> actual(
+      test_case.width_pixels, test_case.target_height,
+      test_case.destination_pitch, 64);
+  fill_resize_float_input(source.view());
+  const auto source_snapshot = source.snapshot_active();
+
+  ResamplingProgramOwner program(
+      static_cast<int>(test_case.source_height),
+      static_cast<int>(test_case.target_height), 32);
+  apply_resize_vertical_float_reference(source.view().as_const(), expected.view(),
+                                        *program.get());
+  invoke_resize_vertical(test_case.variant.function, actual.view(),
+                         source.view().as_const(), program.get(), 32);
+
+  EXPECT_TRUE(compare_resize_float_ulp(expected.view().as_const(),
+                                       actual.view().as_const()))
+      << test_case.name << " reference mismatch for variant "
+      << test_case.variant.name;
+  EXPECT_TRUE(source.active_matches(source_snapshot))
+      << test_case.name << " modified source pixels";
+  EXPECT_TRUE(source.memory_intact())
+      << test_case.name << " corrupted source padding or guards";
+  EXPECT_TRUE(expected.memory_intact())
+      << test_case.name << " corrupted reference padding or guards";
+  EXPECT_TRUE(actual.memory_intact())
+      << test_case.name << " corrupted output padding or guards";
+}
+
+inline void run_resize_horizontal_float_case(
+    const ResizeHorizontalFloatCase& test_case) {
+  GuardedVideoBuffer<float> source(
+      test_case.source_width, test_case.height, test_case.source_pitch, 64);
+  GuardedVideoBuffer<float> expected(
+      test_case.target_width, test_case.height, test_case.destination_pitch, 64);
+  GuardedVideoBuffer<float> actual(
+      test_case.target_width, test_case.height, test_case.destination_pitch, 64);
+  fill_resize_float_input(source.view());
+  const auto source_snapshot = source.snapshot_active();
+
+  ResamplingProgramOwner program(
+      static_cast<int>(test_case.source_width),
+      static_cast<int>(test_case.target_width), 32, 8);
+  apply_resize_horizontal_float_reference(source.view().as_const(),
+                                          expected.view(), *program.get());
+  invoke_resize_horizontal(test_case.variant.function, actual.view(),
+                           source.view().as_const(), program.get(), 32);
+
+  EXPECT_TRUE(compare_resize_float_ulp(expected.view().as_const(),
+                                       actual.view().as_const()))
+      << test_case.name << " reference mismatch for variant "
+      << test_case.variant.name;
+  EXPECT_TRUE(source.active_matches(source_snapshot))
+      << test_case.name << " modified source pixels";
+  EXPECT_TRUE(source.memory_intact())
+      << test_case.name << " corrupted source padding or guards";
+  EXPECT_TRUE(expected.memory_intact())
+      << test_case.name << " corrupted reference padding or guards";
+  EXPECT_TRUE(actual.memory_intact())
+      << test_case.name << " corrupted output padding or guards";
 }
 
 }  // namespace avsut::test

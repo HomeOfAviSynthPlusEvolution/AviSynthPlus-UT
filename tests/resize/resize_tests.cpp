@@ -98,6 +98,33 @@ std::vector<ResizeHorizontal16Case> resize_horizontal16_cases() {
   };
 }
 
+std::vector<ResizeVerticalFloatCase> resize_vertical_float_cases() {
+  return {
+      make_resize_vertical_float_case(
+          40, 7, 5, 192, 192,
+          Variant<ResizeFunction>{"sse2", resize_v_sse2_planar_float,
+                                  IsaRequirement::Sse2}),
+      make_resize_vertical_float_case(
+          40, 7, 5, 192, 192,
+          Variant<ResizeFunction>{"avx2_fma", resize_v_avx2_planar_float_w_sr,
+                                  IsaRequirement::Avx2Fma}),
+  };
+}
+
+std::vector<ResizeHorizontalFloatCase> resize_horizontal_float_cases() {
+  return {
+      make_resize_horizontal_float_case(
+          48, 32, 5, 256, 128,
+          Variant<ResizeFunction>{"ssse3", resizer_h_ssse3_generic_float,
+                                  IsaRequirement::Ssse3}),
+      make_resize_horizontal_float_case(
+          48, 32, 5, 256, 128,
+          Variant<ResizeFunction>{
+              "avx2_fma", resizer_h_avx2_generic_float_pix16_sub4_ks_4_8_16,
+              IsaRequirement::Avx2Fma}),
+  };
+}
+
 class ResizeVertical8Kernels
     : public ::testing::TestWithParam<ResizeVertical8Case> {};
 
@@ -171,6 +198,44 @@ INSTANTIATE_TEST_SUITE_P(
     ResizeHorizontal16Kernels,
     ::testing::ValuesIn(resize_horizontal16_cases()),
     [](const ::testing::TestParamInfo<ResizeHorizontal16Case>& info) {
+      return info.param.name;
+    });
+
+class ResizeVerticalFloatKernels
+    : public ::testing::TestWithParam<ResizeVerticalFloatCase> {};
+
+TEST_P(ResizeVerticalFloatKernels, MatchesFixedCoefficientReference) {
+  const auto& test_case = GetParam();
+  if (!variant_supported(test_case.variant, CpuFeatures::detect())) {
+    GTEST_SKIP() << "host does not support " << test_case.variant.name;
+  }
+  run_resize_vertical_float_case(test_case);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Kernels,
+    ResizeVerticalFloatKernels,
+    ::testing::ValuesIn(resize_vertical_float_cases()),
+    [](const ::testing::TestParamInfo<ResizeVerticalFloatCase>& info) {
+      return info.param.name;
+    });
+
+class ResizeHorizontalFloatKernels
+    : public ::testing::TestWithParam<ResizeHorizontalFloatCase> {};
+
+TEST_P(ResizeHorizontalFloatKernels, MatchesFixedCoefficientReference) {
+  const auto& test_case = GetParam();
+  if (!variant_supported(test_case.variant, CpuFeatures::detect())) {
+    GTEST_SKIP() << "host does not support " << test_case.variant.name;
+  }
+  run_resize_horizontal_float_case(test_case);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Kernels,
+    ResizeHorizontalFloatKernels,
+    ::testing::ValuesIn(resize_horizontal_float_cases()),
+    [](const ::testing::TestParamInfo<ResizeHorizontalFloatCase>& info) {
       return info.param.name;
     });
 
