@@ -1,5 +1,6 @@
 add_executable(convert_rgb_tests
   convert_rgb_tests.cpp
+  convert_rgb_planar_tests.cpp
 )
 target_include_directories(convert_rgb_tests PRIVATE
   ${PROJECT_SOURCE_DIR}/tests
