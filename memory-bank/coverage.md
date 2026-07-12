@@ -13,6 +13,7 @@ belong to the test sources and test vectors.
 | `Turn` | Planar quarter-turn rotation, left and right | 8-, 16-, and 32-bit C, SSE2, and AVX2 kernels | Fixed deterministic input; independent coordinate reference; scalar differential comparison; active-output hash; padding, guards, and source immutability checks |
 | `Turn` | Packed RGB quarter-turn rotation, left and right | RGB24/RGB48 C kernels; RGB32/RGB64 C, SSE2, and AVX2 kernels | Fixed deterministic input; pixel-group coordinate reference using the upstream packed-RGB direction convention; scalar differential comparison; active-output hash; padding and guard checks |
 | `Turn` | Planar 180-degree rotation | 8-, 16-, 32-, and 64-bit C, SSE2, and AVX2 kernels; SSSE3 for 8- and 16-bit kernels | Fixed deterministic input with vector-tail dimensions; coordinate reference; scalar differential comparison; active-output hash; padding, guards, and source immutability checks |
+| `Merge` | Integer weighted plane merge | 8-, 10-, 12-, 14-, and 16-bit C, SSE2, and AVX2 kernels | Fixed deterministic two-plane input; independent integer reference; scalar differential comparison; active-output hash; padding, guards, and second-input immutability checks |
 
 ## Deliberate Gaps
 

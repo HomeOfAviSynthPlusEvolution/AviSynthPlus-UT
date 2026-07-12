@@ -34,7 +34,8 @@ boundary.
   imported target.
 - `tests/support` contains reusable C++17 RAII buffers, views, deterministic
   data, comparison, hashing, CPU-feature, and variant helpers.
-- `tests/turn` contains direct unit tests for exposed Turn kernel functions.
+- `tests/turn` and `tests/merge` contain direct unit tests for exposed Turn and
+  Merge kernel functions.
 
 ## Test Boundary
 
