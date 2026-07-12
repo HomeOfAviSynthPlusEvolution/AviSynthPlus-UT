@@ -3,6 +3,7 @@
 #include "support/plane_view.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -11,14 +12,26 @@
 
 namespace avsut::test {
 
+// Different allocation padding prevents copied tail data from looking intact.
+inline std::atomic<std::uint32_t> guarded_buffer_padding_sequence{0};
+
+inline std::uint8_t next_guarded_buffer_padding_sentinel() noexcept {
+  const auto sequence = guarded_buffer_padding_sequence.fetch_add(
+      1, std::memory_order_relaxed);
+  return static_cast<std::uint8_t>((sequence * 73U + 0x5AU) & 0xffU);
+}
+
 template <typename T>
 class GuardedVideoBuffer {
  public:
   GuardedVideoBuffer(std::size_t width, std::size_t height,
                      std::size_t pitch_bytes, std::size_t alignment = 64,
-                     std::size_t alignment_offset = 0)
+                     std::size_t alignment_offset = 0,
+                     std::uint8_t padding_sentinel =
+                         next_guarded_buffer_padding_sentinel())
       : width_(width), height_(height), pitch_bytes_(pitch_bytes),
-        alignment_(alignment), alignment_offset_(alignment_offset) {
+        alignment_(alignment), alignment_offset_(alignment_offset),
+        padding_sentinel_(padding_sentinel) {
     if (alignment_ == 0 || (alignment_ & (alignment_ - 1)) != 0) {
       throw std::invalid_argument("alignment must be a power of two");
     }
@@ -64,7 +77,7 @@ class GuardedVideoBuffer {
     std::fill(suffix_guard_, suffix_guard_ + kGuardBytes, kGuardSentinel);
     for (std::size_t y = 0; y < height_; ++y) {
       auto* row = data_ + y * pitch_bytes_;
-      std::fill(row + active_row_bytes_, row + pitch_bytes_, kPaddingSentinel);
+      std::fill(row + active_row_bytes_, row + pitch_bytes_, padding_sentinel_);
     }
   }
 
@@ -79,7 +92,9 @@ class GuardedVideoBuffer {
     for (std::size_t y = 0; y < height_; ++y) {
       const auto* row = data_ + y * pitch_bytes_;
       if (!std::all_of(row + active_row_bytes_, row + pitch_bytes_,
-                       [](std::uint8_t value) { return value == kPaddingSentinel; })) {
+                       [this](std::uint8_t value) {
+                         return value == padding_sentinel_;
+                       })) {
         return false;
       }
     }
@@ -107,13 +122,13 @@ class GuardedVideoBuffer {
  private:
   static constexpr std::size_t kGuardBytes = 64;
   static constexpr std::uint8_t kGuardSentinel = 0xA5;
-  static constexpr std::uint8_t kPaddingSentinel = 0xCD;
 
   std::size_t width_;
   std::size_t height_;
   std::size_t pitch_bytes_;
   std::size_t alignment_;
   std::size_t alignment_offset_;
+  std::uint8_t padding_sentinel_;
   std::size_t active_row_bytes_{};
   std::size_t payload_bytes_{};
   std::vector<std::uint8_t> storage_;

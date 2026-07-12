@@ -128,6 +128,11 @@ Stable hash assertions require fixed structured input or a named fixed seed.
 The hash is a change-detection signal, not a replacement for semantic pixel
 assertions. Hash only active pixels; check padding and guards separately.
 
+Guarded buffers assign a distinct deterministic padding sentinel to each
+allocation. Do not override it with a shared value unless a test needs an
+explicit boundary condition. This makes SIMD tail writes that copy source
+padding into an output allocation observable.
+
 Differential random tests also use fixed seeds. A failure report must include
 the operation, variant, element or format, dimensions, pitch, alignment
 offset when relevant, input pattern or seed, and first differing coordinates.
