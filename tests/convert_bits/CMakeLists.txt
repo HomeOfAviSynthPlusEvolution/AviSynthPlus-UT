@@ -1,5 +1,7 @@
 add_executable(convert_bits_tests
   convert_bits_integer_tests.cpp
+  convert_bits_dither_tests.cpp
+  convert_bits_float_tests.cpp
 )
 target_include_directories(convert_bits_tests PRIVATE
   ${PROJECT_SOURCE_DIR}/tests
