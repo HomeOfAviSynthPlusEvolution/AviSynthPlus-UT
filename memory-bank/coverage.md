@@ -26,6 +26,7 @@ belong to the test sources and test vectors.
 | `Resize/Resample` | Planar integer resampling with fixed Triangle coefficients in both directions | Vertical: 8-bit SSE2 and AVX2; 10- and 16-bit SSE2 and AVX2. Horizontal: 8-bit and 10-/16-bit SSSE3 and AVX2 | Fixed coefficient program built through the public resampling setup; independent fixed-point reference; active-output XXH3 hashes; source immutability, row padding, and allocation guard checks |
 | `Resize/Resample` | Planar float resampling with fixed Triangle coefficients in both directions | Vertical: SSE2 and AVX2+FMA3 memory-stream path; horizontal: SSSE3 and AVX2+FMA3 generic path | Fixed finite anchor pattern; independent double reference; 4-ULP comparison with `1e-4` absolute floor; finite-output, source immutability, row padding, and allocation guard checks; raw float hashes intentionally omitted |
 | `Conditional/SAD` | Planar pixel sum and absolute-difference statistics | SSE2 pixel-sum, byte SAD, and 8-/16-bit SAD kernels; packed RGB32/RGB64 alpha-masked SAD | Fixed boundary/ramp byte and word planes with aligned SIMD blocks and scalar tails; independent exact sum/SAD reference; source immutability, row padding, and allocation guard checks |
+| `ConvertBits` | Non-dithered integer depth and range conversion | SSE4.1 and AVX2 templates for 8-/16-bit source and destination storage | Fixed boundary-value inputs across representative 8/10/12/14/16-bit widening and narrowing, luma/chroma, full/limited, and limited-shift branches; independent numerical reference and cross-ISA exact comparison; active-output hashes, source immutability, row padding, and allocation guard checks |
 
 ## Deliberate Gaps
 
@@ -37,9 +38,10 @@ belong to the test sources and test vectors.
 - `Turn` filter frame allocation, dispatch, and script-environment behavior:
   these are filter-level concerns rather than direct kernel unit tests.
 - Exhaustive dimension, pitch, alignment-offset, pattern, and seed matrices.
-- ConvertBits, audio, script execution, filter graphs, plugin loading,
-  distribution integration, Windows/MSVC execution, and unsupported-ISA or
-  FMA-specific dispatch auditing.
+- ConvertBits ordered dithering and integer/float boundaries; audio, script
+  execution, filter graphs, plugin loading, distribution integration,
+  Windows/MSVC execution, and unsupported-ISA or FMA-specific dispatch
+  auditing.
 
 ## Maintenance Rules
 
