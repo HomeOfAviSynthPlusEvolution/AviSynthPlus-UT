@@ -1,0 +1,86 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 24,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "gcc-debug",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/gcc-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_COMPILER": "g++",
+        "BUILD_SHARED_LIBS": "OFF"
+      }
+    },
+    {
+      "name": "clang19-debug",
+      "inherits": "gcc-debug",
+      "binaryDir": "${sourceDir}/build/clang19-debug",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang-19",
+        "CMAKE_CXX_COMPILER": "clang++-19"
+      }
+    },
+    {
+      "name": "clang22-debug",
+      "inherits": "gcc-debug",
+      "binaryDir": "${sourceDir}/build/clang22-debug",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang-22",
+        "CMAKE_CXX_COMPILER": "clang++-22"
+      }
+    },
+    {
+      "name": "gcc-sanitize",
+      "inherits": "gcc-debug",
+      "binaryDir": "${sourceDir}/build/gcc-sanitize",
+      "cacheVariables": {
+        "AVSUT_ENABLE_SANITIZERS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "gcc-debug", "configurePreset": "gcc-debug" },
+    { "name": "clang19-debug", "configurePreset": "clang19-debug" },
+    { "name": "clang22-debug", "configurePreset": "clang22-debug" },
+    { "name": "gcc-sanitize", "configurePreset": "gcc-sanitize" }
+  ],
+  "testPresets": [
+    {
+      "name": "gcc-debug",
+      "configurePreset": "gcc-debug",
+      "output": {
+        "shortProgress": true,
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "clang19-debug",
+      "configurePreset": "clang19-debug",
+      "output": {
+        "shortProgress": true,
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "clang22-debug",
+      "configurePreset": "clang22-debug",
+      "output": {
+        "shortProgress": true,
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "gcc-sanitize",
+      "configurePreset": "gcc-sanitize",
+      "output": {
+        "shortProgress": true,
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

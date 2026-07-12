@@ -1,0 +1,11 @@
+/build*/
+/out/
+/tmp/
+/.stfolder/
+/.stignore
+*.o
+*.a
+*.so
+*.xml
+core
+core.*

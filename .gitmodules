@@ -1,0 +1,3 @@
+[submodule "third_party/AviSynthPlus"]
+	path = third_party/AviSynthPlus
+	url = https://github.com/AviSynth/AviSynthPlus.git
