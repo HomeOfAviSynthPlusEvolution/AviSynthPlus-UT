@@ -11,7 +11,6 @@
 #include <array>
 #include <cstdint>
 #include <stdexcept>
-#include <vector>
 
 namespace avsut::test {
 namespace {
@@ -110,20 +109,55 @@ TEST(StableHash, ExcludesPaddingAndUsesXXH3) {
 
 TEST(CpuFeatures, RequirementChecksAreInjectable) {
   const CpuFeatures scalar{};
-  const CpuFeatures avx2{true, true, true, true};
+  CpuFeatures avx2{};
+  avx2.sse2 = true;
+  avx2.ssse3 = true;
+  avx2.sse41 = true;
+  avx2.avx2 = true;
   EXPECT_FALSE(scalar.supports(IsaRequirement::Sse2));
+  EXPECT_FALSE(scalar.supports(IsaRequirement::Ssse3));
+  EXPECT_FALSE(scalar.supports(IsaRequirement::Sse41));
   EXPECT_TRUE(avx2.supports(IsaRequirement::Avx2));
+  EXPECT_TRUE(avx2.supports(IsaRequirement::Sse2));
+  EXPECT_TRUE(avx2.supports(IsaRequirement::Ssse3));
+  EXPECT_TRUE(avx2.supports(IsaRequirement::Sse41));
+  EXPECT_FALSE(scalar.supports(IsaRequirement::Avx512F));
 }
 
-TEST(VariantRegistry, ReturnsOnlyRunnableVariants) {
+TEST(CpuFeatures, RequirementChecksDistinguishAvx512Subsets) {
+  CpuFeatures foundation{};
+  foundation.avx512f = true;
+  EXPECT_TRUE(foundation.supports(IsaRequirement::Avx512F));
+  EXPECT_FALSE(foundation.supports(IsaRequirement::Avx512Base));
+
+  CpuFeatures base{};
+  base.avx512f = true;
+  base.avx512cd = true;
+  base.avx512bw = true;
+  base.avx512dq = true;
+  base.avx512vl = true;
+  EXPECT_TRUE(base.supports(IsaRequirement::Avx512Base));
+  EXPECT_FALSE(base.supports(IsaRequirement::Avx512Vbmi));
+  EXPECT_FALSE(base.supports(IsaRequirement::Avx512Fast));
+
+  CpuFeatures fast = base;
+  fast.avx512vbmi = true;
+  fast.avx512vnni = true;
+  fast.avx512vbmi2 = true;
+  fast.avx512bitalg = true;
+  fast.avx512vpopcntdq = true;
+  EXPECT_TRUE(fast.supports(IsaRequirement::Avx512Vbmi));
+  EXPECT_TRUE(fast.supports(IsaRequirement::Avx512Fast));
+}
+
+TEST(VariantRegistry, ReportsVariantSupportWithoutFilteringVariants) {
   using Function = void (*)();
-  const std::vector<Variant<Function>> variants{
-      {"c", nullptr, IsaRequirement::Scalar},
-      {"avx2", nullptr, IsaRequirement::Avx2},
-  };
-  const auto runnable = runnable_variants(variants, CpuFeatures{});
-  ASSERT_EQ(runnable.size(), 1U);
-  EXPECT_EQ(runnable.front().name, "c");
+  const Variant<Function> scalar{"c", nullptr, IsaRequirement::Scalar};
+  const Variant<Function> avx2{"avx2", nullptr, IsaRequirement::Avx2};
+  const CpuFeatures features{};
+
+  EXPECT_TRUE(variant_supported(scalar, features));
+  EXPECT_FALSE(variant_supported(avx2, features));
 }
 
 }  // namespace

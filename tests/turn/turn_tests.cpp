@@ -5,6 +5,7 @@
 #include "support/deterministic_data.h"
 #include "support/guarded_video_buffer.h"
 #include "support/stable_hash.h"
+#include "support/variant_registry.h"
 
 #include "filters/intel/turn_avx2.h"
 #include "filters/intel/turn_sse.h"
@@ -12,9 +13,17 @@
 
 #include <array>
 #include <cstdint>
+#include <ostream>
 #include <string>
 
 namespace avsut::test {
+
+using TurnVariant = Variant<TurnFuncPtr>;
+
+void PrintTo(const TurnVariant& variant, std::ostream* stream) {
+  *stream << variant.name;
+}
+
 namespace {
 
 void turn_left(const PlaneView<const std::uint8_t> source,
@@ -37,6 +46,24 @@ void map_turn_left(const PlaneView<const std::uint8_t> source,
   }
 }
 
+class TurnLeftPlane8Variants : public ::testing::TestWithParam<TurnVariant> {};
+
+std::string parameter_name(const TurnVariant& variant) {
+  std::string result = "Variant";
+  bool capitalize = true;
+  for (const char character : variant.name) {
+    if (character == '_' || character == '-') {
+      capitalize = true;
+      continue;
+    }
+    result.push_back(capitalize && character >= 'a' && character <= 'z'
+                         ? static_cast<char>(character - ('a' - 'A'))
+                         : character);
+    capitalize = false;
+  }
+  return result;
+}
+
 TEST(TurnLeftPlane8, MapsCoordinatesForSmallFrame) {
   GuardedVideoBuffer<std::uint8_t> source(3, 2, 8);
   GuardedVideoBuffer<std::uint8_t> destination(2, 3, 8);
@@ -55,39 +82,47 @@ TEST(TurnLeftPlane8, MapsCoordinatesForSmallFrame) {
   EXPECT_TRUE(destination.memory_intact());
 }
 
-TEST(TurnLeftPlane8, SimdMatchesScalarForTailWidthAndFixedRandomInput) {
+TEST_P(TurnLeftPlane8Variants, MatchesScalarForTailWidthAndFixedRandomInput) {
+  const auto& variant = GetParam();
+  const auto features = CpuFeatures::detect();
+  if (!variant_supported(variant, features)) {
+    GTEST_SKIP() << "host does not support " << variant.name;
+  }
+
   constexpr std::size_t width = 33;
   constexpr std::size_t height = 17;
   GuardedVideoBuffer<std::uint8_t> source(width, height, 40, 32);
   GuardedVideoBuffer<std::uint8_t> mapped(height, width, 32, 32);
   GuardedVideoBuffer<std::uint8_t> scalar(height, width, 32, 32);
-  GuardedVideoBuffer<std::uint8_t> sse2(height, width, 32, 32);
-  GuardedVideoBuffer<std::uint8_t> avx2(height, width, 32, 32);
+  GuardedVideoBuffer<std::uint8_t> variant_output(height, width, 32, 32);
   fill_random(source.view(), 0xC0FFEEU);
   const auto source_snapshot = source.snapshot_active();
 
   turn_left(source.view().as_const(), scalar.view(), turn_left_plane_8_c);
   map_turn_left(source.view().as_const(), mapped.view());
   EXPECT_TRUE(compare_exact(mapped.view().as_const(), scalar.view().as_const()));
-  const auto features = CpuFeatures::detect();
-  if (features.sse2) {
-    turn_left(source.view().as_const(), sse2.view(), turn_left_plane_8_sse2);
-    EXPECT_TRUE(compare_exact(scalar.view().as_const(), sse2.view().as_const()));
-    EXPECT_TRUE(sse2.memory_intact());
-  }
-  if (features.avx2) {
-    turn_left(source.view().as_const(), avx2.view(), turn_left_plane_8_avx2);
-    EXPECT_TRUE(compare_exact(scalar.view().as_const(), avx2.view().as_const()));
-    EXPECT_TRUE(avx2.memory_intact());
-  }
+  turn_left(source.view().as_const(), variant_output.view(), variant.function);
+  EXPECT_TRUE(compare_exact(scalar.view().as_const(), variant_output.view().as_const()));
 
   EXPECT_TRUE(source.active_matches(source_snapshot));
   EXPECT_TRUE(source.memory_intact());
   EXPECT_TRUE(mapped.memory_intact());
   EXPECT_TRUE(scalar.memory_intact());
+  EXPECT_TRUE(variant_output.memory_intact());
   EXPECT_EQ(format_hash(hash_active(scalar.view().as_const())),
             "9d4f11c702db4abb");
 }
+
+INSTANTIATE_TEST_SUITE_P(
+    Implementations,
+    TurnLeftPlane8Variants,
+    ::testing::Values(
+        TurnVariant{"c", turn_left_plane_8_c, IsaRequirement::Scalar},
+        TurnVariant{"sse2", turn_left_plane_8_sse2, IsaRequirement::Sse2},
+        TurnVariant{"avx2", turn_left_plane_8_avx2, IsaRequirement::Avx2}),
+    [](const ::testing::TestParamInfo<TurnVariant>& info) {
+      return parameter_name(info.param);
+    });
 
 }  // namespace
 }  // namespace avsut::test

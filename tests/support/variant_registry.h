@@ -3,7 +3,6 @@
 #include "support/cpu_features.h"
 
 #include <string>
-#include <vector>
 
 namespace avsut::test {
 
@@ -15,15 +14,9 @@ struct Variant {
 };
 
 template <typename Function>
-std::vector<Variant<Function>> runnable_variants(
-    const std::vector<Variant<Function>>& variants, CpuFeatures features) {
-  std::vector<Variant<Function>> result;
-  for (const auto& variant : variants) {
-    if (features.supports(variant.requirement)) {
-      result.push_back(variant);
-    }
-  }
-  return result;
+bool variant_supported(const Variant<Function>& variant,
+                       CpuFeatures features) noexcept {
+  return features.supports(variant.requirement);
 }
 
 }  // namespace avsut::test
