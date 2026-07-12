@@ -31,7 +31,7 @@ belong to the test sources and test vectors.
 | `ConvertBits` | Floating-point to integer depth and range conversion | SSE4.1 and AVX2+FMA3 templates for 8-/16-bit destinations | Fixed finite luma/chroma anchors cover full/limited mapping, lower/upper clamping, and 8/10/16-bit destinations; independent numerical reference, exact cross-ISA output, active-output hashes, source immutability, row padding, and allocation guard checks |
 | `ConvertBits` | Integer to floating-point depth and range conversion | AVX2+FMA3 templates for 8-/16-bit sources | Fixed boundary-value luma/chroma inputs cover full/limited mapping; independent double reference with 4-ULP and `1e-4` absolute-floor comparison, finite output, source immutability, row padding, and allocation guard checks; raw float hashes intentionally omitted |
 | `Convert/Planar` | Packed YUY2 luma extraction, YUY2-to-YV16 split, and YV16-to-YUY2 interleave | SSE2 kernels | Fixed Y0-U0-Y1-V0 channel ramps with independent packed/planar byte-layout references and distinct packed, luma, and chroma pitches; active-output hashes, all-source immutability, row padding, and allocation guard checks; public scalar counterparts are unavailable |
-| `Convert/Planar` | YV24-to-packed BGR matrix conversion | BGR24 SSE2, SSSE3, and AVX2; BGR32 opaque-alpha SSE2, SSSE3, and AVX2; BGR32 source-alpha SSE2 and SSSE3 | BT.709 limited-YUV to full-RGB fixed-point reference independent of the upstream matrix builder; BGR24 SIMD-tail, BGR32 bottom-up layout, default and source alpha, active-output hashes, source immutability, padding, and allocation guard checks |
+| `Convert/Planar` | YV24-to-packed BGR matrix conversion | BGR24 SSE2, SSSE3, and AVX2; BGR32 opaque-alpha and source-alpha SSE2, SSSE3, and AVX2 | BT.709 limited-YUV to full-RGB fixed-point reference independent of the upstream matrix builder; BGR24 SIMD-tail, BGR32 bottom-up layout, default and source alpha, active-output hashes, source immutability, padding, and allocation guard checks |
 | `Convert/Planar` | Planar YUV/RGB matrix conversion | 8-bit C, SSE2, and AVX2 templates for YUV-to-RGB and RGB-to-YUV | BT.709 limited-YUV to full-RGB and BT.601 full-RGB to limited-YUV fixed-point references, including post-rounding chroma-neutrality correction; exact C/SIMD output and active-plane hashes, source immutability, row padding, and allocation guard checks |
 
 ## Deliberate Gaps
@@ -43,10 +43,6 @@ belong to the test sources and test vectors.
 - `Turn` ARM/NEON variants: the current execution scope is Linux x86.
 - `Turn` filter frame allocation, dispatch, and script-environment behavior:
   these are filter-level concerns rather than direct kernel unit tests.
-- `Convert/Planar` BGR32 AVX2 source-alpha conversion: in the pinned upstream
-  revision, `convert_yv24_to_rgb_avx2<4, true>` does not preserve all source
-  alpha bytes. The independent reference and SSE2/SSSE3 variants agree; the
-  AVX2 branch remains excluded from passing coverage pending an upstream fix.
 - Exhaustive dimension, pitch, alignment-offset, pattern, and seed matrices.
 - ConvertBits Floyd-Steinberg/filter-level paths and exhaustive conversion
   combinations; audio, script execution, filter graphs, plugin loading,

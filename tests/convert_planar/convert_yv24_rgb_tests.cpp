@@ -42,8 +42,7 @@ std::vector<PackedYv24RgbCase> packed_yv24_rgb_cases() {
   std::vector<PackedYv24RgbCase> cases;
   add_packed_yv24_rgb_variants(cases, 3, false, 35, "1a58022ce95cd6cd");
   add_packed_yv24_rgb_variants(cases, 4, false, 32, "8376395d6fa71ee6");
-  add_packed_yv24_rgb_variants(cases, 4, true, 32, "456bf3a776f37d10",
-                                false);
+  add_packed_yv24_rgb_variants(cases, 4, true, 32, "456bf3a776f37d10");
   return cases;
 }
 
