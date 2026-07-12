@@ -1,4 +1,7 @@
-add_executable(overlay_tests overlay_mask_tests.cpp)
+add_executable(overlay_tests
+  overlay_mask_tests.cpp
+  overlay_chroma_tests.cpp
+)
 target_include_directories(overlay_tests PRIVATE
   ${PROJECT_SOURCE_DIR}/tests
   ${PROJECT_SOURCE_DIR}/third_party/AviSynthPlus/avs_core/include
