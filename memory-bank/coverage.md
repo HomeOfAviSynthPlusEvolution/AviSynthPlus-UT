@@ -1,68 +1,36 @@
 # Coverage Snapshot
 
-This document records the current behavioral coverage and its parameter
-dimensions. It is intentionally a contract-level inventory, not a generated
-list of every source line or every CTest invocation.
+This document records which plugin operations are covered, which upstream
+implementation variants are exercised, and how the tests establish the
+behavior. Exact dimensions, seeds, hashes, and parameterized instance names
+belong to the test sources and test vectors.
 
-## Snapshot Metadata
+| Plugin | Operation | Covered implementation types | Test method |
+| --- | --- | --- | --- |
+| `Support layer` | Plane views and guarded buffers | C++17 RAII views and buffers | Unit checks for byte-pitch row addressing, invalid pitches, active-pixel snapshots, row padding, and allocation guards |
+| `Support layer` | Deterministic data and stable hashes | XorShift32 input generation and XXH3 64-bit hashing | Known-sequence and repeatability checks; hashes cover active bytes only and exclude padding |
+| `Support layer` | CPU features and variant registry | Scalar, SSE2, SSSE3, AVX2, and AVX-512 requirement predicates | Injectable feature sets verify exact requirements; unsupported SIMD variants remain visible as skipped |
+| `Turn` | Planar quarter-turn rotation, left and right | 8-, 16-, and 32-bit C, SSE2, and AVX2 kernels | Fixed deterministic input; independent coordinate reference; scalar differential comparison; active-output hash; padding, guards, and source immutability checks |
+| `Turn` | Packed RGB quarter-turn rotation, left and right | RGB24/RGB48 C kernels; RGB32/RGB64 C, SSE2, and AVX2 kernels | Fixed deterministic input; pixel-group coordinate reference using the upstream packed-RGB direction convention; scalar differential comparison; active-output hash; padding and guard checks |
+| `Turn` | Planar 180-degree rotation | 8-, 16-, 32-, and 64-bit C, SSE2, and AVX2 kernels; SSSE3 for 8- and 16-bit kernels | Fixed deterministic input with vector-tail dimensions; coordinate reference; scalar differential comparison; active-output hash; padding, guards, and source immutability checks |
 
-- Last reviewed: 2026-07-12.
-- Current upstream submodule revision:
-  `fcb9c8a205c1b01ee1ea491adba50e2217594598`.
-- Test presets: `gcc-debug`, `clang19-debug`, `clang22-debug`, and
-  `gcc-sanitize`.
-- Current CTest count: 16 tests per configured build tree.
-- Last verified state: all 16 tests passed under all four presets on the current
-  host.
+## Deliberate Gaps
 
-## Support Layer
-
-| Area | Contracts covered | Parameter dimensions |
-| --- | --- | --- |
-| `PlaneView` | Byte-pitch row addressing; rejection of a pitch smaller than the active row | `uint16_t`; width 3; height 1 and 2; padded and invalid pitches |
-| `GuardedVideoBuffer` | Padding and guard corruption detection; active-pixel snapshots exclude padding | `uint8_t`; width 5/3; height 3/2; alignment 32 with offset 1; tight and padded rows |
-| `DeterministicData` | Known XorShift32 sequence; repeatable fixed-seed filling of active pixels | Seed `1` for the known sequence; seed `0x12345678`; `uint16_t`; width 7; height 3; pitch 20 |
-| `Comparators` | Integer coordinate diagnostics; absolute and relative float tolerances | Integer mismatch at row 1, column 2; float values near zero and at magnitude 1000 |
-| `StableHash` | XXH3 formatting; padding exclusion; active-byte sensitivity | `uint8_t`; width 3; height 2; pitch 8; incrementing pattern |
-| `CpuFeatures` | Injectable scalar/SIMD requirement checks; distinct AVX-512 Foundation, Base, and Fast requirement predicates | Empty feature set, AVX2 feature set, AVX-512 Foundation-only set, and AVX-512 Base set |
-| `VariantRegistry` | Reports whether a variant is supported without removing it from the test matrix | Scalar and AVX2 entries with an empty feature set |
-
-The support layer currently has no GoogleTest `TEST_P` or
-`INSTANTIATE_TEST_SUITE_P` instances. The Turn suite has one parameterized
-test with three implementation instances; the rows above describe fixed
-cases, not an implicit Cartesian product.
-
-## Turn Video Kernels
-
-| Operation | Implementations | Contracts and dimensions |
-| --- | --- | --- |
-| `turn_left_plane_8` | Parameterized C (`turn_left_plane_8_c`), SSE2 (`turn_left_plane_8_sse2`), and AVX2 (`turn_left_plane_8_avx2`) instances | Independent 3x2 coordinate mapping with incrementing input; 33x17 fixed-random differential case; source pitch 40; destination pitch 32; alignment 32; seed `0xC0FFEE`; active-output hash `9d4f11c702db4abb`; input, padding, and guards checked |
-
-The C instance always runs. The SSE2 and AVX2 instances are independently
-skipped when `CpuFeatures::detect()` reports that the host lacks the required
-feature. The same rule applies to future SSSE3, SSE4.1, and AVX-512 instances;
-an unavailable implementation must remain visible as skipped rather than
-silently disappearing or passing.
-
-## Not Covered Yet
-
-The following are deliberate gaps, not silently assumed coverage:
-
-- Turn right rotation and 180-degree rotation.
-- Turn 16-bit and 32-bit planar paths.
-- Turn RGB24, RGB32, RGB48, RGB64, and YUY2 paths.
-- Exhaustive Turn dimension, pitch, alignment-offset, pattern, and seed
-  matrices.
-- ConvertBits and its bit-depth, range, dither, and float branches.
-- Audio, script execution, filter graphs, plugin loading, and distribution
-  integration.
-- Windows/MSVC execution.
-- Unsupported-ISA execution, illegal-instruction checks, and FMA-specific
-  dispatch auditing.
+- `Turn` YUY2 rotations: the upstream implementations are file-local
+  `static` functions and are outside the public-kernel boundary.
+- `Turn` 180-degree RGB24/RGB48 rotations: the required pixel types are
+  private to the upstream implementation.
+- `Turn` ARM/NEON variants: the current execution scope is Linux x86.
+- `Turn` filter frame allocation, dispatch, and script-environment behavior:
+  these are filter-level concerns rather than direct kernel unit tests.
+- Exhaustive dimension, pitch, alignment-offset, pattern, and seed matrices.
+- ConvertBits, audio, script execution, filter graphs, plugin loading,
+  distribution integration, Windows/MSVC execution, and unsupported-ISA or
+  FMA-specific dispatch auditing.
 
 ## Maintenance Rules
 
-Update this file when a new operation, implementation variant, parameter
-dimension, execution preset, or explicit gap status changes. Summarize the
-contract and meaningful dimensions; do not copy a complete test source file or
-repeat every assertion name here.
+Update this file when a new plugin operation, implementation variant, or
+meaningful behavioral branch is covered or removed. Keep exact test vectors,
+expected hashes, and execution results in the test sources or generated test
+reports rather than duplicating them here.

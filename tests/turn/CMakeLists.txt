@@ -1,4 +1,8 @@
-add_executable(turn_tests turn_tests.cpp)
+add_executable(turn_tests
+  turn_tests.cpp
+  turn_rgb_tests.cpp
+  turn_180_tests.cpp
+)
 target_include_directories(turn_tests PRIVATE
   ${PROJECT_SOURCE_DIR}/tests
   ${PROJECT_SOURCE_DIR}/third_party/AviSynthPlus/avs_core/include
