@@ -1,4 +1,8 @@
-add_executable(merge_tests merge_tests.cpp merge_float_tests.cpp)
+add_executable(merge_tests
+  merge_tests.cpp
+  merge_float_tests.cpp
+  merge_additional_tests.cpp
+)
 target_include_directories(merge_tests PRIVATE
   ${PROJECT_SOURCE_DIR}/tests
   ${PROJECT_SOURCE_DIR}/third_party/AviSynthPlus/avs_core/include
