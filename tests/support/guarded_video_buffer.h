@@ -101,6 +101,22 @@ class GuardedVideoBuffer {
     return true;
   }
 
+  bool padding_intact_from(std::size_t row_byte_offset) const {
+    if (row_byte_offset < active_row_bytes_ || row_byte_offset > pitch_bytes_) {
+      throw std::invalid_argument("padding range is outside row padding");
+    }
+    for (std::size_t y = 0; y < height_; ++y) {
+      const auto* row = data_ + y * pitch_bytes_;
+      if (!std::all_of(row + row_byte_offset, row + pitch_bytes_,
+                       [this](std::uint8_t value) {
+                         return value == padding_sentinel_;
+                       })) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   bool memory_intact() const { return guards_intact() && padding_intact(); }
 
   std::vector<std::uint8_t> snapshot_active() const {

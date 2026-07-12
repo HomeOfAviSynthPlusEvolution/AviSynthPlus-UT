@@ -133,6 +133,13 @@ allocation. Do not override it with a shared value unless a test needs an
 explicit boundary condition. This makes SIMD tail writes that copy source
 padding into an output allocation observable.
 
+An internal kernel may explicitly permit output writes through a stated
+SIMD-aligned tail when its production allocation contract provides that space.
+Keep such an allowance local to the named variant, report an observed allowed
+write as an informational diagnostic, and continue to require intact guards
+and padding from that alignment boundary to the pitch. It is not a default
+exception to padding checks.
+
 Differential random tests also use fixed seeds. A failure report must include
 the operation, variant, element or format, dimensions, pitch, alignment
 offset when relevant, input pattern or seed, and first differing coordinates.
