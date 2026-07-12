@@ -11,21 +11,17 @@ namespace {
 
 std::vector<SumCase> sum_cases() {
   return {make_sum_case(
-      37, 5, 64,
-      Variant<SumFunction>{"sse2", get_sum_of_pixels_sse2,
-                           IsaRequirement::Sse2})};
+      37, 5, 64, Variant<SumFunction>{"sse2", get_sum_of_pixels_sse2, IsaRequirement::Sse2})};
 }
 
 std::vector<SadIntCase> sad_int_cases() {
   return {
       make_sad_int_case(
           "Plane8", false, 37, 5, 64, 80,
-          Variant<SadIntFunction>{"sse2", calculate_sad_sse2<false>,
-                                  IsaRequirement::Sse2}),
+          Variant<SadIntFunction>{"sse2", calculate_sad_sse2<false>, IsaRequirement::Sse2}),
       make_sad_int_case(
           "PackedRgb32", true, 32, 5, 64, 80,
-          Variant<SadIntFunction>{"sse2", calculate_sad_sse2<true>,
-                                  IsaRequirement::Sse2}),
+          Variant<SadIntFunction>{"sse2", calculate_sad_sse2<true>, IsaRequirement::Sse2}),
   };
 }
 
@@ -33,19 +29,16 @@ std::vector<SadWideCase> sad_wide_cases() {
   return {
       make_sad_wide_case(
           "Plane8Wide", 1, false, 37, 5, 64, 80,
-          Variant<SadWideFunction>{
-              "sse2", calculate_sad_8_or_16_sse2<std::uint8_t, false>,
-              IsaRequirement::Sse2}),
+          Variant<SadWideFunction>{"sse2", calculate_sad_8_or_16_sse2<std::uint8_t, false>,
+                                   IsaRequirement::Sse2}),
       make_sad_wide_case(
           "Plane16", 2, false, 37, 5, 96, 112,
-          Variant<SadWideFunction>{
-              "sse2", calculate_sad_8_or_16_sse2<std::uint16_t, false>,
-              IsaRequirement::Sse2}),
+          Variant<SadWideFunction>{"sse2", calculate_sad_8_or_16_sse2<std::uint16_t, false>,
+                                   IsaRequirement::Sse2}),
       make_sad_wide_case(
           "PackedRgb64", 2, true, 32, 5, 128, 144,
-          Variant<SadWideFunction>{
-              "sse2", calculate_sad_8_or_16_sse2<std::uint16_t, true>,
-              IsaRequirement::Sse2}),
+          Variant<SadWideFunction>{"sse2", calculate_sad_8_or_16_sse2<std::uint16_t, true>,
+                                   IsaRequirement::Sse2}),
   };
 }
 
@@ -59,13 +52,10 @@ TEST_P(PixelSumKernels, MatchesIndependentSum) {
   run_sum_case(test_case);
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    Kernels,
-    PixelSumKernels,
-    ::testing::ValuesIn(sum_cases()),
-    [](const ::testing::TestParamInfo<SumCase>& info) {
-      return info.param.name;
-    });
+INSTANTIATE_TEST_SUITE_P(Kernels, PixelSumKernels, ::testing::ValuesIn(sum_cases()),
+                         [](const ::testing::TestParamInfo<SumCase>& info) {
+                           return info.param.name;
+                         });
 
 class SadIntKernels : public ::testing::TestWithParam<SadIntCase> {};
 
@@ -77,13 +67,10 @@ TEST_P(SadIntKernels, MatchesIndependentAbsoluteDifference) {
   run_sad_int_case(test_case);
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    Kernels,
-    SadIntKernels,
-    ::testing::ValuesIn(sad_int_cases()),
-    [](const ::testing::TestParamInfo<SadIntCase>& info) {
-      return info.param.name;
-    });
+INSTANTIATE_TEST_SUITE_P(Kernels, SadIntKernels, ::testing::ValuesIn(sad_int_cases()),
+                         [](const ::testing::TestParamInfo<SadIntCase>& info) {
+                           return info.param.name;
+                         });
 
 class SadWideKernels : public ::testing::TestWithParam<SadWideCase> {};
 
@@ -99,13 +86,10 @@ TEST_P(SadWideKernels, MatchesIndependentAbsoluteDifference) {
   }
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    Kernels,
-    SadWideKernels,
-    ::testing::ValuesIn(sad_wide_cases()),
-    [](const ::testing::TestParamInfo<SadWideCase>& info) {
-      return info.param.name;
-    });
+INSTANTIATE_TEST_SUITE_P(Kernels, SadWideKernels, ::testing::ValuesIn(sad_wide_cases()),
+                         [](const ::testing::TestParamInfo<SadWideCase>& info) {
+                           return info.param.name;
+                         });
 
 }  // namespace
 }  // namespace avsut::test

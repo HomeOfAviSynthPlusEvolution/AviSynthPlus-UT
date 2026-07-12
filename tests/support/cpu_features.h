@@ -34,26 +34,33 @@ struct CpuFeatures {
 
   bool supports(IsaRequirement requirement) const noexcept {
     switch (requirement) {
-      case IsaRequirement::Scalar: return true;
-      case IsaRequirement::Sse2: return sse2;
-      case IsaRequirement::Ssse3: return ssse3;
-      case IsaRequirement::Sse41: return sse41;
-      case IsaRequirement::Avx2: return avx2;
-      case IsaRequirement::Avx2Fma: return avx2 && fma3;
-      case IsaRequirement::Avx512F: return avx512f;
+      case IsaRequirement::Scalar:
+        return true;
+      case IsaRequirement::Sse2:
+        return sse2;
+      case IsaRequirement::Ssse3:
+        return ssse3;
+      case IsaRequirement::Sse41:
+        return sse41;
+      case IsaRequirement::Avx2:
+        return avx2;
+      case IsaRequirement::Avx2Fma:
+        return avx2 && fma3;
+      case IsaRequirement::Avx512F:
+        return avx512f;
       case IsaRequirement::Avx512Base:
         return avx512f && avx512cd && avx512bw && avx512dq && avx512vl;
-      case IsaRequirement::Avx512Vbmi: return avx512vbmi;
+      case IsaRequirement::Avx512Vbmi:
+        return avx512vbmi;
       case IsaRequirement::Avx512Fast:
-        return supports(IsaRequirement::Avx512Base) && avx512vnni &&
-               avx512vbmi && avx512vbmi2 && avx512bitalg && avx512vpopcntdq;
+        return supports(IsaRequirement::Avx512Base) && avx512vnni && avx512vbmi && avx512vbmi2 &&
+               avx512bitalg && avx512vpopcntdq;
     }
     return false;
   }
 
   static CpuFeatures detect() {
-#if (defined(__GNUC__) || defined(__clang__)) && \
-    (defined(__x86_64__) || defined(__i386__))
+#if (defined(__GNUC__) || defined(__clang__)) && (defined(__x86_64__) || defined(__i386__))
     // GCC and Clang include OS support for the vector register state here.
     __builtin_cpu_init();
     return {static_cast<bool>(__builtin_cpu_supports("sse2")),

@@ -13,47 +13,40 @@ namespace {
 std::vector<Yuy2SwapCase> yuy2_cases() {
   constexpr auto hash = "aa4fa9f290b9d1f8";
   return {
-      make_yuy2_case(
-          48, 5, 64, 64,
-          Variant<PlaneSwapFuncPtr>{"sse2", yuy2_swap_sse2, IsaRequirement::Sse2},
-          hash),
-      make_yuy2_case(
-          48, 5, 64, 64,
-          Variant<PlaneSwapFuncPtr>{"ssse3", yuy2_swap_ssse3, IsaRequirement::Ssse3},
-          hash),
+      make_yuy2_case(48, 5, 64, 64,
+                     Variant<PlaneSwapFuncPtr>{"sse2", yuy2_swap_sse2, IsaRequirement::Sse2}, hash),
+      make_yuy2_case(48, 5, 64, 64,
+                     Variant<PlaneSwapFuncPtr>{"ssse3", yuy2_swap_ssse3, IsaRequirement::Ssse3},
+                     hash),
   };
 }
 
 template <int Channel>
 void add_rgb32_variants(std::vector<RgbExtractCase>& cases, const char* hash) {
-  cases.push_back(make_rgb_case(
-      "Rgb32", Channel, 48, 5, 256, 64, 1,
-      extract_packed_rgb32_channel_sse2<Channel>,
-      Variant<PlaneSwapFuncPtr>{"sse2", extract_packed_rgb32_channel_sse2<Channel>,
-                                IsaRequirement::Sse2},
-      hash));
-  cases.push_back(make_rgb_case(
-      "Rgb32", Channel, 48, 5, 256, 64, 1,
-      extract_packed_rgb32_channel_sse2<Channel>,
-      Variant<PlaneSwapFuncPtr>{"avx2", extract_packed_rgb32_channel_avx2<Channel>,
-                                IsaRequirement::Avx2},
-      hash));
+  cases.push_back(
+      make_rgb_case("Rgb32", Channel, 48, 5, 256, 64, 1, extract_packed_rgb32_channel_sse2<Channel>,
+                    Variant<PlaneSwapFuncPtr>{"sse2", extract_packed_rgb32_channel_sse2<Channel>,
+                                              IsaRequirement::Sse2},
+                    hash));
+  cases.push_back(
+      make_rgb_case("Rgb32", Channel, 48, 5, 256, 64, 1, extract_packed_rgb32_channel_sse2<Channel>,
+                    Variant<PlaneSwapFuncPtr>{"avx2", extract_packed_rgb32_channel_avx2<Channel>,
+                                              IsaRequirement::Avx2},
+                    hash));
 }
 
 template <int Channel>
 void add_rgb64_variants(std::vector<RgbExtractCase>& cases, const char* hash) {
-  cases.push_back(make_rgb_case(
-      "Rgb64", Channel, 24, 5, 256, 64, 2,
-      extract_packed_rgb64_channel_sse2<Channel>,
-      Variant<PlaneSwapFuncPtr>{"sse2", extract_packed_rgb64_channel_sse2<Channel>,
-                                IsaRequirement::Sse2},
-      hash));
-  cases.push_back(make_rgb_case(
-      "Rgb64", Channel, 24, 5, 256, 64, 2,
-      extract_packed_rgb64_channel_sse2<Channel>,
-      Variant<PlaneSwapFuncPtr>{"avx2", extract_packed_rgb64_channel_avx2<Channel>,
-                                IsaRequirement::Avx2},
-      hash));
+  cases.push_back(
+      make_rgb_case("Rgb64", Channel, 24, 5, 256, 64, 2, extract_packed_rgb64_channel_sse2<Channel>,
+                    Variant<PlaneSwapFuncPtr>{"sse2", extract_packed_rgb64_channel_sse2<Channel>,
+                                              IsaRequirement::Sse2},
+                    hash));
+  cases.push_back(
+      make_rgb_case("Rgb64", Channel, 24, 5, 256, 64, 2, extract_packed_rgb64_channel_sse2<Channel>,
+                    Variant<PlaneSwapFuncPtr>{"avx2", extract_packed_rgb64_channel_avx2<Channel>,
+                                              IsaRequirement::Avx2},
+                    hash));
 }
 
 std::vector<RgbExtractCase> rgb_cases() {
@@ -79,13 +72,10 @@ TEST_P(Yuy2SwapKernels, SwapsChromaBytePositions) {
   run_yuy2_case(test_case);
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    Kernels,
-    Yuy2SwapKernels,
-    ::testing::ValuesIn(yuy2_cases()),
-    [](const ::testing::TestParamInfo<Yuy2SwapCase>& info) {
-      return info.param.name;
-    });
+INSTANTIATE_TEST_SUITE_P(Kernels, Yuy2SwapKernels, ::testing::ValuesIn(yuy2_cases()),
+                         [](const ::testing::TestParamInfo<Yuy2SwapCase>& info) {
+                           return info.param.name;
+                         });
 
 class RgbExtractKernels : public ::testing::TestWithParam<RgbExtractCase> {};
 
@@ -101,13 +91,10 @@ TEST_P(RgbExtractKernels, ExtractsBottomUpPackedChannel) {
   }
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    Kernels,
-    RgbExtractKernels,
-    ::testing::ValuesIn(rgb_cases()),
-    [](const ::testing::TestParamInfo<RgbExtractCase>& info) {
-      return info.param.name;
-    });
+INSTANTIATE_TEST_SUITE_P(Kernels, RgbExtractKernels, ::testing::ValuesIn(rgb_cases()),
+                         [](const ::testing::TestParamInfo<RgbExtractCase>& info) {
+                           return info.param.name;
+                         });
 
 }  // namespace
 }  // namespace avsut::test

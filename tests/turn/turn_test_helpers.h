@@ -40,15 +40,16 @@ struct TurnCase {
   std::string name;
 };
 
-inline void PrintTo(const TurnCase& test_case, std::ostream* stream) {
-  *stream << test_case.name;
-}
+inline void PrintTo(const TurnCase& test_case, std::ostream* stream) { *stream << test_case.name; }
 
 inline std::string turn_direction_name(TurnDirection direction) {
   switch (direction) {
-    case TurnDirection::Left: return "Left";
-    case TurnDirection::Right: return "Right";
-    case TurnDirection::Half: return "Half";
+    case TurnDirection::Left:
+      return "Left";
+    case TurnDirection::Right:
+      return "Right";
+    case TurnDirection::Half:
+      return "Half";
   }
   return "Unknown";
 }
@@ -69,58 +70,50 @@ inline std::string turn_variant_name(const Variant<TurnFuncPtr>& variant) {
   return result;
 }
 
-inline std::string turn_case_name(const std::string& format,
-                                  TurnDirection direction,
-                                  std::size_t width_pixels,
-                                  std::size_t height_pixels,
-                                  std::size_t source_pitch,
-                                  std::size_t destination_pitch,
-                                  std::uint32_t seed,
-                                  const Variant<TurnFuncPtr>& variant) {
+inline std::string turn_case_name(const std::string& format, TurnDirection direction,
+                                  std::size_t width_pixels, std::size_t height_pixels,
+                                  std::size_t source_pitch, std::size_t destination_pitch,
+                                  std::uint32_t seed, const Variant<TurnFuncPtr>& variant) {
   std::ostringstream stream;
-  stream << format << turn_direction_name(direction)
-         << "_Width" << width_pixels
-         << "_Height" << height_pixels
-         << "_SrcPitch" << source_pitch
-         << "_DstPitch" << destination_pitch
-         << "_Seed" << std::uppercase << std::hex << seed
-         << "_" << turn_variant_name(variant);
+  stream << format << turn_direction_name(direction) << "_Width" << width_pixels << "_Height"
+         << height_pixels << "_SrcPitch" << source_pitch << "_DstPitch" << destination_pitch
+         << "_Seed" << std::uppercase << std::hex << seed << "_" << turn_variant_name(variant);
   return stream.str();
 }
 
-inline TurnCase make_turn_case(std::string format,
-                               TurnDirection direction,
-                               std::size_t width_pixels,
-                               std::size_t height_pixels,
-                               std::size_t bytes_per_pixel,
-                               std::size_t source_pitch,
-                               std::size_t destination_pitch,
-                               std::uint32_t seed,
-                               TurnFuncPtr scalar_function,
-                               Variant<TurnFuncPtr> variant,
-                               std::string expected_hash = {},
-                               bool reverse_quarter_turn = false) {
-  TurnCase result{std::move(format), direction, reverse_quarter_turn,
-                  width_pixels, height_pixels, bytes_per_pixel, source_pitch,
-                  destination_pitch, seed,
-                  scalar_function, std::move(variant), std::move(expected_hash), {}};
-  result.name = turn_case_name(result.format, result.direction,
-                               result.width_pixels, result.height_pixels,
-                               result.source_pitch, result.destination_pitch,
-                               result.seed, result.variant);
+inline TurnCase make_turn_case(std::string format, TurnDirection direction,
+                               std::size_t width_pixels, std::size_t height_pixels,
+                               std::size_t bytes_per_pixel, std::size_t source_pitch,
+                               std::size_t destination_pitch, std::uint32_t seed,
+                               TurnFuncPtr scalar_function, Variant<TurnFuncPtr> variant,
+                               std::string expected_hash = {}, bool reverse_quarter_turn = false) {
+  TurnCase result{std::move(format),
+                  direction,
+                  reverse_quarter_turn,
+                  width_pixels,
+                  height_pixels,
+                  bytes_per_pixel,
+                  source_pitch,
+                  destination_pitch,
+                  seed,
+                  scalar_function,
+                  std::move(variant),
+                  std::move(expected_hash),
+                  {}};
+  result.name =
+      turn_case_name(result.format, result.direction, result.width_pixels, result.height_pixels,
+                     result.source_pitch, result.destination_pitch, result.seed, result.variant);
   return result;
 }
 
 inline std::size_t destination_width_pixels(const TurnCase& test_case) {
-  return test_case.direction == TurnDirection::Half
-             ? test_case.width_pixels
-             : test_case.height_pixels;
+  return test_case.direction == TurnDirection::Half ? test_case.width_pixels
+                                                    : test_case.height_pixels;
 }
 
 inline std::size_t destination_height_pixels(const TurnCase& test_case) {
-  return test_case.direction == TurnDirection::Half
-             ? test_case.height_pixels
-             : test_case.width_pixels;
+  return test_case.direction == TurnDirection::Half ? test_case.height_pixels
+                                                    : test_case.width_pixels;
 }
 
 inline std::size_t source_row_bytes(const TurnCase& test_case) {
@@ -131,11 +124,9 @@ inline std::size_t destination_row_bytes(const TurnCase& test_case) {
   return destination_width_pixels(test_case) * test_case.bytes_per_pixel;
 }
 
-inline void map_turn_reference(const TurnCase& test_case,
-                               PlaneView<const std::uint8_t> source,
+inline void map_turn_reference(const TurnCase& test_case, PlaneView<const std::uint8_t> source,
                                PlaneView<std::uint8_t> destination) {
-  if (source.width() != source_row_bytes(test_case) ||
-      source.height() != test_case.height_pixels ||
+  if (source.width() != source_row_bytes(test_case) || source.height() != test_case.height_pixels ||
       destination.width() != destination_row_bytes(test_case) ||
       destination.height() != destination_height_pixels(test_case)) {
     throw std::invalid_argument("Turn reference dimensions do not match case");
@@ -169,21 +160,18 @@ inline void map_turn_reference(const TurnCase& test_case,
           break;
       }
 
-      const auto* source_pixel = source.row(source_y) +
-                                 source_x * test_case.bytes_per_pixel;
-      auto* destination_pixel = destination.row(destination_y) +
-                                destination_x * test_case.bytes_per_pixel;
+      const auto* source_pixel = source.row(source_y) + source_x * test_case.bytes_per_pixel;
+      auto* destination_pixel =
+          destination.row(destination_y) + destination_x * test_case.bytes_per_pixel;
       std::copy_n(source_pixel, test_case.bytes_per_pixel, destination_pixel);
     }
   }
 }
 
-inline ::testing::AssertionResult compare_turn_pixels(
-    const TurnCase& test_case,
-    PlaneView<const std::uint8_t> expected,
-    PlaneView<const std::uint8_t> actual) {
-  if (expected.width() != actual.width() ||
-      expected.height() != actual.height()) {
+inline ::testing::AssertionResult compare_turn_pixels(const TurnCase& test_case,
+                                                      PlaneView<const std::uint8_t> expected,
+                                                      PlaneView<const std::uint8_t> actual) {
+  if (expected.width() != actual.width() || expected.height() != actual.height()) {
     return ::testing::AssertionFailure() << "dimension mismatch";
   }
 
@@ -195,48 +183,36 @@ inline ::testing::AssertionResult compare_turn_pixels(
         return ::testing::AssertionFailure()
                << "format=" << test_case.format
                << " direction=" << turn_direction_name(test_case.direction)
-               << " variant=" << test_case.variant.name
-               << " width=" << test_case.width_pixels
-               << " height=" << test_case.height_pixels
-               << " src_pitch=" << test_case.source_pitch
-               << " dst_pitch=" << test_case.destination_pitch
-               << " seed=0x" << std::uppercase << std::hex << test_case.seed
-               << std::dec
-               << " row=" << y
-               << " pixel=" << pixel_column
-               << " channel_byte=" << channel_byte
-               << " expected=" << +expected.row(y)[x]
-               << " actual=" << +actual.row(y)[x];
+               << " variant=" << test_case.variant.name << " width=" << test_case.width_pixels
+               << " height=" << test_case.height_pixels << " src_pitch=" << test_case.source_pitch
+               << " dst_pitch=" << test_case.destination_pitch << " seed=0x" << std::uppercase
+               << std::hex << test_case.seed << std::dec << " row=" << y
+               << " pixel=" << pixel_column << " channel_byte=" << channel_byte
+               << " expected=" << +expected.row(y)[x] << " actual=" << +actual.row(y)[x];
       }
     }
   }
   return ::testing::AssertionSuccess();
 }
 
-inline void invoke_turn(TurnFuncPtr function,
-                        PlaneView<const std::uint8_t> source,
+inline void invoke_turn(TurnFuncPtr function, PlaneView<const std::uint8_t> source,
                         PlaneView<std::uint8_t> destination) {
-  function(source.data(), destination.data(),
-           static_cast<int>(source.active_row_bytes()),
-           static_cast<int>(source.height()),
-           static_cast<int>(source.pitch_bytes()),
+  function(source.data(), destination.data(), static_cast<int>(source.active_row_bytes()),
+           static_cast<int>(source.height()), static_cast<int>(source.pitch_bytes()),
            static_cast<int>(destination.pitch_bytes()));
 }
 
 inline void run_turn_case(const TurnCase& test_case) {
   const auto source_row_size = source_row_bytes(test_case);
   const auto destination_row_size = destination_row_bytes(test_case);
-  GuardedVideoBuffer<std::uint8_t> source(
-      source_row_size, test_case.height_pixels, test_case.source_pitch, 32);
+  GuardedVideoBuffer<std::uint8_t> source(source_row_size, test_case.height_pixels,
+                                          test_case.source_pitch, 32);
   GuardedVideoBuffer<std::uint8_t> expected(
-      destination_row_size, destination_height_pixels(test_case),
-      test_case.destination_pitch, 32);
+      destination_row_size, destination_height_pixels(test_case), test_case.destination_pitch, 32);
   GuardedVideoBuffer<std::uint8_t> scalar(
-      destination_row_size, destination_height_pixels(test_case),
-      test_case.destination_pitch, 32);
+      destination_row_size, destination_height_pixels(test_case), test_case.destination_pitch, 32);
   GuardedVideoBuffer<std::uint8_t> actual(
-      destination_row_size, destination_height_pixels(test_case),
-      test_case.destination_pitch, 32);
+      destination_row_size, destination_height_pixels(test_case), test_case.destination_pitch, 32);
 
   fill_random(source.view(), test_case.seed);
   const auto source_snapshot = source.snapshot_active();
@@ -245,13 +221,10 @@ inline void run_turn_case(const TurnCase& test_case) {
   invoke_turn(test_case.scalar_function, source.view().as_const(), scalar.view());
   invoke_turn(test_case.variant.function, source.view().as_const(), actual.view());
 
-  EXPECT_TRUE(compare_turn_pixels(test_case, expected.view().as_const(),
-                                  scalar.view().as_const()));
-  EXPECT_TRUE(compare_turn_pixels(test_case, scalar.view().as_const(),
-                                  actual.view().as_const()));
+  EXPECT_TRUE(compare_turn_pixels(test_case, expected.view().as_const(), scalar.view().as_const()));
+  EXPECT_TRUE(compare_turn_pixels(test_case, scalar.view().as_const(), actual.view().as_const()));
   if (!test_case.expected_hash.empty()) {
-    EXPECT_EQ(format_hash(hash_active(scalar.view().as_const())),
-              test_case.expected_hash);
+    EXPECT_EQ(format_hash(hash_active(scalar.view().as_const())), test_case.expected_hash);
   }
   EXPECT_TRUE(source.active_matches(source_snapshot));
   EXPECT_TRUE(source.memory_intact());

@@ -16,21 +16,21 @@ namespace avsut::test {
 inline std::atomic<std::uint32_t> guarded_buffer_padding_sequence{0};
 
 inline std::uint8_t next_guarded_buffer_padding_sentinel() noexcept {
-  const auto sequence = guarded_buffer_padding_sequence.fetch_add(
-      1, std::memory_order_relaxed);
+  const auto sequence = guarded_buffer_padding_sequence.fetch_add(1, std::memory_order_relaxed);
   return static_cast<std::uint8_t>((sequence * 73U + 0x5AU) & 0xffU);
 }
 
 template <typename T>
 class GuardedVideoBuffer {
  public:
-  GuardedVideoBuffer(std::size_t width, std::size_t height,
-                     std::size_t pitch_bytes, std::size_t alignment = 64,
-                     std::size_t alignment_offset = 0,
-                     std::uint8_t padding_sentinel =
-                         next_guarded_buffer_padding_sentinel())
-      : width_(width), height_(height), pitch_bytes_(pitch_bytes),
-        alignment_(alignment), alignment_offset_(alignment_offset),
+  GuardedVideoBuffer(std::size_t width, std::size_t height, std::size_t pitch_bytes,
+                     std::size_t alignment = 64, std::size_t alignment_offset = 0,
+                     std::uint8_t padding_sentinel = next_guarded_buffer_padding_sentinel())
+      : width_(width),
+        height_(height),
+        pitch_bytes_(pitch_bytes),
+        alignment_(alignment),
+        alignment_offset_(alignment_offset),
         padding_sentinel_(padding_sentinel) {
     if (alignment_ == 0 || (alignment_ & (alignment_ - 1)) != 0) {
       throw std::invalid_argument("alignment must be a power of two");
@@ -68,8 +68,7 @@ class GuardedVideoBuffer {
   }
 
   PlaneView<const T> view() const {
-    return PlaneView<const T>(reinterpret_cast<const T*>(data_), width_, height_,
-                              pitch_bytes_);
+    return PlaneView<const T>(reinterpret_cast<const T*>(data_), width_, height_, pitch_bytes_);
   }
 
   void reset_sentinels() {
@@ -92,9 +91,7 @@ class GuardedVideoBuffer {
     for (std::size_t y = 0; y < height_; ++y) {
       const auto* row = data_ + y * pitch_bytes_;
       if (!std::all_of(row + active_row_bytes_, row + pitch_bytes_,
-                       [this](std::uint8_t value) {
-                         return value == padding_sentinel_;
-                       })) {
+                       [this](std::uint8_t value) { return value == padding_sentinel_; })) {
         return false;
       }
     }
@@ -108,9 +105,7 @@ class GuardedVideoBuffer {
     for (std::size_t y = 0; y < height_; ++y) {
       const auto* row = data_ + y * pitch_bytes_;
       if (!std::all_of(row + row_byte_offset, row + pitch_bytes_,
-                       [this](std::uint8_t value) {
-                         return value == padding_sentinel_;
-                       })) {
+                       [this](std::uint8_t value) { return value == padding_sentinel_; })) {
         return false;
       }
     }

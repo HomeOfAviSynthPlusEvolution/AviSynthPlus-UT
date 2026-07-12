@@ -14,8 +14,7 @@ struct Variant {
 };
 
 template <typename Function>
-bool variant_supported(const Variant<Function>& variant,
-                       CpuFeatures features) noexcept {
+bool variant_supported(const Variant<Function>& variant, CpuFeatures features) noexcept {
   return features.supports(variant.requirement);
 }
 

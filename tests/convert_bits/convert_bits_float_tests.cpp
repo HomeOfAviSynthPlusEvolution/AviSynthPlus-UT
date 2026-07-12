@@ -18,15 +18,14 @@ std::vector<ConvertBitsFloatCase> convert_bits_float_cases() {
       cases, FloatConversion::FloatToUInt16, 10, "c186b634e598194e");
   add_float_to_integer_variants<std::uint16_t, true, false, true>(
       cases, FloatConversion::FloatToUInt16, 16, "8b3b6d4629122a90");
-  add_integer_to_float_case<std::uint8_t, false, false, true>(
-      cases, FloatConversion::UInt8ToFloat, 8, 64);
-  add_integer_to_float_case<std::uint16_t, true, true, false>(
-      cases, FloatConversion::UInt16ToFloat, 12, 96);
+  add_integer_to_float_case<std::uint8_t, false, false, true>(cases, FloatConversion::UInt8ToFloat,
+                                                              8, 64);
+  add_integer_to_float_case<std::uint16_t, true, true, false>(cases, FloatConversion::UInt16ToFloat,
+                                                              12, 96);
   return cases;
 }
 
-class ConvertBitsFloatKernels
-    : public ::testing::TestWithParam<ConvertBitsFloatCase> {};
+class ConvertBitsFloatKernels : public ::testing::TestWithParam<ConvertBitsFloatCase> {};
 
 TEST_P(ConvertBitsFloatKernels, MatchesIndependentNumericalReference) {
   const auto& test_case = GetParam();
@@ -36,12 +35,11 @@ TEST_P(ConvertBitsFloatKernels, MatchesIndependentNumericalReference) {
   run_convert_bits_float_case(test_case);
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    Kernels, ConvertBitsFloatKernels,
-    ::testing::ValuesIn(convert_bits_float_cases()),
-    [](const ::testing::TestParamInfo<ConvertBitsFloatCase>& info) {
-      return info.param.name;
-    });
+INSTANTIATE_TEST_SUITE_P(Kernels, ConvertBitsFloatKernels,
+                         ::testing::ValuesIn(convert_bits_float_cases()),
+                         [](const ::testing::TestParamInfo<ConvertBitsFloatCase>& info) {
+                           return info.param.name;
+                         });
 
 }  // namespace
 }  // namespace avsut::test

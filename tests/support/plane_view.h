@@ -14,8 +14,7 @@ class PlaneView {
   using element_type = T;
   using value_type = std::remove_const_t<T>;
 
-  PlaneView(T* data, std::size_t width, std::size_t height,
-            std::size_t pitch_bytes)
+  PlaneView(T* data, std::size_t width, std::size_t height, std::size_t pitch_bytes)
       : data_(data), width_(width), height_(height), pitch_bytes_(pitch_bytes) {
     if (width_ > std::numeric_limits<std::size_t>::max() / sizeof(value_type)) {
       throw std::invalid_argument("active row size overflows");
@@ -38,9 +37,9 @@ class PlaneView {
     if (y >= height_) {
       throw std::out_of_range("plane row is out of range");
     }
-    auto* bytes = reinterpret_cast<std::conditional_t<std::is_const_v<T>,
-                                                       const std::uint8_t,
-                                                       std::uint8_t>*>(data_);
+    auto* bytes =
+        reinterpret_cast<std::conditional_t<std::is_const_v<T>, const std::uint8_t, std::uint8_t>*>(
+            data_);
     return reinterpret_cast<T*>(bytes + y * pitch_bytes_);
   }
 

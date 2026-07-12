@@ -15,66 +15,53 @@ namespace {
 using PackedToPlanarHashes = std::array<std::string, 4>;
 
 template <typename T, bool TargetHasAlpha>
-void add_rgb_to_rgbp_variants(
-    std::vector<PackedToPlanarRgbCase>& cases, std::string operation,
-    std::size_t width, std::size_t height, std::size_t source_pitch,
-    std::array<std::size_t, 4> destination_pitches,
-    PackedToPlanarHashes expected_hashes) {
+void add_rgb_to_rgbp_variants(std::vector<PackedToPlanarRgbCase>& cases, std::string operation,
+                              std::size_t width, std::size_t height, std::size_t source_pitch,
+                              std::array<std::size_t, 4> destination_pitches,
+                              PackedToPlanarHashes expected_hashes) {
   cases.push_back(make_packed_to_planar_rgb_case(
-      operation, sizeof(T), 3, TargetHasAlpha, width, height, source_pitch,
-      destination_pitches,
-      Variant<PackedToPlanarRgbFunction>{
-          "sse2", convert_rgb_to_rgbp_sse2<T, TargetHasAlpha>,
-          IsaRequirement::Sse2},
+      operation, sizeof(T), 3, TargetHasAlpha, width, height, source_pitch, destination_pitches,
+      Variant<PackedToPlanarRgbFunction>{"sse2", convert_rgb_to_rgbp_sse2<T, TargetHasAlpha>,
+                                         IsaRequirement::Sse2},
       expected_hashes));
   cases.push_back(make_packed_to_planar_rgb_case(
-      operation, sizeof(T), 3, TargetHasAlpha, width, height, source_pitch,
-      destination_pitches,
-      Variant<PackedToPlanarRgbFunction>{
-          "ssse3", convert_rgb_to_rgbp_ssse3<T, TargetHasAlpha>,
-          IsaRequirement::Ssse3},
+      operation, sizeof(T), 3, TargetHasAlpha, width, height, source_pitch, destination_pitches,
+      Variant<PackedToPlanarRgbFunction>{"ssse3", convert_rgb_to_rgbp_ssse3<T, TargetHasAlpha>,
+                                         IsaRequirement::Ssse3},
       expected_hashes));
   cases.push_back(make_packed_to_planar_rgb_case(
-      std::move(operation), sizeof(T), 3, TargetHasAlpha, width, height,
-      source_pitch, destination_pitches,
-      Variant<PackedToPlanarRgbFunction>{
-          "avx2", convert_rgb_to_rgbp_avx2<T, TargetHasAlpha>,
-          IsaRequirement::Avx2},
+      std::move(operation), sizeof(T), 3, TargetHasAlpha, width, height, source_pitch,
+      destination_pitches,
+      Variant<PackedToPlanarRgbFunction>{"avx2", convert_rgb_to_rgbp_avx2<T, TargetHasAlpha>,
+                                         IsaRequirement::Avx2},
       std::move(expected_hashes)));
 }
 
 template <typename T, bool TargetHasAlpha>
-void add_rgba_to_rgbp_variants(
-    std::vector<PackedToPlanarRgbCase>& cases, std::string operation,
-    std::size_t width, std::size_t height, std::size_t source_pitch,
-    std::array<std::size_t, 4> destination_pitches,
-    PackedToPlanarHashes expected_hashes) {
+void add_rgba_to_rgbp_variants(std::vector<PackedToPlanarRgbCase>& cases, std::string operation,
+                               std::size_t width, std::size_t height, std::size_t source_pitch,
+                               std::array<std::size_t, 4> destination_pitches,
+                               PackedToPlanarHashes expected_hashes) {
   cases.push_back(make_packed_to_planar_rgb_case(
-      operation, sizeof(T), 4, TargetHasAlpha, width, height, source_pitch,
-      destination_pitches,
-      Variant<PackedToPlanarRgbFunction>{
-          "sse2", convert_rgba_to_rgbp_sse2<T, TargetHasAlpha>,
-          IsaRequirement::Sse2},
+      operation, sizeof(T), 4, TargetHasAlpha, width, height, source_pitch, destination_pitches,
+      Variant<PackedToPlanarRgbFunction>{"sse2", convert_rgba_to_rgbp_sse2<T, TargetHasAlpha>,
+                                         IsaRequirement::Sse2},
       expected_hashes));
   cases.push_back(make_packed_to_planar_rgb_case(
-      operation, sizeof(T), 4, TargetHasAlpha, width, height, source_pitch,
-      destination_pitches,
-      Variant<PackedToPlanarRgbFunction>{
-          "ssse3", convert_rgba_to_rgbp_ssse3<T, TargetHasAlpha>,
-          IsaRequirement::Ssse3},
+      operation, sizeof(T), 4, TargetHasAlpha, width, height, source_pitch, destination_pitches,
+      Variant<PackedToPlanarRgbFunction>{"ssse3", convert_rgba_to_rgbp_ssse3<T, TargetHasAlpha>,
+                                         IsaRequirement::Ssse3},
       expected_hashes));
   cases.push_back(make_packed_to_planar_rgb_case(
-      std::move(operation), sizeof(T), 4, TargetHasAlpha, width, height,
-      source_pitch, destination_pitches,
-      Variant<PackedToPlanarRgbFunction>{
-          "avx2", convert_rgba_to_rgbp_avx2<T, TargetHasAlpha>,
-          IsaRequirement::Avx2},
+      std::move(operation), sizeof(T), 4, TargetHasAlpha, width, height, source_pitch,
+      destination_pitches,
+      Variant<PackedToPlanarRgbFunction>{"avx2", convert_rgba_to_rgbp_avx2<T, TargetHasAlpha>,
+                                         IsaRequirement::Avx2},
       std::move(expected_hashes)));
 }
 
 std::vector<PackedToPlanarRgbCase> packed_to_planar_rgb_cases() {
-  constexpr std::array<std::size_t, 4> kDestinationPitches{64, 128, 192,
-                                                             256};
+  constexpr std::array<std::size_t, 4> kDestinationPitches{64, 128, 192, 256};
   std::vector<PackedToPlanarRgbCase> cases;
   add_rgb_to_rgbp_variants<std::uint8_t, false>(
       cases, "Rgb24ToRgbp", 45, 5, 192, kDestinationPitches,
@@ -103,8 +90,7 @@ std::vector<PackedToPlanarRgbCase> packed_to_planar_rgb_cases() {
   return cases;
 }
 
-class PackedToPlanarRgbKernels
-    : public ::testing::TestWithParam<PackedToPlanarRgbCase> {};
+class PackedToPlanarRgbKernels : public ::testing::TestWithParam<PackedToPlanarRgbCase> {};
 
 TEST_P(PackedToPlanarRgbKernels, MatchesIndependentPackedLayout) {
   const auto& test_case = GetParam();
@@ -118,12 +104,11 @@ TEST_P(PackedToPlanarRgbKernels, MatchesIndependentPackedLayout) {
   }
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    PackedToPlanar, PackedToPlanarRgbKernels,
-    ::testing::ValuesIn(packed_to_planar_rgb_cases()),
-    [](const ::testing::TestParamInfo<PackedToPlanarRgbCase>& info) {
-      return info.param.name;
-    });
+INSTANTIATE_TEST_SUITE_P(PackedToPlanar, PackedToPlanarRgbKernels,
+                         ::testing::ValuesIn(packed_to_planar_rgb_cases()),
+                         [](const ::testing::TestParamInfo<PackedToPlanarRgbCase>& info) {
+                           return info.param.name;
+                         });
 
 }  // namespace
 }  // namespace avsut::test

@@ -18,8 +18,7 @@ struct FloatTolerance {
 };
 
 template <typename T>
-::testing::AssertionResult compare_exact(PlaneView<const T> expected,
-                                         PlaneView<const T> actual) {
+::testing::AssertionResult compare_exact(PlaneView<const T> expected, PlaneView<const T> actual) {
   static_assert(std::is_integral_v<T>);
   if (expected.width() != actual.width() || expected.height() != actual.height()) {
     return ::testing::AssertionFailure() << "dimension mismatch";
@@ -28,8 +27,7 @@ template <typename T>
     for (std::size_t x = 0; x < expected.width(); ++x) {
       if (expected.row(y)[x] != actual.row(y)[x]) {
         return ::testing::AssertionFailure()
-               << "row=" << y << " col=" << x
-               << " expected=" << +expected.row(y)[x]
+               << "row=" << y << " col=" << x << " expected=" << +expected.row(y)[x]
                << " actual=" << +actual.row(y)[x];
       }
     }
@@ -38,8 +36,8 @@ template <typename T>
 }
 
 inline ::testing::AssertionResult compare_float(PlaneView<const float> expected,
-                                                 PlaneView<const float> actual,
-                                                 FloatTolerance tolerance) {
+                                                PlaneView<const float> actual,
+                                                FloatTolerance tolerance) {
   if (expected.width() != actual.width() || expected.height() != actual.height()) {
     return ::testing::AssertionFailure() << "dimension mismatch";
   }
@@ -57,12 +55,11 @@ inline ::testing::AssertionResult compare_float(PlaneView<const float> expected,
         continue;
       }
       const float difference = std::abs(lhs - rhs);
-      const float limit = std::max(tolerance.absolute,
-                                   tolerance.relative * std::max(std::abs(lhs), std::abs(rhs)));
+      const float limit =
+          std::max(tolerance.absolute, tolerance.relative * std::max(std::abs(lhs), std::abs(rhs)));
       if (difference > limit) {
         return ::testing::AssertionFailure()
-               << "row=" << y << " col=" << x
-               << " expected=" << lhs << " actual=" << rhs
+               << "row=" << y << " col=" << x << " expected=" << lhs << " actual=" << rhs
                << " difference=" << difference << " limit=" << limit;
       }
     }

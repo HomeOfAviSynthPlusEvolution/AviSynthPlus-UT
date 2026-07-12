@@ -23,15 +23,14 @@ TEST(PlaneView, AddressesRowsUsingBytePitch) {
   EXPECT_EQ(view.height(), 2U);
   EXPECT_EQ(view.pitch_bytes(), 16U);
   EXPECT_EQ(view.active_row_bytes(), 6U);
-  EXPECT_EQ(view.row(1), reinterpret_cast<std::uint16_t*>(
-                             reinterpret_cast<std::uint8_t*>(pixels.data()) + 16));
+  EXPECT_EQ(view.row(1),
+            reinterpret_cast<std::uint16_t*>(reinterpret_cast<std::uint8_t*>(pixels.data()) + 16));
   EXPECT_THROW(view.row(2), std::out_of_range);
 }
 
 TEST(PlaneView, RejectsPitchSmallerThanActiveRow) {
   std::array<std::uint16_t, 4> pixels{};
-  EXPECT_THROW((PlaneView<std::uint16_t>(pixels.data(), 3, 1, 4)),
-               std::invalid_argument);
+  EXPECT_THROW((PlaneView<std::uint16_t>(pixels.data(), 3, 1, 4)), std::invalid_argument);
 }
 
 TEST(GuardedVideoBuffer, DetectsPaddingAndGuardCorruption) {
@@ -79,8 +78,7 @@ TEST(Comparators, ReportsIntegerCoordinates) {
   GuardedVideoBuffer<std::uint8_t> actual(4, 2, 8);
   actual.view().row(1)[2] = 9;
 
-  const auto result = compare_exact(expected.view().as_const(),
-                                    actual.view().as_const());
+  const auto result = compare_exact(expected.view().as_const(), actual.view().as_const());
   EXPECT_FALSE(result);
   EXPECT_NE(std::string(result.message()).find("row=1 col=2"), std::string::npos);
 }
@@ -90,8 +88,7 @@ TEST(Comparators, UsesAbsoluteAndRelativeFloatTolerance) {
   std::array<float, 2> actual{0.000001F, 1000.01F};
   PlaneView<const float> expected_view(expected.data(), 2, 1, sizeof(expected));
   PlaneView<const float> actual_view(actual.data(), 2, 1, sizeof(actual));
-  EXPECT_TRUE(compare_float(expected_view, actual_view,
-                            FloatTolerance{0.00001F, 0.00002F}));
+  EXPECT_TRUE(compare_float(expected_view, actual_view, FloatTolerance{0.00001F, 0.00002F}));
 }
 
 TEST(StableHash, ExcludesPaddingAndUsesXXH3) {

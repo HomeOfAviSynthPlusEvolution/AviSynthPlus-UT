@@ -55,8 +55,7 @@ inline void PrintTo(const PlanarMatrixCase& test_case, std::ostream* stream) {
 }
 
 inline const char* planar_direction_name(PlanarMatrixDirection direction) {
-  return direction == PlanarMatrixDirection::YuvToRgb ? "YuvToRgb"
-                                                      : "RgbToYuv";
+  return direction == PlanarMatrixDirection::YuvToRgb ? "YuvToRgb" : "RgbToYuv";
 }
 
 inline const char* planar_matrix_name(int matrix) {
@@ -76,29 +75,18 @@ inline std::string planar_matrix_variant_name(const std::string& name) {
 }
 
 inline PlanarMatrixCase make_planar_matrix_case(
-    PlanarMatrixDirection direction, int matrix, bool source_full,
-    bool destination_full, std::size_t width, std::size_t height,
-    std::size_t source_pitch, std::size_t destination_pitch,
-    Variant<PlanarMatrixVariant> variant,
-    std::array<std::string, 3> expected_hashes) {
-  PlanarMatrixCase result{direction,
-                          matrix,
-                          source_full,
-                          destination_full,
-                          width,
-                          height,
-                          source_pitch,
-                          destination_pitch,
-                          std::move(variant),
-                          std::move(expected_hashes),
-                          {}};
+    PlanarMatrixDirection direction, int matrix, bool source_full, bool destination_full,
+    std::size_t width, std::size_t height, std::size_t source_pitch, std::size_t destination_pitch,
+    Variant<PlanarMatrixVariant> variant, std::array<std::string, 3> expected_hashes) {
+  PlanarMatrixCase result{
+      direction, matrix,       source_full,       destination_full,   width,
+      height,    source_pitch, destination_pitch, std::move(variant), std::move(expected_hashes),
+      {}};
   std::ostringstream stream;
-  stream << planar_direction_name(direction) << '_' << planar_matrix_name(matrix)
-         << "_Src" << (source_full ? "Full" : "Limited") << "_Dst"
-         << (destination_full ? "Full" : "Limited") << "_Width" << width
-         << "_Height" << height << "_SrcPitch" << source_pitch
-         << "_DstPitch" << destination_pitch
-         << "_PatternChannelAnchors_"
+  stream << planar_direction_name(direction) << '_' << planar_matrix_name(matrix) << "_Src"
+         << (source_full ? "Full" : "Limited") << "_Dst" << (destination_full ? "Full" : "Limited")
+         << "_Width" << width << "_Height" << height << "_SrcPitch" << source_pitch << "_DstPitch"
+         << destination_pitch << "_PatternChannelAnchors_"
          << planar_matrix_variant_name(result.variant.name);
   result.name = stream.str();
   return result;
@@ -133,8 +121,8 @@ inline void planar_kr_kb(int matrix, double& kr, double& kb) {
   kb = 0.114;
 }
 
-inline PlanarMatrixCoefficients make_planar_yuv_to_rgb_coefficients(
-    int matrix, bool source_full, bool destination_full) {
+inline PlanarMatrixCoefficients make_planar_yuv_to_rgb_coefficients(int matrix, bool source_full,
+                                                                    bool destination_full) {
   double kr{};
   double kb{};
   planar_kr_kb(matrix, kr, kb);
@@ -147,20 +135,18 @@ inline PlanarMatrixCoefficients make_planar_yuv_to_rgb_coefficients(
           planar_round_symmetric(scale * rgb_span / y_span),
           planar_round_symmetric(scale * rgb_span / y_span),
           planar_round_symmetric(scale * rgb_span * (1.0 - kb) / uv_span),
-          planar_round_symmetric(scale * rgb_span * (kb - 1.0) * kb /
-                                 (kg * uv_span)),
+          planar_round_symmetric(scale * rgb_span * (kb - 1.0) * kb / (kg * uv_span)),
           0,
           0,
-          planar_round_symmetric(scale * rgb_span * (kr - 1.0) * kr /
-                                 (kg * uv_span)),
+          planar_round_symmetric(scale * rgb_span * (kr - 1.0) * kr / (kg * uv_span)),
           planar_round_symmetric(scale * rgb_span * (1.0 - kr) / uv_span),
           source_full ? 0 : -16,
           destination_full ? 0 : 16,
           13};
 }
 
-inline PlanarMatrixCoefficients make_planar_rgb_to_yuv_coefficients(
-    int matrix, bool source_full, bool destination_full) {
+inline PlanarMatrixCoefficients make_planar_rgb_to_yuv_coefficients(int matrix, bool source_full,
+                                                                    bool destination_full) {
   double kr{};
   double kb{};
   planar_kr_kb(matrix, kr, kb);
@@ -191,13 +177,10 @@ inline std::uint8_t planar_clip_byte(int value) {
   return static_cast<std::uint8_t>(std::clamp(value, 0, 255));
 }
 
-inline std::uint8_t planar_shifted_component(int coefficient_a,
-                                              int coefficient_b,
-                                              int coefficient_c, int a,
-                                              int b, int c, int offset,
-                                              int shift) {
-  const int total = coefficient_a * a + coefficient_b * b +
-                    coefficient_c * c + (1 << (shift - 1)) +
+inline std::uint8_t planar_shifted_component(int coefficient_a, int coefficient_b,
+                                             int coefficient_c, int a, int b, int c, int offset,
+                                             int shift) {
+  const int total = coefficient_a * a + coefficient_b * b + coefficient_c * c + (1 << (shift - 1)) +
                     (offset << shift);
   return planar_clip_byte(total >> shift);
 }
@@ -205,33 +188,30 @@ inline std::uint8_t planar_shifted_component(int coefficient_a,
 inline void fill_planar_matrix_inputs(PlaneView<std::uint8_t> plane0,
                                       PlaneView<std::uint8_t> plane1,
                                       PlaneView<std::uint8_t> plane2) {
-  constexpr std::array<std::uint8_t, 16> anchors{
-      0, 1, 15, 16, 17, 63, 64, 96,
-      127, 128, 192, 235, 239, 240, 254, 255};
+  constexpr std::array<std::uint8_t, 16> anchors{0,   1,   15,  16,  17,  63,  64,  96,
+                                                 127, 128, 192, 235, 239, 240, 254, 255};
   for (std::size_t row = 0; row < plane0.height(); ++row) {
     for (std::size_t column = 0; column < plane0.width(); ++column) {
       plane0.row(row)[column] = anchors[(column + row * 3) % anchors.size()];
-      plane1.row(row)[column] =
-          anchors[(column * 5 + row * 7 + 2) % anchors.size()];
-      plane2.row(row)[column] =
-          anchors[(column * 11 + row * 13 + 4) % anchors.size()];
+      plane1.row(row)[column] = anchors[(column * 5 + row * 7 + 2) % anchors.size()];
+      plane2.row(row)[column] = anchors[(column * 11 + row * 13 + 4) % anchors.size()];
     }
   }
 }
 
-inline void make_planar_matrix_reference(
-    const PlanarMatrixCase& test_case, PlaneView<const std::uint8_t> source0,
-    PlaneView<const std::uint8_t> source1,
-    PlaneView<const std::uint8_t> source2, PlaneView<std::uint8_t> output0,
-    PlaneView<std::uint8_t> output1, PlaneView<std::uint8_t> output2) {
+inline void make_planar_matrix_reference(const PlanarMatrixCase& test_case,
+                                         PlaneView<const std::uint8_t> source0,
+                                         PlaneView<const std::uint8_t> source1,
+                                         PlaneView<const std::uint8_t> source2,
+                                         PlaneView<std::uint8_t> output0,
+                                         PlaneView<std::uint8_t> output1,
+                                         PlaneView<std::uint8_t> output2) {
   const auto coefficients =
       test_case.direction == PlanarMatrixDirection::YuvToRgb
-          ? make_planar_yuv_to_rgb_coefficients(
-                test_case.matrix, test_case.source_full,
-                test_case.destination_full)
-          : make_planar_rgb_to_yuv_coefficients(
-                test_case.matrix, test_case.source_full,
-                test_case.destination_full);
+          ? make_planar_yuv_to_rgb_coefficients(test_case.matrix, test_case.source_full,
+                                                test_case.destination_full)
+          : make_planar_rgb_to_yuv_coefficients(test_case.matrix, test_case.source_full,
+                                                test_case.destination_full);
   for (std::size_t row = 0; row < source0.height(); ++row) {
     for (std::size_t column = 0; column < source0.width(); ++column) {
       const int source_a = source0.row(row)[column];
@@ -241,119 +221,99 @@ inline void make_planar_matrix_reference(
         const int y = source_a + coefficients.input_offset;
         const int u = source_b - 128;
         const int v = source_c - 128;
-        output0.row(row)[column] = planar_shifted_component(
-            coefficients.y_g, coefficients.u_g, coefficients.v_g, y, u, v,
-            coefficients.output_offset, coefficients.shift);
-        output1.row(row)[column] = planar_shifted_component(
-            coefficients.y_b, coefficients.u_b, coefficients.v_b, y, u, v,
-            coefficients.output_offset, coefficients.shift);
-        output2.row(row)[column] = planar_shifted_component(
-            coefficients.y_r, coefficients.u_r, coefficients.v_r, y, u, v,
-            coefficients.output_offset, coefficients.shift);
+        output0.row(row)[column] =
+            planar_shifted_component(coefficients.y_g, coefficients.u_g, coefficients.v_g, y, u, v,
+                                     coefficients.output_offset, coefficients.shift);
+        output1.row(row)[column] =
+            planar_shifted_component(coefficients.y_b, coefficients.u_b, coefficients.v_b, y, u, v,
+                                     coefficients.output_offset, coefficients.shift);
+        output2.row(row)[column] =
+            planar_shifted_component(coefficients.y_r, coefficients.u_r, coefficients.v_r, y, u, v,
+                                     coefficients.output_offset, coefficients.shift);
       } else {
         const int g = source_a + coefficients.input_offset;
         const int b = source_b + coefficients.input_offset;
         const int r = source_c + coefficients.input_offset;
-        output0.row(row)[column] = planar_shifted_component(
-            coefficients.y_g, coefficients.y_b, coefficients.y_r, g, b, r,
-            coefficients.output_offset, coefficients.shift);
+        output0.row(row)[column] =
+            planar_shifted_component(coefficients.y_g, coefficients.y_b, coefficients.y_r, g, b, r,
+                                     coefficients.output_offset, coefficients.shift);
         output1.row(row)[column] = planar_shifted_component(
-            coefficients.u_g, coefficients.u_b, coefficients.u_r, g, b, r,
-            128, coefficients.shift);
+            coefficients.u_g, coefficients.u_b, coefficients.u_r, g, b, r, 128, coefficients.shift);
         output2.row(row)[column] = planar_shifted_component(
-            coefficients.v_g, coefficients.v_b, coefficients.v_r, g, b, r,
-            128, coefficients.shift);
+            coefficients.v_g, coefficients.v_b, coefficients.v_r, g, b, r, 128, coefficients.shift);
       }
     }
   }
 }
 
-inline void call_planar_matrix_kernel(const PlanarMatrixCase& test_case,
-                                      BYTE* (&destination)[3],
-                                      int (&destination_pitch)[3],
-                                      const BYTE* (&source)[3],
+inline void call_planar_matrix_kernel(const PlanarMatrixCase& test_case, BYTE* (&destination)[3],
+                                      int (&destination_pitch)[3], const BYTE* (&source)[3],
                                       const int (&source_pitch)[3],
                                       const ConversionMatrix& matrix) {
   const int width = static_cast<int>(test_case.width);
   const int height = static_cast<int>(test_case.height);
   if (test_case.direction == PlanarMatrixDirection::YuvToRgb) {
     if (test_case.variant.function == PlanarMatrixVariant::C) {
-      convert_yuv_to_planarrgb_c<ConversionDirection::YUV_TO_RGB,
-                                  std::uint8_t, true>(
-          destination, destination_pitch, source, source_pitch, width, height,
-          matrix, 8, 8, false);
+      convert_yuv_to_planarrgb_c<ConversionDirection::YUV_TO_RGB, std::uint8_t, true>(
+          destination, destination_pitch, source, source_pitch, width, height, matrix, 8, 8, false);
     } else if (test_case.variant.function == PlanarMatrixVariant::Sse2) {
-      convert_yuv_to_planarrgb_sse2<ConversionDirection::YUV_TO_RGB,
-                                     std::uint8_t, true>(
-          destination, destination_pitch, source, source_pitch, width, height,
-          matrix, 8, 8, false);
+      convert_yuv_to_planarrgb_sse2<ConversionDirection::YUV_TO_RGB, std::uint8_t, true>(
+          destination, destination_pitch, source, source_pitch, width, height, matrix, 8, 8, false);
     } else {
-      convert_yuv_to_planarrgb_avx2<ConversionDirection::YUV_TO_RGB,
-                                     std::uint8_t, true>(
-          destination, destination_pitch, source, source_pitch, width, height,
-          matrix, 8, 8, false);
+      convert_yuv_to_planarrgb_avx2<ConversionDirection::YUV_TO_RGB, std::uint8_t, true>(
+          destination, destination_pitch, source, source_pitch, width, height, matrix, 8, 8, false);
     }
     return;
   }
 
   if (test_case.variant.function == PlanarMatrixVariant::C) {
-    convert_yuv_to_planarrgb_c<ConversionDirection::RGB_TO_YUV,
-                                std::uint8_t, true>(
-        destination, destination_pitch, source, source_pitch, width, height,
-        matrix, 8, 8, false);
+    convert_yuv_to_planarrgb_c<ConversionDirection::RGB_TO_YUV, std::uint8_t, true>(
+        destination, destination_pitch, source, source_pitch, width, height, matrix, 8, 8, false);
   } else if (test_case.variant.function == PlanarMatrixVariant::Sse2) {
-    convert_yuv_to_planarrgb_sse2<ConversionDirection::RGB_TO_YUV,
-                                   std::uint8_t, true>(
-        destination, destination_pitch, source, source_pitch, width, height,
-        matrix, 8, 8, false);
+    convert_yuv_to_planarrgb_sse2<ConversionDirection::RGB_TO_YUV, std::uint8_t, true>(
+        destination, destination_pitch, source, source_pitch, width, height, matrix, 8, 8, false);
   } else {
-    convert_yuv_to_planarrgb_avx2<ConversionDirection::RGB_TO_YUV,
-                                   std::uint8_t, true>(
-        destination, destination_pitch, source, source_pitch, width, height,
-        matrix, 8, 8, false);
+    convert_yuv_to_planarrgb_avx2<ConversionDirection::RGB_TO_YUV, std::uint8_t, true>(
+        destination, destination_pitch, source, source_pitch, width, height, matrix, 8, 8, false);
   }
 }
 
 inline void run_planar_matrix_case(const PlanarMatrixCase& test_case) {
-  GuardedVideoBuffer<std::uint8_t> source0(
-      test_case.width, test_case.height, test_case.source_pitch, 64);
-  GuardedVideoBuffer<std::uint8_t> source1(
-      test_case.width, test_case.height, test_case.source_pitch, 64);
-  GuardedVideoBuffer<std::uint8_t> source2(
-      test_case.width, test_case.height, test_case.source_pitch, 64);
-  GuardedVideoBuffer<std::uint8_t> expected0(
-      test_case.width, test_case.height, test_case.destination_pitch, 64);
-  GuardedVideoBuffer<std::uint8_t> expected1(
-      test_case.width, test_case.height, test_case.destination_pitch, 64);
-  GuardedVideoBuffer<std::uint8_t> expected2(
-      test_case.width, test_case.height, test_case.destination_pitch, 64);
-  GuardedVideoBuffer<std::uint8_t> actual0(
-      test_case.width, test_case.height, test_case.destination_pitch, 64);
-  GuardedVideoBuffer<std::uint8_t> actual1(
-      test_case.width, test_case.height, test_case.destination_pitch, 64);
-  GuardedVideoBuffer<std::uint8_t> actual2(
-      test_case.width, test_case.height, test_case.destination_pitch, 64);
+  GuardedVideoBuffer<std::uint8_t> source0(test_case.width, test_case.height,
+                                           test_case.source_pitch, 64);
+  GuardedVideoBuffer<std::uint8_t> source1(test_case.width, test_case.height,
+                                           test_case.source_pitch, 64);
+  GuardedVideoBuffer<std::uint8_t> source2(test_case.width, test_case.height,
+                                           test_case.source_pitch, 64);
+  GuardedVideoBuffer<std::uint8_t> expected0(test_case.width, test_case.height,
+                                             test_case.destination_pitch, 64);
+  GuardedVideoBuffer<std::uint8_t> expected1(test_case.width, test_case.height,
+                                             test_case.destination_pitch, 64);
+  GuardedVideoBuffer<std::uint8_t> expected2(test_case.width, test_case.height,
+                                             test_case.destination_pitch, 64);
+  GuardedVideoBuffer<std::uint8_t> actual0(test_case.width, test_case.height,
+                                           test_case.destination_pitch, 64);
+  GuardedVideoBuffer<std::uint8_t> actual1(test_case.width, test_case.height,
+                                           test_case.destination_pitch, 64);
+  GuardedVideoBuffer<std::uint8_t> actual2(test_case.width, test_case.height,
+                                           test_case.destination_pitch, 64);
   fill_planar_matrix_inputs(source0.view(), source1.view(), source2.view());
   const auto source0_snapshot = source0.snapshot_active();
   const auto source1_snapshot = source1.snapshot_active();
   const auto source2_snapshot = source2.snapshot_active();
-  make_planar_matrix_reference(
-      test_case, source0.view().as_const(), source1.view().as_const(),
-      source2.view().as_const(), expected0.view(), expected1.view(),
-      expected2.view());
+  make_planar_matrix_reference(test_case, source0.view().as_const(), source1.view().as_const(),
+                               source2.view().as_const(), expected0.view(), expected1.view(),
+                               expected2.view());
 
   ConversionMatrix matrix{};
-  const int source_range = test_case.source_full ? AVS_COLORRANGE_FULL
-                                                  : AVS_COLORRANGE_LIMITED;
-  const int destination_range = test_case.destination_full
-                                    ? AVS_COLORRANGE_FULL
-                                    : AVS_COLORRANGE_LIMITED;
+  const int source_range = test_case.source_full ? AVS_COLORRANGE_FULL : AVS_COLORRANGE_LIMITED;
+  const int destination_range =
+      test_case.destination_full ? AVS_COLORRANGE_FULL : AVS_COLORRANGE_LIMITED;
   const bool matrix_built =
       test_case.direction == PlanarMatrixDirection::YuvToRgb
-          ? do_BuildMatrix_Yuv2Rgb(test_case.matrix, source_range,
-                                   destination_range, 13, 8, matrix)
-          : do_BuildMatrix_Rgb2Yuv(test_case.matrix, source_range,
-                                   destination_range, 15, 8, matrix);
+          ? do_BuildMatrix_Yuv2Rgb(test_case.matrix, source_range, destination_range, 13, 8, matrix)
+          : do_BuildMatrix_Rgb2Yuv(test_case.matrix, source_range, destination_range, 15, 8,
+                                   matrix);
   ASSERT_TRUE(matrix_built);
 
   BYTE* destination[3]{reinterpret_cast<BYTE*>(actual0.view().data()),
@@ -368,8 +328,8 @@ inline void run_planar_matrix_case(const PlanarMatrixCase& test_case) {
   const int source_pitch[3]{static_cast<int>(test_case.source_pitch),
                             static_cast<int>(test_case.source_pitch),
                             static_cast<int>(test_case.source_pitch)};
-  call_planar_matrix_kernel(test_case, destination, destination_pitch, source,
-                            source_pitch, matrix);
+  call_planar_matrix_kernel(test_case, destination, destination_pitch, source, source_pitch,
+                            matrix);
 
   EXPECT_TRUE(compare_exact(expected0.view().as_const(), actual0.view().as_const()))
       << test_case.name << " output G/Y";
@@ -377,14 +337,11 @@ inline void run_planar_matrix_case(const PlanarMatrixCase& test_case) {
       << test_case.name << " output B/U";
   EXPECT_TRUE(compare_exact(expected2.view().as_const(), actual2.view().as_const()))
       << test_case.name << " output R/V";
-  EXPECT_EQ(format_hash(hash_active(actual0.view().as_const())),
-            test_case.expected_hashes[0])
+  EXPECT_EQ(format_hash(hash_active(actual0.view().as_const())), test_case.expected_hashes[0])
       << test_case.name << " output G/Y";
-  EXPECT_EQ(format_hash(hash_active(actual1.view().as_const())),
-            test_case.expected_hashes[1])
+  EXPECT_EQ(format_hash(hash_active(actual1.view().as_const())), test_case.expected_hashes[1])
       << test_case.name << " output B/U";
-  EXPECT_EQ(format_hash(hash_active(actual2.view().as_const())),
-            test_case.expected_hashes[2])
+  EXPECT_EQ(format_hash(hash_active(actual2.view().as_const())), test_case.expected_hashes[2])
       << test_case.name << " output R/V";
   EXPECT_TRUE(source0.active_matches(source0_snapshot)) << test_case.name;
   EXPECT_TRUE(source1.active_matches(source1_snapshot)) << test_case.name;

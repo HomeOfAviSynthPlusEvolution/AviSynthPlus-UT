@@ -31,8 +31,9 @@ void fill_random(PlaneView<T> view, std::uint32_t seed) {
   for (std::size_t y = 0; y < view.height(); ++y) {
     for (std::size_t x = 0; x < view.width(); ++x) {
       if constexpr (std::is_floating_point_v<T>) {
-        view.row(y)[x] = static_cast<T>(static_cast<std::int32_t>(generator.next()) /
-                                        static_cast<double>(std::numeric_limits<std::int32_t>::max()));
+        view.row(y)[x] =
+            static_cast<T>(static_cast<std::int32_t>(generator.next()) /
+                           static_cast<double>(std::numeric_limits<std::int32_t>::max()));
       } else {
         view.row(y)[x] = static_cast<T>(generator.next());
       }
