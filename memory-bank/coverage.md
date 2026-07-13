@@ -73,6 +73,7 @@ belong to the test sources and test vectors.
 | `Limiter` | Public integer luma/chroma clamp filter | Public `Limiter` class for 8-bit and 10-bit YUV444 inputs | Direct constructor and `GetFrame` calls with fixed boundary values; independent luma/chroma clamp references, `paramscale` coverage, source full-pitch immutability, frame request checks, and output memory checks |
 | `Greyscale` | Public neutral-chroma conversion filter | Public `Greyscale` class for 8-bit YV12 and YUY2 inputs | Direct constructor and `GetFrame` calls with fixed luma/chroma patterns; independent neutral-chroma and luma-preservation references, source full-pitch immutability, frame request checks, and output memory checks |
 | `PlaneSwap` | Public UV swap and planar channel extraction filters | Public `SwapUV` and `SwapUVToY` classes for 8-bit YV24/YV12 inputs | Direct constructor and `GetFrame` calls with fixed plane patterns; independent plane-layout and subsampled extraction references, source full-pitch immutability, frame request checks, and output memory checks |
+| `Turn` | Public rotation filter dispatch and geometry | Public `Turn` class for 8-bit YV24 left, right, and 180-degree rotations | Direct constructor and `GetFrame` calls with fixed per-plane coordinate patterns; independent coordinate reference, output geometry, source full-pitch immutability, frame request checks, and output memory checks |
 
 ## Deliberate Gaps
 
