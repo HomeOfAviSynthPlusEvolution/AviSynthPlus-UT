@@ -19,6 +19,11 @@ std::vector<ResizeVertical8Case> resize_vertical8_cases() {
           32, 7, 5, 64, 64,
           Variant<ResizeFunction>{"avx2", resize_v_avx2_planar_uint8_t, IsaRequirement::Avx2},
           "6f9964479c013e1b"),
+      make_resize_vertical8_case(
+          64, 7, 5, 128, 128,
+          Variant<ResizeFunction>{"avx512_base", resize_v_avx512_planar_uint8_t_w_sr,
+                                  IsaRequirement::Avx512Base},
+          "f61ba16b6401d9cc"),
   };
 }
 
@@ -44,6 +49,16 @@ std::vector<ResizeVertical16Case> resize_vertical16_cases() {
           Variant<ResizeFunction>{"avx2", resize_v_avx2_planar_uint16_t<false>,
                                   IsaRequirement::Avx2},
           "b5418b1d30a8c90c"),
+      make_resize_vertical16_case(
+          10, 64, 7, 5, 256, 256,
+          Variant<ResizeFunction>{"avx512_base", resize_v_avx512_planar_uint16_t_w_sr<true>,
+                                  IsaRequirement::Avx512Base},
+          "02fb4bf0dcd8fe2e"),
+      make_resize_vertical16_case(
+          16, 64, 7, 5, 256, 256,
+          Variant<ResizeFunction>{"avx512_base", resize_v_avx512_planar_uint16_t_w_sr<false>,
+                                  IsaRequirement::Avx512Base},
+          "99b5ba812bd19422"),
   };
 }
 
@@ -58,6 +73,20 @@ std::vector<ResizeHorizontal8Case> resize_horizontal8_cases() {
           48, 32, 5, 64, 64,
           Variant<ResizeFunction>{"avx2", resizer_h_avx2_generic_uint8_t, IsaRequirement::Avx2},
           "540645551755f4d6"),
+      make_resize_horizontal8_case(
+          128, 192, 5, 192, 192,
+          Variant<ResizeFunction>{
+              "avx512_base",
+              resize_h_planar_uint8_avx512_permutex_vstripe_mpz_ks4_pretransposed_coeffs_base,
+              IsaRequirement::Avx512Base},
+          "e9ccafb1becf31a3", Avx512HorizontalCoefficientLayout{64, 1, 4}),
+      make_resize_horizontal8_case(
+          128, 192, 5, 192, 192,
+          Variant<ResizeFunction>{
+              "avx512_fast",
+              resize_h_planar_uint8_avx512_permutex_vstripe_mpz_ks4_pretransposed_coeffs_vnni,
+              IsaRequirement::Avx512Fast},
+          "e9ccafb1becf31a3", Avx512HorizontalCoefficientLayout{64, 1, 4}),
   };
 }
 
@@ -83,6 +112,38 @@ std::vector<ResizeHorizontal16Case> resize_horizontal16_cases() {
           Variant<ResizeFunction>{"avx2", resizer_h_avx2_generic_uint16_t<false>,
                                   IsaRequirement::Avx2},
           "fa53387644097a8d"),
+      make_resize_horizontal16_case(
+          10, 128, 192, 5, 384, 384,
+          Variant<ResizeFunction>{
+              "avx512_base",
+              resize_h_planar_uint16_avx512_permutex_vstripe_mp_2s32_ks4_pretransposed_coeffs_base<
+                  true>,
+              IsaRequirement::Avx512Base},
+          "8173e2caf8890551", Avx512HorizontalCoefficientLayout{64, 1, 4}),
+      make_resize_horizontal16_case(
+          10, 128, 192, 5, 384, 384,
+          Variant<ResizeFunction>{
+              "avx512_fast",
+              resize_h_planar_uint16_avx512_permutex_vstripe_mp_2s32_ks4_pretransposed_coeffs_vnni<
+                  true>,
+              IsaRequirement::Avx512Fast},
+          "8173e2caf8890551", Avx512HorizontalCoefficientLayout{64, 1, 4}),
+      make_resize_horizontal16_case(
+          16, 128, 192, 5, 384, 384,
+          Variant<ResizeFunction>{
+              "avx512_base",
+              resize_h_planar_uint16_avx512_permutex_vstripe_mp_2s32_ks4_pretransposed_coeffs_base<
+                  false>,
+              IsaRequirement::Avx512Base},
+          "45babd3d949d3205", Avx512HorizontalCoefficientLayout{64, 1, 4}),
+      make_resize_horizontal16_case(
+          16, 128, 192, 5, 384, 384,
+          Variant<ResizeFunction>{
+              "avx512_fast",
+              resize_h_planar_uint16_avx512_permutex_vstripe_mp_2s32_ks4_pretransposed_coeffs_vnni<
+                  false>,
+              IsaRequirement::Avx512Fast},
+          "45babd3d949d3205", Avx512HorizontalCoefficientLayout{64, 1, 4}),
   };
 }
 
@@ -95,6 +156,10 @@ std::vector<ResizeVerticalFloatCase> resize_vertical_float_cases() {
           40, 7, 5, 192, 192,
           Variant<ResizeFunction>{"avx2_fma", resize_v_avx2_planar_float_w_sr,
                                   IsaRequirement::Avx2Fma}),
+      make_resize_vertical_float_case(
+          64, 7, 5, 320, 320,
+          Variant<ResizeFunction>{"avx512_base", resize_v_avx512_planar_float_w_sr,
+                                  IsaRequirement::Avx512Base}),
   };
 }
 
@@ -107,6 +172,10 @@ std::vector<ResizeHorizontalFloatCase> resize_horizontal_float_cases() {
           48, 32, 5, 256, 128,
           Variant<ResizeFunction>{"avx2_fma", resizer_h_avx2_generic_float_pix16_sub4_ks_4_8_16,
                                   IsaRequirement::Avx2Fma}),
+      make_resize_horizontal_float_case(
+          64, 64, 5, 320, 320,
+          Variant<ResizeFunction>{"avx512_base", resize_h_planar_float_avx512_permutex_vstripe_ks4,
+                                  IsaRequirement::Avx512Base}),
   };
 }
 
