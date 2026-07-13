@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "layer_test_helpers.h"
+#include "layer_colorkey_test_helpers.h"
 #include "layer_invert_test_helpers.h"
 #include "layer_mask_test_helpers.h"
 #include "layer_packed_blend_test_helpers.h"
@@ -203,6 +204,42 @@ TEST_P(LayerMaskKernels, MatchesIndependentReference) {
 
 INSTANTIATE_TEST_SUITE_P(Kernels, LayerMaskKernels, ::testing::ValuesIn(layer_mask_cases()),
                          [](const ::testing::TestParamInfo<LayerMaskCase>& info) {
+                           return info.param.name;
+                         });
+
+std::vector<LayerColorKeyMaskCase> layer_colorkey_cases() {
+  constexpr std::size_t width_pixels = 13;
+  constexpr std::size_t height = 3;
+  constexpr std::size_t pitch = 64;
+  constexpr int color = 0x00c87828;
+  constexpr int tolerance_b = 3;
+  constexpr int tolerance_g = 5;
+  constexpr int tolerance_r = 7;
+  return {
+      make_layer_colorkey_case(
+          width_pixels, height, pitch, color, tolerance_b, tolerance_g, tolerance_r,
+          Variant<LayerColorKeyMaskFunction>{"sse2", colorkeymask_sse2, IsaRequirement::Sse2},
+          "0c2bba8d6e79353b"),
+      make_layer_colorkey_case(
+          width_pixels, height, pitch, color, tolerance_b, tolerance_g, tolerance_r,
+          Variant<LayerColorKeyMaskFunction>{"avx2", colorkeymask_avx2, IsaRequirement::Avx2},
+          "0c2bba8d6e79353b"),
+  };
+}
+
+class LayerColorKeyMaskKernels : public ::testing::TestWithParam<LayerColorKeyMaskCase> {};
+
+TEST_P(LayerColorKeyMaskKernels, MatchesIndependentReference) {
+  const auto& test_case = GetParam();
+  if (!variant_supported(test_case.variant, CpuFeatures::detect())) {
+    GTEST_SKIP() << "host does not support " << test_case.variant.name;
+  }
+  run_layer_colorkey_case(test_case);
+}
+
+INSTANTIATE_TEST_SUITE_P(Kernels, LayerColorKeyMaskKernels,
+                         ::testing::ValuesIn(layer_colorkey_cases()),
+                         [](const ::testing::TestParamInfo<LayerColorKeyMaskCase>& info) {
                            return info.param.name;
                          });
 
