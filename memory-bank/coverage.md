@@ -79,9 +79,9 @@ belong to the test sources and test vectors.
   two-pass resize path.
 - Exhaustive dimension, pitch, alignment-offset, pattern, and seed matrices.
 - ConvertBits Floyd-Steinberg/filter-level paths and exhaustive conversion
-  combinations; audio, script execution, filter graphs, plugin loading,
-  distribution integration, Windows/MSVC execution, and unsupported-ISA or
-  FMA-specific dispatch auditing.
+  combinations; audio filter-level behavior and audio I/O; script execution,
+  filter graphs, plugin loading, distribution integration, Windows/MSVC
+  execution, and unsupported-ISA or FMA-specific dispatch auditing.
 
 ## Maintenance Rules
 

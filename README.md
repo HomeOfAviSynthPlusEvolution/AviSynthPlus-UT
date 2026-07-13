@@ -1,11 +1,12 @@
 # AviSynthPlus-UT
 
-External C++17 unit tests for selected AviSynthPlus internal video kernels.
-The upstream project is pinned as a read-only Git submodule and is never
-modified by the test build.
+External C++17 unit tests for selected AviSynthPlus internal video and audio kernels.
+The upstream project is pinned as a Git submodule; the test build never
+modifies it. Minimal production fixes discovered by the tests are kept as
+separate upstream changes.
 
-The suite targets internal video kernels and is designed to grow as coverage
-is added. Tests emphasize independent behavioral checks, deterministic output,
+The suite targets internal video and public audio kernels and is designed to
+grow as coverage is added. Tests emphasize independent behavioral checks, deterministic output,
 scalar/SIMD equivalence, active-pixel hashing, input immutability, row padding,
 and allocation guards without modifying the upstream source.
 
