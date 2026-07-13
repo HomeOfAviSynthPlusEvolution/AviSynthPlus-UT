@@ -82,6 +82,7 @@ belong to the test sources and test vectors.
 | `ColorKeyMask` | Public RGB32 color-key alpha mask filter | Public `ColorKeyMask` class for 8-bit RGB32 input | Direct constructor with inclusive per-channel tolerance boundary values; independent alpha-clearing reference, source full-pitch immutability, frame requests, and output memory checks |
 | `Invert` | Public selected-plane inversion filter | Public `Invert` class for 8-bit YV24 input | Direct constructor for selected `Y` and `U` channels; independent luma/chroma inversion and unselected-plane copy references, source full-pitch immutability, frame requests, and output memory checks |
 | `Subtract` | Public centered difference filter | Public `Subtract` class for 8-bit YV24 inputs | Direct constructor with strict two-frame source sequences; independent luma/chroma centered-difference and clamp references, source full-pitch immutability, frame requests, and output memory checks |
+| `Layer` | Public RGB32 alpha-weighted add filter | Public `Layer` class on the native 8-bit RGB32 `Add` path | Direct constructor with explicit 0.5 opacity and a one-frame overlay; independent per-channel alpha-weighted reference including alpha, source full-pitch immutability, frame requests, and output memory checks. Other operations and script conversion remain uncovered |
 
 ## Deliberate Gaps
 

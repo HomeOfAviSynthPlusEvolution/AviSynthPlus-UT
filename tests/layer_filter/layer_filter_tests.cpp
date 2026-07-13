@@ -272,4 +272,79 @@ TEST(SubtractFilter, AppliesLumaAndChromaCenteredDifferencesAcrossFrameSequences
   EXPECT_EQ(FrameSnapshot::capture(second_frame1, vi), second_before);
 }
 
+std::uint8_t layer_add_reference(std::uint8_t base, std::uint8_t overlay,
+                                 std::uint8_t overlay_alpha) {
+  constexpr std::uint32_t max_value = 255;
+  constexpr std::uint32_t half = 127;
+  constexpr std::uint32_t opacity = 128;
+  const auto effective_alpha =
+      (static_cast<std::uint32_t>(overlay_alpha) * opacity + half) / max_value;
+  const auto numerator = static_cast<std::uint32_t>(base) * (max_value - effective_alpha) +
+                         static_cast<std::uint32_t>(overlay) * effective_alpha + half;
+  return static_cast<std::uint8_t>(numerator / max_value);
+}
+
+TEST(LayerFilter, BlendsRgb32ChannelsUsingOverlayAlphaAndExplicitOpacity) {
+  AviSynthEnvironment environment;
+  constexpr int width = 7;
+  constexpr int height = 2;
+  const auto vi_two_frames =
+      make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_BGR32, 2, 25, 1});
+  const auto vi_one_frame =
+      make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_BGR32, 1, 25, 1});
+
+  PVideoFrame base_frame0 = environment.get()->NewVideoFrame(vi_two_frames);
+  PVideoFrame base_frame1 = environment.get()->NewVideoFrame(vi_two_frames);
+  fill_plane_full_pitch(base_frame0, 0x81, DEFAULT_PLANE);
+  fill_plane_full_pitch(base_frame1, 0x82, DEFAULT_PLANE);
+  const std::vector<Rgb32Pixel> base_pixels{
+      {0, 10, 20, 30},    {32, 64, 96, 128},    {255, 240, 200, 160}, {17, 33, 49, 65},
+      {80, 96, 112, 128}, {144, 160, 176, 192}, {220, 230, 240, 250}};
+  write_rgb32(base_frame0, base_pixels);
+  write_rgb32(base_frame1, base_pixels);
+
+  PVideoFrame overlay_frame = environment.get()->NewVideoFrame(vi_one_frame);
+  fill_plane_full_pitch(overlay_frame, 0x93, DEFAULT_PLANE);
+  const std::vector<Rgb32Pixel> overlay_pixels{
+      {255, 200, 100, 0},  {1, 3, 5, 1},        {9, 27, 81, 64},   {32, 96, 160, 127},
+      {64, 128, 192, 128}, {200, 100, 40, 254}, {0, 128, 255, 255}};
+  write_rgb32(overlay_frame, overlay_pixels);
+
+  const auto base_before = FrameSnapshot::capture(base_frame1, vi_two_frames);
+  const auto overlay_before = FrameSnapshot::capture(overlay_frame, vi_one_frame);
+  auto* base_clip = new FrameSequenceClip(vi_two_frames, {base_frame0, base_frame1});
+  auto* overlay_clip = new StaticFrameClip(vi_one_frame, overlay_frame);
+  const PClip base(base_clip);
+  const PClip overlay(overlay_clip);
+
+  Layer filter(base, overlay, nullptr, "Add", -1, 0, 0, 0, true, 0.5f, PLACEMENT_MPEG1,
+               environment.get());
+  const PVideoFrame output = filter.GetFrame(1, environment.get());
+
+  for (int y = 0; y < height; ++y) {
+    const auto* row = output->GetReadPtr() + y * output->GetPitch();
+    for (int x = 0; x < width; ++x) {
+      const auto& base_pixel = base_pixels[static_cast<std::size_t>(x)];
+      const auto& overlay_pixel = overlay_pixels[static_cast<std::size_t>(x)];
+      EXPECT_EQ(row[4 * x + 0],
+                layer_add_reference(base_pixel.blue, overlay_pixel.blue, overlay_pixel.alpha))
+          << "blue x=" << x << " y=" << y;
+      EXPECT_EQ(row[4 * x + 1],
+                layer_add_reference(base_pixel.green, overlay_pixel.green, overlay_pixel.alpha))
+          << "green x=" << x << " y=" << y;
+      EXPECT_EQ(row[4 * x + 2],
+                layer_add_reference(base_pixel.red, overlay_pixel.red, overlay_pixel.alpha))
+          << "red x=" << x << " y=" << y;
+      EXPECT_EQ(row[4 * x + 3],
+                layer_add_reference(base_pixel.alpha, overlay_pixel.alpha, overlay_pixel.alpha))
+          << "alpha x=" << x << " y=" << y;
+    }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(base_clip->frame_requests(), std::vector<int>{1});
+  EXPECT_EQ(overlay_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(base_frame1, vi_two_frames), base_before);
+  EXPECT_EQ(FrameSnapshot::capture(overlay_frame, vi_one_frame), overlay_before);
+}
+
 }  // namespace
