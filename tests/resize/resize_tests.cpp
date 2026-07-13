@@ -368,6 +368,10 @@ std::vector<ResizeVerticalFloatCase> resize_vertical_float_cases() {
           Variant<ResizeFunction>{"avx2_fma", resize_v_avx2_planar_float_w_sr,
                                   IsaRequirement::Avx2Fma}),
       make_resize_vertical_float_case(
+          40, 7, 5, 192, 192,
+          Variant<ResizeFunction>{"avx2_fma_base", resize_v_avx2_planar_float,
+                                  IsaRequirement::Avx2Fma}),
+      make_resize_vertical_float_case(
           64, 7, 5, 320, 320,
           Variant<ResizeFunction>{"avx512_base", resize_v_avx512_planar_float_w_sr,
                                   IsaRequirement::Avx512Base}),
