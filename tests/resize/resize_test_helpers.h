@@ -42,10 +42,36 @@ namespace avsut::test {
 
 using ResizeFunction = void (*)(BYTE*, const BYTE*, int, int, ResamplingProgram*, int, int, int);
 
+enum class ResizeFilter {
+  Triangle,
+  Lanczos3,
+};
+
+inline std::unique_ptr<ResamplingFunction> make_resize_filter(ResizeFilter filter) {
+  switch (filter) {
+    case ResizeFilter::Triangle:
+      return std::make_unique<TriangleFilter>();
+    case ResizeFilter::Lanczos3:
+      return std::make_unique<LanczosFilter>(3);
+  }
+  throw std::invalid_argument("unsupported resize filter");
+}
+
+inline const char* resize_filter_name(ResizeFilter filter) {
+  switch (filter) {
+    case ResizeFilter::Triangle:
+      return "Triangle";
+    case ResizeFilter::Lanczos3:
+      return "Lanczos3";
+  }
+  return "Unknown";
+}
+
 struct Avx512HorizontalCoefficientLayout {
   int samples_in_group{};
   int group_count{};
   int prepared_filter_size{};
+  int expected_filter_size_real{};
 };
 
 class ScriptEnvironmentOwner {
@@ -74,12 +100,13 @@ class ScriptEnvironmentOwner {
 class ResamplingProgramOwner {
  public:
   ResamplingProgramOwner(int source_size, int target_size, int bits_per_pixel,
-                         int coefficient_alignment = 16)
+                         int coefficient_alignment = 16,
+                         ResizeFilter filter = ResizeFilter::Triangle)
       : environment_(),
-        filter_(),
-        program_(filter_.GetResamplingProgram(source_size, 0.0, static_cast<double>(source_size),
-                                              target_size, bits_per_pixel, 0.5, 0.5,
-                                              environment_.get())) {
+        filter_(make_resize_filter(filter)),
+        program_(filter_->GetResamplingProgram(source_size, 0.0, static_cast<double>(source_size),
+                                               target_size, bits_per_pixel, 0.5, 0.5,
+                                               environment_.get())) {
     if (!program_) {
       throw std::runtime_error("GetResamplingProgram returned null");
     }
@@ -106,7 +133,7 @@ class ResamplingProgramOwner {
 
  private:
   ScriptEnvironmentOwner environment_;
-  TriangleFilter filter_;
+  std::unique_ptr<ResamplingFunction> filter_;
   std::unique_ptr<ResamplingProgram> program_;
 };
 
@@ -142,6 +169,7 @@ struct ResizeHorizontal8Case {
   Variant<ResizeFunction> variant;
   std::string expected_hash;
   std::optional<Avx512HorizontalCoefficientLayout> avx512_coefficient_layout;
+  ResizeFilter filter{ResizeFilter::Triangle};
   std::string name;
 };
 
@@ -155,6 +183,7 @@ struct ResizeHorizontal16Case {
   Variant<ResizeFunction> variant;
   std::string expected_hash;
   std::optional<Avx512HorizontalCoefficientLayout> avx512_coefficient_layout;
+  ResizeFilter filter{ResizeFilter::Triangle};
   std::string name;
 };
 
@@ -222,25 +251,26 @@ inline std::string resize_vertical16_case_name(int bits_per_pixel, std::size_t w
 
 inline std::string resize_horizontal8_case_name(std::size_t source_width, std::size_t target_width,
                                                 std::size_t height, std::size_t source_pitch,
-                                                std::size_t destination_pitch,
+                                                std::size_t destination_pitch, ResizeFilter filter,
                                                 const Variant<ResizeFunction>& variant) {
   std::ostringstream stream;
   stream << "Plane8Horizontal_SourceWidth" << source_width << "_TargetWidth" << target_width
          << "_Height" << height << "_SrcPitch" << source_pitch << "_DstPitch" << destination_pitch
-         << "_FilterTriangle_PatternBoundaryRamp_" << resize_variant_name(variant);
+         << "_Filter" << resize_filter_name(filter) << "_PatternBoundaryRamp_"
+         << resize_variant_name(variant);
   return stream.str();
 }
 
 inline std::string resize_horizontal16_case_name(int bits_per_pixel, std::size_t source_width,
                                                  std::size_t target_width, std::size_t height,
                                                  std::size_t source_pitch,
-                                                 std::size_t destination_pitch,
+                                                 std::size_t destination_pitch, ResizeFilter filter,
                                                  const Variant<ResizeFunction>& variant) {
   std::ostringstream stream;
   stream << "Plane16Horizontal_Bits" << bits_per_pixel << "_SourceWidth" << source_width
          << "_TargetWidth" << target_width << "_Height" << height << "_SrcPitch" << source_pitch
-         << "_DstPitch" << destination_pitch << "_FilterTriangle_PatternBoundaryRamp_"
-         << resize_variant_name(variant);
+         << "_DstPitch" << destination_pitch << "_Filter" << resize_filter_name(filter)
+         << "_PatternBoundaryRamp_" << resize_variant_name(variant);
   return stream.str();
 }
 
@@ -311,7 +341,8 @@ inline ResizeHorizontal8Case make_resize_horizontal8_case(
     std::size_t source_width, std::size_t target_width, std::size_t height,
     std::size_t source_pitch, std::size_t destination_pitch, Variant<ResizeFunction> variant,
     std::string expected_hash = {},
-    std::optional<Avx512HorizontalCoefficientLayout> avx512_coefficient_layout = std::nullopt) {
+    std::optional<Avx512HorizontalCoefficientLayout> avx512_coefficient_layout = std::nullopt,
+    ResizeFilter filter = ResizeFilter::Triangle) {
   ResizeHorizontal8Case result{source_width,
                                target_width,
                                height,
@@ -320,10 +351,11 @@ inline ResizeHorizontal8Case make_resize_horizontal8_case(
                                std::move(variant),
                                std::move(expected_hash),
                                std::move(avx512_coefficient_layout),
+                               filter,
                                {}};
-  result.name =
-      resize_horizontal8_case_name(result.source_width, result.target_width, result.height,
-                                   result.source_pitch, result.destination_pitch, result.variant);
+  result.name = resize_horizontal8_case_name(
+      result.source_width, result.target_width, result.height, result.source_pitch,
+      result.destination_pitch, result.filter, result.variant);
   return result;
 }
 
@@ -331,7 +363,8 @@ inline ResizeHorizontal16Case make_resize_horizontal16_case(
     int bits_per_pixel, std::size_t source_width, std::size_t target_width, std::size_t height,
     std::size_t source_pitch, std::size_t destination_pitch, Variant<ResizeFunction> variant,
     std::string expected_hash = {},
-    std::optional<Avx512HorizontalCoefficientLayout> avx512_coefficient_layout = std::nullopt) {
+    std::optional<Avx512HorizontalCoefficientLayout> avx512_coefficient_layout = std::nullopt,
+    ResizeFilter filter = ResizeFilter::Triangle) {
   ResizeHorizontal16Case result{bits_per_pixel,
                                 source_width,
                                 target_width,
@@ -341,10 +374,11 @@ inline ResizeHorizontal16Case make_resize_horizontal16_case(
                                 std::move(variant),
                                 std::move(expected_hash),
                                 std::move(avx512_coefficient_layout),
+                                filter,
                                 {}};
   result.name = resize_horizontal16_case_name(
       result.bits_per_pixel, result.source_width, result.target_width, result.height,
-      result.source_pitch, result.destination_pitch, result.variant);
+      result.source_pitch, result.destination_pitch, result.filter, result.variant);
   return result;
 }
 
@@ -588,7 +622,8 @@ void run_resize_horizontal_case(
     std::size_t source_width, std::size_t target_width, std::size_t height,
     std::size_t source_pitch, std::size_t destination_pitch, int bits_per_pixel,
     const Variant<ResizeFunction>& variant, const std::string& expected_hash,
-    std::optional<Avx512HorizontalCoefficientLayout> avx512_coefficient_layout) {
+    std::optional<Avx512HorizontalCoefficientLayout> avx512_coefficient_layout,
+    ResizeFilter filter) {
   GuardedVideoBuffer<T> source(source_width, height, source_pitch, 64);
   GuardedVideoBuffer<T> expected(target_width, height, destination_pitch, 64);
   GuardedVideoBuffer<T> actual(target_width, height, destination_pitch, 64);
@@ -596,8 +631,14 @@ void run_resize_horizontal_case(
   const auto source_snapshot = source.snapshot_active();
 
   ResamplingProgramOwner program(static_cast<int>(source_width), static_cast<int>(target_width),
-                                 bits_per_pixel);
+                                 bits_per_pixel, 16, filter);
   if (avx512_coefficient_layout.has_value()) {
+    if (avx512_coefficient_layout->expected_filter_size_real > 0) {
+      ASSERT_EQ(program.get()->filter_size_real,
+                avx512_coefficient_layout->expected_filter_size_real)
+          << "variant=" << variant.name << " source_width=" << source_width
+          << " target_width=" << target_width << " unexpected filter_size_real";
+    }
     program.prepare_avx512_horizontal_coefficients(*avx512_coefficient_layout);
   }
   apply_resize_horizontal_reference(source.view().as_const(), expected.view(), *program.get(),
@@ -626,14 +667,14 @@ inline void run_resize_horizontal8_case(const ResizeHorizontal8Case& test_case) 
   run_resize_horizontal_case<std::uint8_t>(
       test_case.source_width, test_case.target_width, test_case.height, test_case.source_pitch,
       test_case.destination_pitch, 8, test_case.variant, test_case.expected_hash,
-      test_case.avx512_coefficient_layout);
+      test_case.avx512_coefficient_layout, test_case.filter);
 }
 
 inline void run_resize_horizontal16_case(const ResizeHorizontal16Case& test_case) {
   run_resize_horizontal_case<std::uint16_t>(
       test_case.source_width, test_case.target_width, test_case.height, test_case.source_pitch,
       test_case.destination_pitch, test_case.bits_per_pixel, test_case.variant,
-      test_case.expected_hash, test_case.avx512_coefficient_layout);
+      test_case.expected_hash, test_case.avx512_coefficient_layout, test_case.filter);
 }
 
 inline std::uint64_t resize_float_ulp_distance(float lhs, float rhs) noexcept {
