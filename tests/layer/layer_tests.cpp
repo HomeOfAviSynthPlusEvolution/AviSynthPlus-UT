@@ -6,6 +6,7 @@
 #include "layer_mask_test_helpers.h"
 #include "layer_packed_blend_test_helpers.h"
 #include "layer_planarrgb_add_test_helpers.h"
+#include "layer_rgb32_add_test_helpers.h"
 #include "layer_rgb32_fast_test_helpers.h"
 
 #include "support/cpu_features.h"
@@ -274,6 +275,49 @@ TEST_P(LayerRgb32FastKernels, MatchesIndependentReference) {
 INSTANTIATE_TEST_SUITE_P(Kernels, LayerRgb32FastKernels,
                          ::testing::ValuesIn(layer_rgb32_fast_cases()),
                          [](const ::testing::TestParamInfo<LayerRgb32FastCase>& info) {
+                           return info.param.name;
+                         });
+
+std::vector<LayerRgb32AddCase> layer_rgb32_add_cases() {
+  constexpr std::size_t width_pixels = 7;
+  constexpr std::size_t height = 3;
+  constexpr std::size_t destination_pitch = 64;
+  constexpr std::size_t overlay_pitch = 80;
+  constexpr int full_level = 257;
+  constexpr int partial_level = 173;
+  return {
+      make_layer_rgb32_add_case(
+          width_pixels, height, destination_pitch, overlay_pitch, full_level, "Full257",
+          Variant<LayerRgb32AddFunction>{"sse2", layer_rgb32_add_sse2<false>, IsaRequirement::Sse2},
+          "c1653fdf75d25f9e"),
+      make_layer_rgb32_add_case(
+          width_pixels, height, destination_pitch, overlay_pitch, full_level, "Full257",
+          Variant<LayerRgb32AddFunction>{"avx2", layer_rgb32_add_avx2<false>, IsaRequirement::Avx2},
+          "c1653fdf75d25f9e"),
+      make_layer_rgb32_add_case(
+          width_pixels, height, destination_pitch, overlay_pitch, partial_level, "Partial173",
+          Variant<LayerRgb32AddFunction>{"sse2", layer_rgb32_add_sse2<false>, IsaRequirement::Sse2},
+          "8a5a44620cfb2a74"),
+      make_layer_rgb32_add_case(
+          width_pixels, height, destination_pitch, overlay_pitch, partial_level, "Partial173",
+          Variant<LayerRgb32AddFunction>{"avx2", layer_rgb32_add_avx2<false>, IsaRequirement::Avx2},
+          "8a5a44620cfb2a74"),
+  };
+}
+
+class LayerRgb32AddKernels : public ::testing::TestWithParam<LayerRgb32AddCase> {};
+
+TEST_P(LayerRgb32AddKernels, MatchesIndependentReference) {
+  const auto& test_case = GetParam();
+  if (!variant_supported(test_case.variant, CpuFeatures::detect())) {
+    GTEST_SKIP() << "host does not support " << test_case.variant.name;
+  }
+  run_layer_rgb32_add_case(test_case);
+}
+
+INSTANTIATE_TEST_SUITE_P(Kernels, LayerRgb32AddKernels,
+                         ::testing::ValuesIn(layer_rgb32_add_cases()),
+                         [](const ::testing::TestParamInfo<LayerRgb32AddCase>& info) {
                            return info.param.name;
                          });
 
