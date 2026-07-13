@@ -82,8 +82,9 @@ the normal direct-filter boundary; it still uses a real environment and
 test-owned clips, and it must not add registration, plugin-loading, or script
 graph coverage. Finding tests retain an asserted production contract even when
 the current upstream revision does not reproduce the suspected defect. Memory
-checks use bounded, realistic allocations and do not manufacture pathological
-audio configurations or intentional out-of-memory conditions.
+checks use bounded, realistic allocations and valid media metadata. They do
+not manufacture pathological audio configurations such as implausible channel
+counts or sample rates, or intentional out-of-memory conditions.
 
 The direct audio-kernel boundary is limited to public pointer/count conversion
 functions. A separate audio-filter tier may construct public core audio filter
