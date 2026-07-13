@@ -48,6 +48,12 @@ belong to the test sources and test vectors.
 - `Turn` ARM/NEON variants: the current execution scope is Linux x86.
 - `Turn` filter frame allocation, dispatch, and script-environment behavior:
   these are filter-level concerns rather than direct kernel unit tests.
+- AVX-512 `GetAlphaRect` is Windows/GDI-only and remains outside the current
+  Linux execution scope.
+- AVX-512 resize implementations that are disabled or non-production are not
+  covered: float `4s4_ks16` (`#if 0`), the old float vertical kernel, the
+  `PF_GENERIC_UINT_TEST` integer debug fallbacks, and the unenabled `DTL2D`
+  two-pass resize path.
 - Exhaustive dimension, pitch, alignment-offset, pattern, and seed matrices.
 - ConvertBits Floyd-Steinberg/filter-level paths and exhaustive conversion
   combinations; audio, script execution, filter graphs, plugin loading,
