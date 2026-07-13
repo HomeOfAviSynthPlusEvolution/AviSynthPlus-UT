@@ -67,6 +67,7 @@ belong to the test sources and test vectors.
 | `AviHelper` | Packed V210 4:2:2 conversion in both directions | `yuv422p10_to_v210` and `v210_to_yuv422p10` | Fixed 10-bit YUV 4:2:2 anchors with a complete 6-pixel group and a two-pixel tail; independent bit-field references, active-output hashes, source immutability, permitted full-group tail writes through the aligned row allowance, protected row padding, and allocation guard checks |
 | `AviHelper` | Planar YUV 4:2:2 to and from P210/P216 storage | `yuv42xp10_16_to_Px10_16` and `Px10_16_to_yuv42xp10_16` | Parameterized 10-bit shifted and native 16-bit branches with vector blocks and scalar tails; independent luma/chroma packing references, round-trip plane checks, environment-backed CPU dispatch, active hashes, input immutability, row padding, and allocation guard checks |
 | `GeneralConvolution` | Public 3x3 and 5x5 planar video filtering | Public `GeneralConvolution` class for 8-bit, 10-bit, and float planar inputs | Direct constructor and `GetFrame` calls through a real `IScriptEnvironment` and strict synthetic clip; independent edge-replicating integer and float references, 10-bit clipping, source full-pitch immutability, frame request checks, and output memory checks |
+| `Levels` | Integer luma/chroma level mapping | Public `Levels` class for 8-bit Y8 and YV24 inputs | Direct constructor and `GetFrame` calls with fixed boundary values; independent full-range and coring references, source full-pitch immutability, frame request checks, and output memory checks |
 
 ## Deliberate Gaps
 
