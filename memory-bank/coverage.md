@@ -1,16 +1,24 @@
 # Coverage Snapshot
 
-This document records which plugin operations are covered, which upstream
-implementation variants are exercised, and how the tests establish the
-behavior. Exact dimensions, seeds, hashes, and parameterized instance names
-belong to the test sources and test vectors.
+This document records which support contracts, direct kernels, and public
+video-filter behaviors are covered, which upstream implementation variants are
+exercised, and how the tests establish the behavior. Exact dimensions, seeds,
+hashes, and parameterized instance names belong to the test sources and test
+vectors.
 
-| Plugin | Operation | Covered implementation types | Test method |
+## Support Coverage
+
+| Area | Operation | Covered implementation types | Test method |
 | --- | --- | --- | --- |
 | `Support layer` | Plane views and guarded buffers | C++17 RAII views and buffers | Unit checks for byte-pitch row addressing, invalid pitches, active-pixel snapshots, row padding, and allocation guards |
 | `Support layer` | Guarded audio buffers and sample references | C++17 RAII flat buffers for U8, S16, S24, S32, and F32 storage | Fixed boundary-value samples, signed 24-bit packing, alignment offsets, active-byte snapshots, row padding, and allocation guards |
 | `Support layer` | Deterministic data and stable hashes | XorShift32 input generation and XXH3 64-bit hashing | Known-sequence and repeatability checks; hashes cover active bytes only and exclude padding |
 | `Support layer` | CPU features and variant registry | Scalar, SSE2, SSSE3, AVX2, AVX2+FMA3, and AVX-512 requirement predicates | Injectable feature sets verify exact requirements; unsupported SIMD variants remain visible as skipped |
+
+## Video Kernel Coverage
+
+| Area | Operation | Covered implementation types | Test method |
+| --- | --- | --- | --- |
 | `Core` | `BitBlt` pitched row copy | Portable `memcpy`/row-loop implementation used by the Linux x86 build | Fixed byte pattern covers multi-row and single-row copies, distinct pitches, negative source pitch, alignment offsets, zero row size/height early returns, active-output XXH3 hashes, source immutability, row padding, and allocation guards |
 | `Limiter` | 8- and 16-bit plane clamp | 8-bit SSE2; 16-bit SSE2 and SSE4.1 | Fixed boundary-value pattern; independent exact clamp reference; in-place output, active-byte hash, padding, and guard checks |
 | `Overlay` | Masked merge for `MASK444`, `MASK420`, and `MASK422` | Integer C, SSE4.1, and AVX2 for 8/10/12/14/16-bit paths; float C, SSE4.1, and AVX2 | Fixed boundary-value planes and masks; independent placement/opacity reference; C/SIMD differential comparison; integer active-byte hashes; floating-point ULP comparison; input immutability, padding, and guard checks |
@@ -42,10 +50,6 @@ belong to the test sources and test vectors.
 | `Merge` | Floating-point weighted plane merge | C, SSE2, and AVX2+FMA3 kernels | Fixed finite random and mixed-magnitude/cancellation inputs; independent double reference; hybrid 4-ULP and `1e-4` absolute-floor comparison; scalar differential, finite-output, padding, guards, and second-input immutability checks; raw float hashes intentionally omitted |
 | `Merge` | YUY2 weighted chroma, weighted luma, and luma replacement | SSE2 kernels | Fixed boundary-value packed input with aligned vector blocks and scalar tails; independent byte-position and fixed-point reference; active-output hashes, second-input immutability, row padding, and allocation guard checks; public scalar counterparts are unavailable |
 | `Merge` | Integer and floating-point plane averaging | 8-/16-bit SSE2 and AVX2; float SSE2 and AVX2 | Fixed boundary-value or finite-anchor inputs with exact SIMD-block widths, unaligned addresses, and vector tails; independent rounded-integer or double reference; SSE2/AVX2 differential through common expected output; integer active-output hashes, float ULP/absolute comparison, second-input immutability, row padding, and allocation guard checks |
-| `ConvertAudio` | Basic integer sample conversion | C and SSE2 for 32<->16, 32<->8, and 16<->8; AVX2 for 32<->16 | Independent byte/word reference across signed endpoints and vector-width boundary counts; exact C/SIMD equality, active-output hashes, source immutability, padding, and guards |
-| `ConvertAudio` | Packed 24-bit sample conversion | C and SSSE3 for 32<->24, 24<->16, 24<->8, 16<->24, and 8<->24 | Independent little-endian 24-bit layout reference with sign-boundary anchors, 16-sample shuffle blocks, scalar tails, exact output hashes, source immutability, padding, and guards |
-| `ConvertAudio` | Integer/float sample conversion | C plus SSE2, SSE4.1, and AVX2 variants for 8-, 16-, and 32-bit paths | Fixed finite anchors around zero and full scale; independent integer reference or bounded float comparison, finite-output checks, active-output hashes for integer destinations, source immutability, padding, and guards |
-| `ConvertAudio` | 24-bit/float two-stage conversion | Public C, SSE2, SSE4.1, SSSE3, and AVX2 conversion combinations | `F32 -> S32 -> S24` and `S24 -> S32 -> F32` in the same order as `ConvertAudio`; fixed vector-boundary counts, in-place stage checks, exact packed bytes, bounded float comparison, active-output hashes, source immutability, padding, and guards |
 | `Resize/Resample` | Planar integer resampling with fixed Triangle, Lanczos3, Lanczos6, and Lanczos10 coefficients in both directions | Vertical: 8-bit SSE2, AVX2, and AVX-512 Base; 10- and 16-bit SSE2, AVX2, and AVX-512 Base. Horizontal: 8-bit and 10-/16-bit SSSE3 and AVX2, plus AVX-512 Base/Fast `ks4`; `ks8` downscale uses 8-bit `2s32` and 10-/16-bit `4s16`, while Lanczos3 mild scaling uses 8-bit `mpz` and 10-/16-bit `2s32` variants; Lanczos6 mild scaling uses 8-bit `mpz` and 10-/16-bit `mp` `ks16` variants; Lanczos10 uses variable-width 8-bit `2s32` `ks64` and 10-/16-bit `4s16` `ks48` variants | Fixed coefficient programs built through the public resampling setup; independent fixed-point reference; active-output XXH3 hashes; source immutability, row padding, and allocation guard checks. AVX-512 Base/Fast cases are qualified on a dedicated Linux AVX-512 host. |
 | `Resize/Resample` | Vertical 2:1 reduction with a 1:2:1 three-row blend and 1:3 final-row blend | 8-bit SSE2 | Fixed boundary/ramp packed rows with single- and multi-block aligned 16-byte widths; independent integer reference for interior and final output rows; active-output hash, source immutability, row padding, and allocation guard checks |
 | `Resize/Resample` | Planar float resampling with fixed Triangle, Lanczos3, Lanczos6, and Lanczos10 coefficients in both directions | Vertical: SSE2, AVX2+FMA3 base and memory-stream paths, and AVX-512 Base; horizontal: SSSE3, AVX2+FMA3 generic path, AVX2+FMA3 gather/permutex, transpose `ks4`, and permutex `ks4`, plus AVX-512 Base permutex `ks4`, `ks8`, `2s8_ks8`, `ks16`, and `2s8_ks16`, transpose `ks4` and `ks8`, and generic fallback | Fixed finite anchor pattern; independent double reference; 4-ULP comparison with `1e-4` absolute floor; finite-output, source immutability, row padding, and allocation guard checks; raw float hashes intentionally omitted. AVX-512 Base cases are qualified on a dedicated Linux AVX-512 host. |
@@ -66,6 +70,20 @@ belong to the test sources and test vectors.
 | `AviHelper` | Packed V308/V408/V410 to planar YUV conversion | `v308_to_yuv444p8`, `v408_to_yuva444p8`, and `v410_to_yuv444p10` | Fixed packed channel and 10-bit bit-field anchors with distinct planar output pitches; independent channel extraction references, active-plane hashes, source immutability, row padding, and allocation guard checks |
 | `AviHelper` | Packed V210 4:2:2 conversion in both directions | `yuv422p10_to_v210` and `v210_to_yuv422p10` | Fixed 10-bit YUV 4:2:2 anchors with a complete 6-pixel group and a two-pixel tail; independent bit-field references, active-output hashes, source immutability, permitted full-group tail writes through the aligned row allowance, protected row padding, and allocation guard checks |
 | `AviHelper` | Planar YUV 4:2:2 to and from P210/P216 storage | `yuv42xp10_16_to_Px10_16` and `Px10_16_to_yuv42xp10_16` | Parameterized 10-bit shifted and native 16-bit branches with vector blocks and scalar tails; independent luma/chroma packing references, round-trip plane checks, environment-backed CPU dispatch, active hashes, input immutability, row padding, and allocation guard checks |
+
+## Audio Kernel Coverage
+
+| Area | Operation | Covered implementation types | Test method |
+| --- | --- | --- | --- |
+| `ConvertAudio` | Basic integer sample conversion | C and SSE2 for 32<->16, 32<->8, and 16<->8; AVX2 for 32<->16 | Independent byte/word reference across signed endpoints and vector-width boundary counts; exact C/SIMD equality, active-output hashes, source immutability, padding, and guards |
+| `ConvertAudio` | Packed 24-bit sample conversion | C and SSSE3 for 32<->24, 24<->16, 24<->8, 16<->24, and 8<->24 | Independent little-endian 24-bit layout reference with sign-boundary anchors, 16-sample shuffle blocks, scalar tails, exact output hashes, source immutability, padding, and guards |
+| `ConvertAudio` | Integer/float sample conversion | C plus SSE2, SSE4.1, and AVX2 variants for 8-, 16-, and 32-bit paths | Fixed finite anchors around zero and full scale; independent integer reference or bounded float comparison, finite-output checks, active-output hashes for integer destinations, source immutability, padding, and guards |
+| `ConvertAudio` | 24-bit/float two-stage conversion | Public C, SSE2, SSE4.1, SSSE3, and AVX2 conversion combinations | `F32 -> S32 -> S24` and `S24 -> S32 -> F32` in the same order as `ConvertAudio`; fixed vector-boundary counts, in-place stage checks, exact packed bytes, bounded float comparison, active-output hashes, source immutability, padding, and guards |
+
+## Public Video Filter Coverage
+
+| Area | Operation | Covered implementation types | Test method |
+| --- | --- | --- | --- |
 | `GeneralConvolution` | Public 3x3 and 5x5 planar video filtering | Public `GeneralConvolution` class for 8-bit, 10-bit, and float planar inputs | Direct constructor and `GetFrame` calls through a real `IScriptEnvironment` and strict synthetic clip; independent edge-replicating integer and float references, 10-bit clipping, source full-pitch immutability, frame request checks, and output memory checks |
 | `Levels` | Integer luma/chroma level mapping | Public `Levels` class for 8-bit Y8 and YV24 inputs | Direct constructor and `GetFrame` calls with fixed boundary values; independent full-range and coring references, source full-pitch immutability, frame request checks, and output memory checks |
 | `ColorYUV` | Integer plane offsets and luma range conversion | Public `ColorYUV` class for 8-bit Y8 and YV24 inputs | Direct constructor and `GetFrame` calls with fixed boundary values; independent per-plane offset and `TV->PC` references, source full-pitch immutability, constructor/frame request checks, and output memory checks |
@@ -93,6 +111,12 @@ belong to the test sources and test vectors.
 
 ## Deliberate Gaps
 
+- The support, video-kernel, audio-kernel, and public-video-filter tables are
+  separate on purpose. A public filter row does not imply coverage of its
+  script `Create` path, dispatch, registration, or the kernels it may call.
+- A kernel row describes direct pointer-level coverage. A public-video-filter
+  row describes direct class construction and `GetFrame` behavior. These are
+  separate contracts even when they share an upstream component name.
 - `Turn` YUY2 rotations: the upstream implementations are file-local
   `static` functions and are outside the public-kernel boundary.
 - `Turn` 180-degree RGB24/RGB48 rotations: the required pixel types are
@@ -117,7 +141,8 @@ belong to the test sources and test vectors.
 
 ## Maintenance Rules
 
-Update this file when a new plugin operation, implementation variant, or
-meaningful behavioral branch is covered or removed. Keep exact test vectors,
-expected hashes, and execution results in the test sources or generated test
-reports rather than duplicating them here.
+Update the relevant section when a new support contract, direct kernel,
+public-video-filter behavior, implementation variant, or meaningful
+behavioral branch is covered or removed. Keep exact test vectors, expected
+hashes, and execution results in the test sources or generated test reports
+rather than duplicating them here.
