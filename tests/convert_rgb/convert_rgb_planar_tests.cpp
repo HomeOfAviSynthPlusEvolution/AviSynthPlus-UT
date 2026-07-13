@@ -53,6 +53,12 @@ void add_rgba_to_rgbp_variants(std::vector<PackedToPlanarRgbCase>& cases, std::s
                                          IsaRequirement::Ssse3},
       expected_hashes));
   cases.push_back(make_packed_to_planar_rgb_case(
+      operation, sizeof(T), 4, TargetHasAlpha, width, height, source_pitch, destination_pitches,
+      Variant<PackedToPlanarRgbFunction>{"avx512_fast",
+                                         convert_rgba_to_rgbp_avx512vbmi<T, TargetHasAlpha>,
+                                         IsaRequirement::Avx512Fast},
+      expected_hashes));
+  cases.push_back(make_packed_to_planar_rgb_case(
       std::move(operation), sizeof(T), 4, TargetHasAlpha, width, height, source_pitch,
       destination_pitches,
       Variant<PackedToPlanarRgbFunction>{"avx2", convert_rgba_to_rgbp_avx2<T, TargetHasAlpha>,

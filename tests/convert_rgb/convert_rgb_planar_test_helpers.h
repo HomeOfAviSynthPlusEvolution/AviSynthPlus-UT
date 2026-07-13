@@ -3,6 +3,7 @@
 #include "convert_rgb_test_helpers.h"
 
 #include "convert/intel/convert_rgb_avx2.h"
+#include "convert/intel/convert_rgb_avx512.h"
 
 #include <array>
 #include <cstddef>
