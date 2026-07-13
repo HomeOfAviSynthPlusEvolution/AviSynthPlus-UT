@@ -11,6 +11,7 @@
 #include "layer_rgb32_fast_test_helpers.h"
 #include "layer_rgb32_lighten_darken_test_helpers.h"
 #include "layer_rgb32_subtract_test_helpers.h"
+#include "layer_yuy2_fast_test_helpers.h"
 
 #include "support/cpu_features.h"
 
@@ -599,6 +600,36 @@ TEST_P(LayerFrameInvert16Kernels, MatchesIndependentReference) {
 INSTANTIATE_TEST_SUITE_P(Kernels, LayerFrameInvert16Kernels,
                          ::testing::ValuesIn(layer_frame_invert_16_cases()),
                          [](const ::testing::TestParamInfo<LayerFrameInvert16Case>& info) {
+                           return info.param.name;
+                         });
+
+std::vector<LayerYuy2FastCase> layer_yuy2_fast_cases() {
+  constexpr std::size_t width_pixels = 19;
+  constexpr std::size_t height = 3;
+  constexpr std::size_t destination_pitch = 64;
+  constexpr std::size_t overlay_pitch = 80;
+  constexpr std::size_t destination_alignment_offset = 3;
+  constexpr std::size_t overlay_alignment_offset = 5;
+  return {make_layer_yuy2_fast_case(
+      width_pixels, height, destination_pitch, overlay_pitch, destination_alignment_offset,
+      overlay_alignment_offset,
+      Variant<LayerYuy2FastFunction>{"avx2", layer_yuy2_or_rgb32_fast_avx2, IsaRequirement::Avx2},
+      "467d20be64ba47ef")};
+}
+
+class LayerYuy2FastKernels : public ::testing::TestWithParam<LayerYuy2FastCase> {};
+
+TEST_P(LayerYuy2FastKernels, MatchesIndependentReference) {
+  const auto& test_case = GetParam();
+  if (!variant_supported(test_case.variant, CpuFeatures::detect())) {
+    GTEST_SKIP() << "host does not support " << test_case.variant.name;
+  }
+  run_layer_yuy2_fast_case(test_case);
+}
+
+INSTANTIATE_TEST_SUITE_P(Kernels, LayerYuy2FastKernels,
+                         ::testing::ValuesIn(layer_yuy2_fast_cases()),
+                         [](const ::testing::TestParamInfo<LayerYuy2FastCase>& info) {
                            return info.param.name;
                          });
 
