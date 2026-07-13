@@ -96,6 +96,39 @@ std::vector<RgbExtractCase> rgb_cases() {
   return cases;
 }
 
+template <int Channel>
+void add_rgb_noalpha_case(std::vector<RgbNoAlphaExtractCase>& cases, const char* format,
+                          std::size_t width_pixels, std::size_t source_pitch,
+                          std::size_t destination_pitch, std::size_t bytes_per_channel,
+                          PlaneSwapFuncPtr function, const char* hash) {
+  cases.push_back(make_rgb_noalpha_case(
+      format, Channel, width_pixels, 5, source_pitch, destination_pitch, bytes_per_channel,
+      Variant<PlaneSwapFuncPtr>{"avx2", function, IsaRequirement::Avx2}, hash));
+}
+
+std::vector<RgbNoAlphaExtractCase> rgb_noalpha_cases() {
+  std::vector<RgbNoAlphaExtractCase> cases;
+  add_rgb_noalpha_case<0>(cases, "Rgb24", 47, 192, 64, 1,
+                          extract_packed_rgb_noalpha_channel_avx2<std::uint8_t, 0>,
+                          "a650ba0745647676");
+  add_rgb_noalpha_case<1>(cases, "Rgb24", 47, 192, 64, 1,
+                          extract_packed_rgb_noalpha_channel_avx2<std::uint8_t, 1>,
+                          "cd9d20bf80d378c7");
+  add_rgb_noalpha_case<2>(cases, "Rgb24", 47, 192, 64, 1,
+                          extract_packed_rgb_noalpha_channel_avx2<std::uint8_t, 2>,
+                          "035195bbbfc63848");
+  add_rgb_noalpha_case<0>(cases, "Rgb48", 23, 192, 64, 2,
+                          extract_packed_rgb_noalpha_channel_avx2<std::uint16_t, 0>,
+                          "69c3ecab4b70d217");
+  add_rgb_noalpha_case<1>(cases, "Rgb48", 23, 192, 64, 2,
+                          extract_packed_rgb_noalpha_channel_avx2<std::uint16_t, 1>,
+                          "96ce1a6ad4f30215");
+  add_rgb_noalpha_case<2>(cases, "Rgb48", 23, 192, 64, 2,
+                          extract_packed_rgb_noalpha_channel_avx2<std::uint16_t, 2>,
+                          "d22b81f3c24d3a57");
+  return cases;
+}
+
 class Yuy2SwapKernels : public ::testing::TestWithParam<Yuy2SwapCase> {};
 
 TEST_P(Yuy2SwapKernels, SwapsChromaBytePositions) {
@@ -157,6 +190,26 @@ TEST_P(RgbExtractKernels, ExtractsBottomUpPackedChannel) {
 
 INSTANTIATE_TEST_SUITE_P(Kernels, RgbExtractKernels, ::testing::ValuesIn(rgb_cases()),
                          [](const ::testing::TestParamInfo<RgbExtractCase>& info) {
+                           return info.param.name;
+                         });
+
+class RgbNoAlphaExtractKernels : public ::testing::TestWithParam<RgbNoAlphaExtractCase> {};
+
+TEST_P(RgbNoAlphaExtractKernels, ExtractsBottomUpPackedChannelWithOverlappingTail) {
+  const auto& test_case = GetParam();
+  if (!variant_supported(test_case.variant, CpuFeatures::detect())) {
+    GTEST_SKIP() << "host does not support " << test_case.variant.name;
+  }
+  if (test_case.bytes_per_channel == 1) {
+    run_rgb_noalpha_case_typed<std::uint8_t>(test_case);
+  } else {
+    run_rgb_noalpha_case_typed<std::uint16_t>(test_case);
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(Kernels, RgbNoAlphaExtractKernels,
+                         ::testing::ValuesIn(rgb_noalpha_cases()),
+                         [](const ::testing::TestParamInfo<RgbNoAlphaExtractCase>& info) {
                            return info.param.name;
                          });
 

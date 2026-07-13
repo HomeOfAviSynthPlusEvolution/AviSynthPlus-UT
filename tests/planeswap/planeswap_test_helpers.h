@@ -51,6 +51,19 @@ struct RgbExtractCase {
   std::string name;
 };
 
+struct RgbNoAlphaExtractCase {
+  std::string format;
+  int channel_index{};
+  std::size_t width_pixels{};
+  std::size_t height{};
+  std::size_t source_pitch{};
+  std::size_t destination_pitch{};
+  std::size_t bytes_per_channel{};
+  Variant<PlaneSwapFuncPtr> variant;
+  std::string expected_hash;
+  std::string name;
+};
+
 struct Yuy2UvToYCase {
   std::string operation;
   bool packed_output{};
@@ -127,6 +140,15 @@ inline std::string rgb_case_name(const RgbExtractCase& test_case) {
   return stream.str();
 }
 
+inline std::string rgb_noalpha_case_name(const RgbNoAlphaExtractCase& test_case) {
+  std::ostringstream stream;
+  stream << test_case.format << "NoAlphaChannel" << planeswap_channel_name(test_case.channel_index)
+         << "_Width" << test_case.width_pixels << "_Height" << test_case.height << "_SrcPitch"
+         << test_case.source_pitch << "_DstPitch" << test_case.destination_pitch
+         << "_PatternChannelRamp_" << planeswap_variant_name(test_case.variant);
+  return stream.str();
+}
+
 inline std::string yuy2_uv_to_y_case_name(const Yuy2UvToYCase& test_case) {
   std::ostringstream stream;
   stream << test_case.operation << "_Width" << test_case.destination_width << "_Height"
@@ -181,6 +203,24 @@ inline RgbExtractCase make_rgb_case(std::string format, int channel_index, std::
   return result;
 }
 
+inline RgbNoAlphaExtractCase make_rgb_noalpha_case(
+    std::string format, int channel_index, std::size_t width_pixels, std::size_t height,
+    std::size_t source_pitch, std::size_t destination_pitch, std::size_t bytes_per_channel,
+    Variant<PlaneSwapFuncPtr> variant, std::string expected_hash) {
+  RgbNoAlphaExtractCase result{std::move(format),
+                               channel_index,
+                               width_pixels,
+                               height,
+                               source_pitch,
+                               destination_pitch,
+                               bytes_per_channel,
+                               std::move(variant),
+                               std::move(expected_hash),
+                               {}};
+  result.name = rgb_noalpha_case_name(result);
+  return result;
+}
+
 inline Yuy2UvToYCase make_yuy2_uv_to_y_case(std::string operation, bool packed_output,
                                             std::size_t destination_width, std::size_t height,
                                             std::size_t source_pitch, std::size_t destination_pitch,
@@ -217,6 +257,10 @@ inline void PrintTo(const Yuy2SwapCase& test_case, std::ostream* stream) {
 }
 
 inline void PrintTo(const RgbExtractCase& test_case, std::ostream* stream) {
+  *stream << test_case.name;
+}
+
+inline void PrintTo(const RgbNoAlphaExtractCase& test_case, std::ostream* stream) {
   *stream << test_case.name;
 }
 
@@ -442,12 +486,40 @@ void fill_rgb_input(PlaneView<T> view, std::size_t width_pixels) {
 }
 
 template <typename T>
+void fill_rgb_noalpha_input(PlaneView<T> view, std::size_t width_pixels) {
+  static_assert(std::is_integral_v<T>);
+  constexpr std::size_t kComponents = 3;
+  const auto max_value = static_cast<std::uint32_t>(std::numeric_limits<T>::max());
+  for (std::size_t y = 0; y < view.height(); ++y) {
+    for (std::size_t x = 0; x < width_pixels; ++x) {
+      for (std::size_t channel = 0; channel < kComponents; ++channel) {
+        const auto value = 19U + static_cast<unsigned int>(x * 43) +
+                           static_cast<unsigned int>(y * 107) +
+                           static_cast<unsigned int>(channel * 61);
+        view.row(y)[x * kComponents + channel] = static_cast<T>(value & max_value);
+      }
+    }
+  }
+}
+
+template <typename T>
 void apply_rgb_reference(const RgbExtractCase& test_case, PlaneView<const T> source,
                          PlaneView<T> destination) {
   for (std::size_t output_y = 0; output_y < test_case.height; ++output_y) {
     const auto source_y = test_case.height - 1 - output_y;
     for (std::size_t x = 0; x < test_case.width_pixels; ++x) {
       destination.row(output_y)[x] = source.row(source_y)[x * 4 + test_case.channel_index];
+    }
+  }
+}
+
+template <typename T>
+void apply_rgb_noalpha_reference(const RgbNoAlphaExtractCase& test_case, PlaneView<const T> source,
+                                 PlaneView<T> destination) {
+  for (std::size_t output_y = 0; output_y < test_case.height; ++output_y) {
+    const auto source_y = test_case.height - 1 - output_y;
+    for (std::size_t x = 0; x < test_case.width_pixels; ++x) {
+      destination.row(output_y)[x] = source.row(source_y)[x * 3 + test_case.channel_index];
     }
   }
 }
@@ -464,6 +536,42 @@ void run_rgb_case_typed(const RgbExtractCase& test_case) {
   fill_rgb_input(source.view(), test_case.width_pixels);
   const auto source_snapshot = source.snapshot_active();
   apply_rgb_reference(test_case, source.view().as_const(), expected.view());
+
+  auto* source_bottom = reinterpret_cast<const BYTE*>(source.view().data()) +
+                        (test_case.height - 1) * test_case.source_pitch;
+  test_case.variant.function(
+      source_bottom, reinterpret_cast<BYTE*>(actual.view().data()),
+      static_cast<int>(test_case.source_pitch), static_cast<int>(test_case.destination_pitch),
+      static_cast<int>(test_case.width_pixels), static_cast<int>(test_case.height));
+
+  EXPECT_TRUE(compare_exact(expected.view().as_const(), actual.view().as_const()))
+      << test_case.name << " reference mismatch for variant " << test_case.variant.name;
+  if (!test_case.expected_hash.empty()) {
+    EXPECT_EQ(format_hash(hash_active(expected.view().as_const())), test_case.expected_hash)
+        << test_case.name << " stable output hash mismatch";
+  }
+  EXPECT_TRUE(source.active_matches(source_snapshot))
+      << test_case.name << " modified the source input";
+  EXPECT_TRUE(source.memory_intact())
+      << test_case.name << " source padding or guards were corrupted";
+  EXPECT_TRUE(expected.memory_intact())
+      << test_case.name << " reference padding or guards were corrupted";
+  EXPECT_TRUE(actual.memory_intact())
+      << test_case.name << " output padding or guards were corrupted";
+}
+
+template <typename T>
+void run_rgb_noalpha_case_typed(const RgbNoAlphaExtractCase& test_case) {
+  const auto source_width = test_case.width_pixels * 3;
+  GuardedVideoBuffer<T> source(source_width, test_case.height, test_case.source_pitch, 64);
+  GuardedVideoBuffer<T> expected(test_case.width_pixels, test_case.height,
+                                 test_case.destination_pitch, 64);
+  GuardedVideoBuffer<T> actual(test_case.width_pixels, test_case.height,
+                               test_case.destination_pitch, 64);
+
+  fill_rgb_noalpha_input(source.view(), test_case.width_pixels);
+  const auto source_snapshot = source.snapshot_active();
+  apply_rgb_noalpha_reference(test_case, source.view().as_const(), expected.view());
 
   auto* source_bottom = reinterpret_cast<const BYTE*>(source.view().data()) +
                         (test_case.height - 1) * test_case.source_pitch;
