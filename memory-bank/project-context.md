@@ -3,11 +3,12 @@
 ## Purpose
 
 AviSynthPlus-UT is an external C++17 unit-test repository for selected
-AviSynthPlus internal video and audio kernels and selected public video filter
-classes. The repository tests upstream behavior without adding source files to
-or rebuilding the upstream project inside the test source tree. A test-triggered
-production defect may be fixed minimally in the submodule working tree for
-verification and recorded separately from the test-framework changes.
+AviSynthPlus internal video and audio kernels and selected public video and
+audio filter classes. The repository tests upstream behavior without adding
+source files to or rebuilding the upstream project inside the test source
+tree. A test-triggered production defect may be fixed minimally in the
+submodule working tree for verification and recorded separately from the
+test-framework changes.
 
 The upstream project is consumed as a pinned Git submodule. The baseline
 submodule revision is `fcb9c8a205c1b01ee1ea491adba50e2217594598`; updating the
@@ -45,6 +46,8 @@ boundary.
 - `tests/convolution` contains direct tests for public video filter classes.
 - `tests/convert_audio` contains direct tests for exposed audio conversion
   functions.
+- `tests/audio_filter` contains direct tests for public core audio filter
+  classes using a real `IScriptEnvironment` and test-owned audio clips.
 
 ## Test Boundary
 
@@ -70,10 +73,12 @@ plugin loading, or a complete filter graph. Explicit video information and
 full-pitch frame snapshots belong to the test support layer so format metadata,
 source immutability, and padding behavior remain observable.
 
-The direct audio boundary is limited to public pointer/count conversion
-functions. Audio filter classes that require `PClip`, `IScriptEnvironment`,
-cache behavior, or private resampling state remain outside the direct-kernel
-scope.
+The direct audio-kernel boundary is limited to public pointer/count conversion
+functions. A separate audio-filter tier may construct public core audio filter
+classes against a real `IScriptEnvironment` and strict test-owned audio clips.
+It observes `GetAudio`, metadata, cache hints, and source request behavior but
+does not call filter `Create` entry points, script registration, plugin
+loading, or audio I/O.
 
 SIMD functions are called only when their declared CPU feature is available.
 Unsupported variants must not be invoked. This project does not infer hidden
@@ -82,7 +87,7 @@ disassembly.
 
 ## Current Non-Goals
 
-- Audio filter-level tests and audio I/O.
+- Audio I/O and external audio plugins that require file/device backends.
 - `.avs` script execution, filter `Create` entry points, `Invoke` conversion
   orchestration, or black-box filter-graph tests.
 - Filter registration, full distribution, or plugin-loading tests.

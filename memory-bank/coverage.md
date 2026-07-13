@@ -1,10 +1,10 @@
 # Coverage Snapshot
 
 This document records which support contracts, direct kernels, and public
-video-filter behaviors are covered, which upstream implementation variants are
-exercised, and how the tests establish the behavior. Exact dimensions, seeds,
-hashes, and parameterized instance names belong to the test sources and test
-vectors.
+audio/video-filter behaviors are covered, which upstream implementation
+variants are exercised, and how the tests establish the behavior. Exact
+dimensions, seeds, hashes, and parameterized instance names belong to the test
+sources and test vectors.
 
 ## Support Coverage
 
@@ -79,6 +79,15 @@ vectors.
 | `ConvertAudio` | Packed 24-bit sample conversion | C and SSSE3 for 32<->24, 24<->16, 24<->8, 16<->24, and 8<->24 | Independent little-endian 24-bit layout reference with sign-boundary anchors, 16-sample shuffle blocks, scalar tails, exact output hashes, source immutability, padding, and guards |
 | `ConvertAudio` | Integer/float sample conversion | C plus SSE2, SSE4.1, and AVX2 variants for 8-, 16-, and 32-bit paths | Fixed finite anchors around zero and full scale; independent integer reference or bounded float comparison, finite-output checks, active-output hashes for integer destinations, source immutability, padding, and guards |
 | `ConvertAudio` | 24-bit/float two-stage conversion | Public C, SSE2, SSE4.1, SSSE3, and AVX2 conversion combinations | `F32 -> S32 -> S24` and `S24 -> S32 -> F32` in the same order as `ConvertAudio`; fixed vector-boundary counts, in-place stage checks, exact packed bytes, bounded float comparison, active-output hashes, source immutability, padding, and guards |
+
+## Public Audio Filter Coverage
+
+| Area | Operation | Covered implementation types | Test method |
+| --- | --- | --- | --- |
+| `ConvertAudio` | Public sample-format filter conversion | Public `ConvertAudio` class for signed 16-bit/float interleaved audio | Direct constructor and `GetAudio` calls with fixed endpoint samples; independent exact integer and bounded float references, source request forwarding, source immutability, and guarded output memory |
+| `ConvertToMono` | Public channel reduction | Public `ConvertToMono` class for 3-channel float audio | Direct constructor and `GetAudio` calls with fixed per-channel anchors; independent arithmetic mean, mono channel-mask metadata, source request forwarding, cache hint, source immutability, and guarded output memory |
+| `GetChannel` | Public channel selection and reorder | Public `GetChannel` class for signed 16-bit 3-to-2 channel selection | Direct constructor and `GetAudio` calls with a fixed channel permutation; exact interleaved reference, stereo channel-mask metadata, source request forwarding, source immutability, and guarded output memory |
+| `MergeChannels` | Public channel concatenation | Public `MergeChannels` class for signed 16-bit and float mono sources | Direct constructor and `GetAudio` calls with fixed mono sources of different formats; exact conversion/interleave reference, stereo channel-mask metadata, both source request traces, source immutability, and guarded output memory |
 
 ## Public Video Filter Coverage
 
