@@ -71,6 +71,7 @@ belong to the test sources and test vectors.
 | `ColorYUV` | Integer plane offsets and luma range conversion | Public `ColorYUV` class for 8-bit Y8 and YV24 inputs | Direct constructor and `GetFrame` calls with fixed boundary values; independent per-plane offset and `TV->PC` references, source full-pitch immutability, constructor/frame request checks, and output memory checks |
 | `Histogram` | Classic per-row histogram rendering | Public `Histogram` class in classic mode for 8-bit Y8 input | Direct constructor and `GetFrame` calls with fixed row populations; independent population-to-luma reference, stable repeated output, optional source panel placement, source full-pitch immutability, frame request checks, and output memory checks |
 | `Limiter` | Public integer luma/chroma clamp filter | Public `Limiter` class for 8-bit and 10-bit YUV444 inputs | Direct constructor and `GetFrame` calls with fixed boundary values; independent luma/chroma clamp references, `paramscale` coverage, source full-pitch immutability, frame request checks, and output memory checks |
+| `Greyscale` | Public neutral-chroma conversion filter | Public `Greyscale` class for 8-bit YV12 and YUY2 inputs | Direct constructor and `GetFrame` calls with fixed luma/chroma patterns; independent neutral-chroma and luma-preservation references, source full-pitch immutability, frame request checks, and output memory checks |
 
 ## Deliberate Gaps
 
