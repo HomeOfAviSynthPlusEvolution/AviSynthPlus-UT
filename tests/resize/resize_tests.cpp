@@ -403,6 +403,24 @@ std::vector<ResizeHorizontalFloatCase> resize_horizontal_float_cases() {
                                   resize_h_planar_float_avx512_permutex_vstripe_2s8_ks16,
                                   IsaRequirement::Avx512Base},
           ResizeFilter::Lanczos3, 12, true),
+      make_resize_horizontal_float_case(
+          128, 64, 5, 640, 384,
+          Variant<ResizeFunction>{"avx512_base_transpose_ks4",
+                                  resize_h_planar_float_avx512_transpose_vstripe_ks4,
+                                  IsaRequirement::Avx512Base},
+          ResizeFilter::Triangle, 4),
+      make_resize_horizontal_float_case(
+          256, 64, 5, 1152, 384,
+          Variant<ResizeFunction>{"avx512_base_transpose_ks8",
+                                  resize_h_planar_float_avx512_transpose_vstripe_ks8,
+                                  IsaRequirement::Avx512Base},
+          ResizeFilter::Triangle, 8),
+      make_resize_horizontal_float_case(
+          128, 64, 5, 640, 384,
+          Variant<ResizeFunction>{"avx512_base_generic",
+                                  resizer_h_avx512_generic_float_pix16_sub4_ks_4_8_16,
+                                  IsaRequirement::Avx512Base},
+          ResizeFilter::Lanczos10, 40),
   };
 }
 
