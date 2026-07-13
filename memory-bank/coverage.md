@@ -93,6 +93,18 @@ sources and test vectors.
 | `MixAudio` | Public two-track weighted mix | Public `MixAudio` class for signed 16-bit and float audio | Direct constructor and `GetAudio` calls with independent fixed track factors; independent float arithmetic and signed-16 saturation references, both source request traces, cache hint, source immutability, and guarded output memory |
 | `Normalize` | Public stream-peak normalization | Public `Normalize` class for signed 16-bit and float audio | Direct constructor and `GetAudio` calls with fixed peak anchors; full-stream scan before output, independent integer/float scaling references, saturation, source request trace, cache hint, source immutability, and guarded output memory |
 | `EnsureVBRMP3Sync` | Public sequential audio access wrapper | Public `EnsureVBRMP3Sync` class for finite float audio | Direct constructor and ordered, skipped, and rewound `GetAudio` requests; exact replayed samples, sequential child request trace, audio cache-mode/size hints, and guarded output memory |
+| `AssumeRate` | Public sample-rate metadata replacement | Public `AssumeRate` class for finite float audio | Direct constructor and `GetAudio` call; only the declared sample rate changes, sample count and samples remain stable, source request trace and guarded output memory are checked |
+| `SetChannelMask` | Public channel-mask metadata replacement | Public `SetChannelMask` class for known and unknown stereo layout | Direct constructors with both metadata states and a fixed audio request; exact samples, channel-mask flags, source request trace, and guarded output memory |
+| `KillAudio` | Public audio-metadata removal | Public `KillAudio` class | Direct constructor and no-op `GetAudio` call; audio metadata is cleared without requesting the source, and prefilled output plus guards remain intact |
+| `ResampleAudio` | Public sample-rate conversion | Public `ResampleAudio` class for float and signed-16 audio | Direct constructor and one-shot versus chunked requests over finite zero-filled boundaries; bounded float and exact signed-16 continuity comparison, serialized cache hint, source request activity, and guarded output memory |
+| `KillVideo` | Public video-metadata removal while retaining audio | Public `KillVideo` class on a video-plus-audio clip | Direct constructor and `GetAudio` call with explicit video metadata; audio metadata and samples remain intact, source request trace and source immutability are checked, and output memory is guarded |
+| `AudioTrim` | Public time-based audio trim | Public `Trim` class in `Length` mode for finite float audio | Direct constructor and bounded `GetAudio` request at a nonzero time offset; exact sample window, output length, non-cache hint, source request trace, and guarded output memory |
+| `Splice` | Public audio concatenation | Public `Splice` class for two finite float audio clips | Direct constructor and a request crossing the sample boundary; exact split/interleave output, both child request ranges, cache hint, and guarded output memory |
+| `Dissolve` | Public audio-only crossfade | Public `Dissolve` class for finite float audio clips | Direct constructor with a fixed overlap/fps pair and a legal fade-window request; independent weighted ramp including first, interior, and final samples, exact child request ranges, and guarded output memory |
+| `AudioDub` | Public video/audio track routing | Public `AudioDub` class with explicit video and audio clips | Direct constructor and `GetAudio` call; video geometry and audio format metadata come from the respective children, audio samples route only from the audio child, and output memory is guarded |
+| `Reverse` | Public interleaved audio reversal | Public `Reverse` class for signed-16 stereo audio | Direct constructor and full-stream `GetAudio` call; independent frame-order reversal, source request trace, and guarded output memory |
+| `Loop` | Public audio-only looping | Public `Loop` class for finite float audio | Direct constructor and a request spanning loop boundaries; exact repeated samples, split child request ranges, and guarded output memory |
+| `AssumeFPS` / `AssumeScaledFPS` | Public synchronized frame-rate metadata | Public `AssumeFPS` and `AssumeScaledFPS` classes with `sync_audio=true` | Direct constructors with equivalent fixed rate changes; synchronized sample-rate/frame-rate metadata, unchanged samples, source request traces, and guarded output memory |
 
 ## Public Video Filter Coverage
 
@@ -125,12 +137,15 @@ sources and test vectors.
 
 ## Deliberate Gaps
 
-- The support, video-kernel, audio-kernel, and public-video-filter tables are
+- The support, video-kernel, audio-kernel, public-video-filter, and
+  public-audio-filter tables are
   separate on purpose. A public filter row does not imply coverage of its
   script `Create` path, dispatch, registration, or the kernels it may call.
 - A kernel row describes direct pointer-level coverage. A public-video-filter
-  row describes direct class construction and `GetFrame` behavior. These are
-  separate contracts even when they share an upstream component name.
+  row describes direct class construction and `GetFrame` behavior; a
+  public-audio-filter row describes direct class construction and `GetAudio`
+  behavior. These are separate contracts even when they share an upstream
+  component name.
 - `Turn` YUY2 rotations: the upstream implementations are file-local
   `static` functions and are outside the public-kernel boundary.
 - `Turn` 180-degree RGB24/RGB48 rotations: the required pixel types are
@@ -149,9 +164,10 @@ sources and test vectors.
   two-pass resize path.
 - Exhaustive dimension, pitch, alignment-offset, pattern, and seed matrices.
 - ConvertBits Floyd-Steinberg/filter-level paths and exhaustive conversion
-  combinations; audio filter-level behavior and audio I/O; script execution,
-  filter graphs, plugin loading, distribution integration, Windows/MSVC
-  execution, and unsupported-ISA or FMA-specific dispatch auditing.
+  combinations; external Shibatch (`SSRC`/`SuperEQ`) and `TimeStretch` plugin
+  behavior, audio I/O, script execution, filter graphs, plugin loading,
+  distribution integration, Windows/MSVC execution, and unsupported-ISA or
+  FMA-specific dispatch auditing.
 
 ## Maintenance Rules
 

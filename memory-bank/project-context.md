@@ -87,7 +87,8 @@ disassembly.
 
 ## Current Non-Goals
 
-- Audio I/O and external audio plugins that require file/device backends.
+- Audio I/O and external audio plugins that require plugin loading, third-party
+  runtime/build dependencies, or file/device backends.
 - `.avs` script execution, filter `Create` entry points, `Invoke` conversion
   orchestration, or black-box filter-graph tests.
 - Filter registration, full distribution, or plugin-loading tests.
