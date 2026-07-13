@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "layer_test_helpers.h"
+#include "layer_invert_test_helpers.h"
 
 #include "support/cpu_features.h"
 
@@ -168,6 +169,94 @@ TEST_P(LayerYuvAddKernels, MatchesPlacementAwareReference) {
 
 INSTANTIATE_TEST_SUITE_P(Kernels, LayerYuvAddKernels, ::testing::ValuesIn(layer_yuv_add_cases()),
                          [](const ::testing::TestParamInfo<LayerYuvAddCase>& info) {
+                           return info.param.name;
+                         });
+
+std::string layer_invert_expected_hash(int bits_per_pixel, bool chroma) {
+  if (bits_per_pixel == 8) {
+    return chroma ? "63dae183f4e233e3" : "3b5bf145fdaed0cb";
+  }
+  switch (bits_per_pixel) {
+    case 10:
+      return chroma ? "7c15f9f33b835a8a" : "5c304cf2053ce54b";
+    case 12:
+      return chroma ? "67303d0b4081f759" : "b533f26d2adcd798";
+    case 14:
+      return chroma ? "fef1da539fd5077b" : "bb93d2e087f3ffb1";
+    case 16:
+      return chroma ? "0c914f9bead77af9" : "744ac3dfbf30785f";
+    default:
+      return {};
+  }
+}
+
+std::vector<LayerInvertCase> layer_invert_cases() {
+  std::vector<LayerInvertCase> cases;
+  constexpr std::size_t height = 3;
+  constexpr std::size_t source_pitch = 96;
+  constexpr std::size_t destination_pitch = 128;
+
+  for (const bool chroma : {false, true}) {
+    cases.push_back(make_layer_invert_case(
+        LayerInvertElement::UInt8, chroma, 8, 64, height, source_pitch, destination_pitch,
+        Variant<LayerInvertFuncPtr>{
+            "sse2", chroma ? invert_plane_sse2_u8<true> : invert_plane_sse2_u8<false>,
+            IsaRequirement::Sse2},
+        layer_invert_expected_hash(8, chroma)));
+    cases.push_back(make_layer_invert_case(
+        LayerInvertElement::UInt8, chroma, 8, 64, height, source_pitch, destination_pitch,
+        Variant<LayerInvertFuncPtr>{
+            "avx2", chroma ? invert_plane_avx2_u8<true> : invert_plane_avx2_u8<false>,
+            IsaRequirement::Avx2},
+        layer_invert_expected_hash(8, chroma)));
+  }
+
+  for (const int bits_per_pixel : {10, 12, 14, 16}) {
+    for (const bool chroma : {false, true}) {
+      cases.push_back(make_layer_invert_case(
+          LayerInvertElement::UInt16, chroma, bits_per_pixel, 32, height, source_pitch,
+          destination_pitch,
+          Variant<LayerInvertFuncPtr>{
+              "sse2", chroma ? invert_plane_sse2_u16<true> : invert_plane_sse2_u16<false>,
+              IsaRequirement::Sse2},
+          layer_invert_expected_hash(bits_per_pixel, chroma)));
+      cases.push_back(make_layer_invert_case(
+          LayerInvertElement::UInt16, chroma, bits_per_pixel, 32, height, source_pitch,
+          destination_pitch,
+          Variant<LayerInvertFuncPtr>{
+              "avx2", chroma ? invert_plane_avx2_u16<true> : invert_plane_avx2_u16<false>,
+              IsaRequirement::Avx2},
+          layer_invert_expected_hash(bits_per_pixel, chroma)));
+    }
+  }
+
+  for (const bool chroma : {false, true}) {
+    cases.push_back(make_layer_invert_case(
+        LayerInvertElement::Float32, chroma, 32, 16, height, source_pitch, destination_pitch,
+        Variant<LayerInvertFuncPtr>{
+            "sse2", chroma ? invert_plane_sse2_f32<true> : invert_plane_sse2_f32<false>,
+            IsaRequirement::Sse2}));
+    cases.push_back(make_layer_invert_case(
+        LayerInvertElement::Float32, chroma, 32, 16, height, source_pitch, destination_pitch,
+        Variant<LayerInvertFuncPtr>{
+            "avx2", chroma ? invert_plane_avx2_f32<true> : invert_plane_avx2_f32<false>,
+            IsaRequirement::Avx2}));
+  }
+  return cases;
+}
+
+class LayerInvertKernels : public ::testing::TestWithParam<LayerInvertCase> {};
+
+TEST_P(LayerInvertKernels, MatchesIndependentReference) {
+  const auto& test_case = GetParam();
+  if (!variant_supported(test_case.variant, CpuFeatures::detect())) {
+    GTEST_SKIP() << "host does not support " << test_case.variant.name;
+  }
+  run_layer_invert_case(test_case);
+}
+
+INSTANTIATE_TEST_SUITE_P(Kernels, LayerInvertKernels, ::testing::ValuesIn(layer_invert_cases()),
+                         [](const ::testing::TestParamInfo<LayerInvertCase>& info) {
                            return info.param.name;
                          });
 
