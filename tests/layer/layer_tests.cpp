@@ -2,6 +2,7 @@
 
 #include "layer_test_helpers.h"
 #include "layer_colorkey_test_helpers.h"
+#include "layer_frame_invert_test_helpers.h"
 #include "layer_invert_test_helpers.h"
 #include "layer_mask_test_helpers.h"
 #include "layer_packed_blend_test_helpers.h"
@@ -532,6 +533,72 @@ TEST_P(LayerInvertKernels, MatchesIndependentReference) {
 
 INSTANTIATE_TEST_SUITE_P(Kernels, LayerInvertKernels, ::testing::ValuesIn(layer_invert_cases()),
                          [](const ::testing::TestParamInfo<LayerInvertCase>& info) {
+                           return info.param.name;
+                         });
+
+std::vector<LayerFrameInvert8Case> layer_frame_invert_8_cases() {
+  constexpr std::size_t row_bytes = 96;
+  constexpr std::size_t height = 3;
+  constexpr std::uint32_t mask = 0xa5c33c5aU;
+  return {
+      make_layer_frame_invert_8_case(row_bytes, height, row_bytes, mask,
+                                     Variant<LayerFrameInvert8Function>{
+                                         "sse2", invert_frame_inplace_sse2, IsaRequirement::Sse2},
+                                     "4f10696e78a99b2e"),
+      make_layer_frame_invert_8_case(row_bytes, height, row_bytes, mask,
+                                     Variant<LayerFrameInvert8Function>{
+                                         "avx2", invert_frame_inplace_avx2, IsaRequirement::Avx2},
+                                     "4f10696e78a99b2e"),
+  };
+}
+
+class LayerFrameInvert8Kernels : public ::testing::TestWithParam<LayerFrameInvert8Case> {};
+
+TEST_P(LayerFrameInvert8Kernels, MatchesIndependentReference) {
+  const auto& test_case = GetParam();
+  if (!variant_supported(test_case.variant, CpuFeatures::detect())) {
+    GTEST_SKIP() << "host does not support " << test_case.variant.name;
+  }
+  run_layer_frame_invert_8_case(test_case);
+}
+
+INSTANTIATE_TEST_SUITE_P(Kernels, LayerFrameInvert8Kernels,
+                         ::testing::ValuesIn(layer_frame_invert_8_cases()),
+                         [](const ::testing::TestParamInfo<LayerFrameInvert8Case>& info) {
+                           return info.param.name;
+                         });
+
+std::vector<LayerFrameInvert16Case> layer_frame_invert_16_cases() {
+  constexpr std::size_t row_bytes = 96;
+  constexpr std::size_t height = 3;
+  constexpr std::uint64_t mask = 0x1234fedcba987654ULL;
+  return {
+      make_layer_frame_invert_16_case(
+          row_bytes, height, row_bytes, mask,
+          Variant<LayerFrameInvert16Function>{"sse2", invert_frame_uint16_inplace_sse2,
+                                              IsaRequirement::Sse2},
+          "7bdc59443981516a"),
+      make_layer_frame_invert_16_case(
+          row_bytes, height, row_bytes, mask,
+          Variant<LayerFrameInvert16Function>{"avx2", invert_frame_uint16_inplace_avx2,
+                                              IsaRequirement::Avx2},
+          "7bdc59443981516a"),
+  };
+}
+
+class LayerFrameInvert16Kernels : public ::testing::TestWithParam<LayerFrameInvert16Case> {};
+
+TEST_P(LayerFrameInvert16Kernels, MatchesIndependentReference) {
+  const auto& test_case = GetParam();
+  if (!variant_supported(test_case.variant, CpuFeatures::detect())) {
+    GTEST_SKIP() << "host does not support " << test_case.variant.name;
+  }
+  run_layer_frame_invert_16_case(test_case);
+}
+
+INSTANTIATE_TEST_SUITE_P(Kernels, LayerFrameInvert16Kernels,
+                         ::testing::ValuesIn(layer_frame_invert_16_cases()),
+                         [](const ::testing::TestParamInfo<LayerFrameInvert16Case>& info) {
                            return info.param.name;
                          });
 
