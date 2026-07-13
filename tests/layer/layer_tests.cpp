@@ -2,10 +2,12 @@
 
 #include "layer_test_helpers.h"
 #include "layer_invert_test_helpers.h"
+#include "layer_packed_blend_test_helpers.h"
 
 #include "support/cpu_features.h"
 
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace avsut::test {
@@ -257,6 +259,62 @@ TEST_P(LayerInvertKernels, MatchesIndependentReference) {
 
 INSTANTIATE_TEST_SUITE_P(Kernels, LayerInvertKernels, ::testing::ValuesIn(layer_invert_cases()),
                          [](const ::testing::TestParamInfo<LayerInvertCase>& info) {
+                           return info.param.name;
+                         });
+
+std::string layer_packed_blend_expected_hash(bool has_separate_mask, int opacity) {
+  if (has_separate_mask) {
+    return opacity == 255 ? "f8ed38a808275fff" : "43898c99879818e0";
+  }
+  return opacity == 255 ? "7340a277058b7fe7" : "f4637421ba6b129d";
+}
+
+std::vector<LayerPackedBlendCase> layer_packed_blend_cases() {
+  std::vector<LayerPackedBlendCase> cases;
+  constexpr std::size_t width = 9;
+  constexpr std::size_t height = 3;
+  constexpr std::size_t destination_pitch = 64;
+  constexpr std::size_t overlay_pitch = 80;
+  constexpr std::size_t mask_pitch = 32;
+  for (const bool has_separate_mask : {false, true}) {
+    for (const auto [opacity, opacity_name] :
+         {std::pair{255, std::string{"Full255"}}, std::pair{173, std::string{"Partial173"}}}) {
+      cases.push_back(make_layer_packed_blend_case(
+          has_separate_mask, width, height, destination_pitch, overlay_pitch, mask_pitch, opacity,
+          opacity_name, Variant<LayerPackedBlendFuncPtr>{"sse41", nullptr, IsaRequirement::Sse41},
+          layer_packed_blend_expected_hash(has_separate_mask, opacity)));
+      get_layer_packedrgb_blend_functions_sse41(has_separate_mask, 8,
+                                                &cases.back().variant.function);
+      cases.back().name = layer_packed_blend_case_name(cases.back());
+      cases.push_back(make_layer_packed_blend_case(
+          has_separate_mask, width, height, destination_pitch, overlay_pitch, mask_pitch, opacity,
+          opacity_name, Variant<LayerPackedBlendFuncPtr>{"avx2", nullptr, IsaRequirement::Avx2},
+          layer_packed_blend_expected_hash(has_separate_mask, opacity)));
+      get_layer_packedrgb_blend_functions_avx2(has_separate_mask, 8,
+                                               &cases.back().variant.function);
+      cases.back().name = layer_packed_blend_case_name(cases.back());
+    }
+  }
+  return cases;
+}
+
+class LayerPackedBlendKernels : public ::testing::TestWithParam<LayerPackedBlendCase> {};
+
+TEST_P(LayerPackedBlendKernels, MatchesIndependentReference) {
+  const auto& test_case = GetParam();
+  if (!test_case.variant.function) {
+    GTEST_SKIP() << "upstream did not provide " << test_case.variant.name
+                 << " packed RGB blend function";
+  }
+  if (!variant_supported(test_case.variant, CpuFeatures::detect())) {
+    GTEST_SKIP() << "host does not support " << test_case.variant.name;
+  }
+  run_layer_packed_blend_case(test_case);
+}
+
+INSTANTIATE_TEST_SUITE_P(Kernels, LayerPackedBlendKernels,
+                         ::testing::ValuesIn(layer_packed_blend_cases()),
+                         [](const ::testing::TestParamInfo<LayerPackedBlendCase>& info) {
                            return info.param.name;
                          });
 
