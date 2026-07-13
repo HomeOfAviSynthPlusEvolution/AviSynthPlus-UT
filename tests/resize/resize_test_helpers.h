@@ -14,6 +14,7 @@
 #include "filters/intel/resample_avx2.h"
 #include "filters/intel/resample_avx512.h"
 #include "filters/intel/resample_sse.h"
+#include "filters/intel/resize_sse.h"
 
 #include "support/comparators.h"
 #include "support/guarded_video_buffer.h"
@@ -41,6 +42,7 @@
 namespace avsut::test {
 
 using ResizeFunction = void (*)(BYTE*, const BYTE*, int, int, ResamplingProgram*, int, int, int);
+using VerticalReduceFunction = void (*)(BYTE*, const BYTE*, int, int, std::size_t, std::size_t);
 
 enum class ResizeFilter {
   Triangle,
@@ -162,6 +164,17 @@ struct ResizeVertical8Case {
   std::string name;
 };
 
+struct VerticalReduceCase {
+  std::size_t width_bytes{};
+  std::size_t source_height{};
+  std::size_t target_height{};
+  std::size_t source_pitch{};
+  std::size_t destination_pitch{};
+  Variant<VerticalReduceFunction> variant;
+  std::string expected_hash;
+  std::string name;
+};
+
 struct ResizeVertical16Case {
   int bits_per_pixel{};
   std::size_t width_pixels{};
@@ -253,6 +266,15 @@ inline std::string resize_vertical8_case_name(std::size_t width_pixels, std::siz
   return stream.str();
 }
 
+inline std::string vertical_reduce_case_name(const VerticalReduceCase& test_case) {
+  std::ostringstream stream;
+  stream << "VerticalReduce_WidthBytes" << test_case.width_bytes << "_SourceHeight"
+         << test_case.source_height << "_TargetHeight" << test_case.target_height << "_SrcPitch"
+         << test_case.source_pitch << "_DstPitch" << test_case.destination_pitch
+         << "_PatternBoundaryRamp_" << resize_variant_name(test_case.variant);
+  return stream.str();
+}
+
 inline std::string resize_vertical16_case_name(int bits_per_pixel, std::size_t width_pixels,
                                                std::size_t source_height, std::size_t target_height,
                                                std::size_t source_pitch,
@@ -334,6 +356,22 @@ inline ResizeVertical8Case make_resize_vertical8_case(
   result.name =
       resize_vertical8_case_name(result.width_pixels, result.source_height, result.target_height,
                                  result.source_pitch, result.destination_pitch, result.variant);
+  return result;
+}
+
+inline VerticalReduceCase make_vertical_reduce_case(
+    std::size_t width_bytes, std::size_t source_height, std::size_t target_height,
+    std::size_t source_pitch, std::size_t destination_pitch,
+    Variant<VerticalReduceFunction> variant, std::string expected_hash = {}) {
+  VerticalReduceCase result{width_bytes,
+                            source_height,
+                            target_height,
+                            source_pitch,
+                            destination_pitch,
+                            std::move(variant),
+                            std::move(expected_hash),
+                            {}};
+  result.name = vertical_reduce_case_name(result);
   return result;
 }
 
@@ -442,6 +480,10 @@ inline void PrintTo(const ResizeVertical8Case& test_case, std::ostream* stream) 
   *stream << test_case.name;
 }
 
+inline void PrintTo(const VerticalReduceCase& test_case, std::ostream* stream) {
+  *stream << test_case.name;
+}
+
 inline void PrintTo(const ResizeVertical16Case& test_case, std::ostream* stream) {
   *stream << test_case.name;
 }
@@ -542,6 +584,23 @@ void apply_resize_vertical_reference(PlaneView<const T> source, PlaneView<T> des
   }
 }
 
+inline void apply_vertical_reduce_reference(PlaneView<const std::uint8_t> source,
+                                            PlaneView<std::uint8_t> destination) {
+  for (std::size_t y = 0; y < destination.height(); ++y) {
+    const auto source_y = y * 2;
+    for (std::size_t x = 0; x < destination.width(); ++x) {
+      const auto first = source.row(source_y)[x];
+      const auto second = source.row(source_y + 1)[x];
+      if (y + 1 < destination.height()) {
+        const auto third = source.row(source_y + 2)[x];
+        destination.row(y)[x] = static_cast<std::uint8_t>((first + 2 * second + third + 2) / 4);
+      } else {
+        destination.row(y)[x] = static_cast<std::uint8_t>((first + 3 * second + 2) / 4);
+      }
+    }
+  }
+}
+
 template <typename T>
 void invoke_resize_vertical(const ResizeFunction function, PlaneView<T> destination,
                             PlaneView<const T> source, ResamplingProgram* program,
@@ -637,6 +696,37 @@ inline void run_resize_vertical8_case(const ResizeVertical8Case& test_case) {
                                          test_case.target_height, test_case.source_pitch,
                                          test_case.destination_pitch, 8, test_case.variant,
                                          test_case.expected_hash);
+}
+
+inline void run_vertical_reduce_case(const VerticalReduceCase& test_case) {
+  GuardedVideoBuffer<std::uint8_t> source(test_case.width_bytes, test_case.source_height,
+                                          test_case.source_pitch, 64);
+  GuardedVideoBuffer<std::uint8_t> expected(test_case.width_bytes, test_case.target_height,
+                                            test_case.destination_pitch, 64);
+  GuardedVideoBuffer<std::uint8_t> actual(test_case.width_bytes, test_case.target_height,
+                                          test_case.destination_pitch, 64);
+  fill_resize_input(source.view(), 8);
+  const auto source_snapshot = source.snapshot_active();
+  apply_vertical_reduce_reference(source.view().as_const(), expected.view());
+
+  test_case.variant.function(reinterpret_cast<BYTE*>(actual.view().data()),
+                             reinterpret_cast<const BYTE*>(source.view().data()),
+                             static_cast<int>(actual.view().pitch_bytes()),
+                             static_cast<int>(source.view().pitch_bytes()), test_case.width_bytes,
+                             test_case.target_height);
+
+  EXPECT_TRUE(compare_exact(expected.view().as_const(), actual.view().as_const()))
+      << test_case.name << " reference mismatch for variant " << test_case.variant.name;
+  if (!test_case.expected_hash.empty()) {
+    EXPECT_EQ(format_hash(hash_active(actual.view().as_const())), test_case.expected_hash)
+        << test_case.name << " stable output hash mismatch";
+  }
+  EXPECT_TRUE(source.active_matches(source_snapshot))
+      << test_case.name << " modified source pixels";
+  EXPECT_TRUE(source.memory_intact()) << test_case.name << " corrupted source padding or guards";
+  EXPECT_TRUE(expected.memory_intact())
+      << test_case.name << " corrupted reference padding or guards";
+  EXPECT_TRUE(actual.memory_intact()) << test_case.name << " corrupted output padding or guards";
 }
 
 inline void run_resize_vertical16_case(const ResizeVertical16Case& test_case) {

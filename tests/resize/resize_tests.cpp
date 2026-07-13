@@ -9,6 +9,15 @@
 namespace avsut::test {
 namespace {
 
+std::vector<VerticalReduceCase> vertical_reduce_cases() {
+  return {
+      make_vertical_reduce_case(
+          48, 10, 5, 64, 64,
+          Variant<VerticalReduceFunction>{"sse2", vertical_reduce_sse2, IsaRequirement::Sse2},
+          "b85700f92c22f06d"),
+  };
+}
+
 std::vector<ResizeVertical8Case> resize_vertical8_cases() {
   return {
       make_resize_vertical8_case(
@@ -437,6 +446,22 @@ TEST_P(ResizeVertical8Kernels, MatchesFixedCoefficientReference) {
 INSTANTIATE_TEST_SUITE_P(Kernels, ResizeVertical8Kernels,
                          ::testing::ValuesIn(resize_vertical8_cases()),
                          [](const ::testing::TestParamInfo<ResizeVertical8Case>& info) {
+                           return info.param.name;
+                         });
+
+class VerticalReduceKernels : public ::testing::TestWithParam<VerticalReduceCase> {};
+
+TEST_P(VerticalReduceKernels, MatchesThreeTapReductionReference) {
+  const auto& test_case = GetParam();
+  if (!variant_supported(test_case.variant, CpuFeatures::detect())) {
+    GTEST_SKIP() << "host does not support " << test_case.variant.name;
+  }
+  run_vertical_reduce_case(test_case);
+}
+
+INSTANTIATE_TEST_SUITE_P(Kernels, VerticalReduceKernels,
+                         ::testing::ValuesIn(vertical_reduce_cases()),
+                         [](const ::testing::TestParamInfo<VerticalReduceCase>& info) {
                            return info.param.name;
                          });
 
