@@ -18,7 +18,9 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 namespace {
@@ -34,6 +36,21 @@ using avsut::test::expect_float_audio;
 using avsut::test::GuardedAudioBuffer;
 using avsut::test::make_audio_bytes;
 using avsut::test::make_audio_video_info;
+
+int amplify_int16_reference(std::int16_t sample, int factor) {
+  const auto scaled = (static_cast<std::int64_t>(sample) * factor + 65536) >> 17;
+  return static_cast<int>(std::clamp<std::int64_t>(scaled, std::numeric_limits<std::int16_t>::min(),
+                                                   std::numeric_limits<std::int16_t>::max()));
+}
+
+std::int16_t mix_int16_reference(std::int16_t first, std::int16_t second, int first_factor,
+                                 int second_factor) {
+  const auto scaled = (static_cast<std::int64_t>(first) * first_factor +
+                       static_cast<std::int64_t>(second) * second_factor + 65536) >>
+                      17;
+  return static_cast<std::int16_t>(std::clamp<std::int64_t>(
+      scaled, std::numeric_limits<std::int16_t>::min(), std::numeric_limits<std::int16_t>::max()));
+}
 
 TEST(ConvertAudioFilter, ConvertsSigned16ToFloatForRequestedInterleavedWindow) {
   AviSynthEnvironment environment;
@@ -149,6 +166,122 @@ TEST(MergeChannelsFilter, InterleavesMonoSourcesAfterConvertingTheSecondFormat) 
   expect_audio_source_unchanged(*first_clip, first_before);
   expect_audio_source_unchanged(*second_clip, second_before);
   EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_SERIALIZED);
+  EXPECT_TRUE(output.memory_intact());
+}
+
+TEST(DelayAudioFilter, ZeroFillsTheDelayedPrefixAndOffsetsTheChildRequest) {
+  AviSynthEnvironment environment;
+  const auto vi = make_audio_video_info(AudioInfoSpec{4, SAMPLE_FLOAT, 4, 1});
+  const std::vector<float> samples{0.1F, 0.2F, 0.3F, 0.4F};
+  auto* source_clip =
+      new AudioSequenceClip(vi, make_audio_bytes(samples), AudioBoundsPolicy::ZeroFill);
+  PClip source(source_clip);
+  const auto source_before = source_clip->audio();
+
+  DelayAudio filter(0.5, source);
+  ASSERT_EQ(filter.GetVideoInfo().num_audio_samples, 6);
+  GuardedAudioBuffer output(filter.GetVideoInfo().BytesFromAudioSamples(4), 64, 64, 1);
+  filter.GetAudio(output.data(), 0, 4, environment.get());
+
+  expect_float_audio(output, {0.0F, 0.0F, 0.1F, 0.2F});
+  expect_audio_requests(*source_clip, {{-2, 4}});
+  expect_audio_source_unchanged(*source_clip, source_before);
+  EXPECT_TRUE(output.memory_intact());
+}
+
+TEST(AmplifyFilter, AppliesPerChannelIntegerFactorsWithSaturation) {
+  AviSynthEnvironment environment;
+  const auto vi = make_audio_video_info(AudioInfoSpec{48000, SAMPLE_INT16, 3, 2});
+  const std::vector<std::int16_t> samples{20000, -20000, -32768, 32767, 1000, -1000};
+  auto* source_clip = new AudioSequenceClip(vi, make_audio_bytes(samples));
+  PClip source(source_clip);
+  const auto source_before = source_clip->audio();
+  auto* volumes = new float[2]{2.0F, 0.5F};
+  auto* factors = new int[2]{static_cast<int>(2.0F * 131072.0F + 0.5F),
+                             static_cast<int>(0.5F * 131072.0F + 0.5F)};
+
+  Amplify filter(source, volumes, factors);
+  GuardedAudioBuffer output(filter.GetVideoInfo().BytesFromAudioSamples(3), 64, 64, 1);
+  filter.GetAudio(output.data(), 0, 3, environment.get());
+
+  const std::vector<std::int16_t> expected{
+      static_cast<std::int16_t>(amplify_int16_reference(samples[0], factors[0])),
+      static_cast<std::int16_t>(amplify_int16_reference(samples[1], factors[1])),
+      static_cast<std::int16_t>(amplify_int16_reference(samples[2], factors[0])),
+      static_cast<std::int16_t>(amplify_int16_reference(samples[3], factors[1])),
+      static_cast<std::int16_t>(amplify_int16_reference(samples[4], factors[0])),
+      static_cast<std::int16_t>(amplify_int16_reference(samples[5], factors[1]))};
+  expect_exact_audio<std::int16_t>(output, expected);
+  expect_audio_requests(*source_clip, {{0, 3}});
+  expect_audio_source_unchanged(*source_clip, source_before);
+  EXPECT_TRUE(output.memory_intact());
+}
+
+TEST(AmplifyFilter, AppliesPerChannelFloatFactorsWithoutClamping) {
+  AviSynthEnvironment environment;
+  const auto vi = make_audio_video_info(AudioInfoSpec{48000, SAMPLE_FLOAT, 2, 2});
+  const std::vector<float> samples{0.75F, -0.75F, -0.5F, 0.5F};
+  auto* source_clip = new AudioSequenceClip(vi, make_audio_bytes(samples));
+  PClip source(source_clip);
+  const auto source_before = source_clip->audio();
+  auto* volumes = new float[2]{2.0F, 0.5F};
+  auto* factors = new int[2]{static_cast<int>(2.0F * 131072.0F + 0.5F),
+                             static_cast<int>(0.5F * 131072.0F + 0.5F)};
+
+  Amplify filter(source, volumes, factors);
+  GuardedAudioBuffer output(filter.GetVideoInfo().BytesFromAudioSamples(2), 64, 64, 1);
+  filter.GetAudio(output.data(), 0, 2, environment.get());
+
+  expect_float_audio(output, {1.5F, -0.375F, -1.0F, 0.25F});
+  expect_audio_requests(*source_clip, {{0, 2}});
+  expect_audio_source_unchanged(*source_clip, source_before);
+  EXPECT_TRUE(output.memory_intact());
+}
+
+TEST(MixAudioFilter, MixesFloatTracksWithIndependentFactors) {
+  AviSynthEnvironment environment;
+  const auto vi = make_audio_video_info(AudioInfoSpec{48000, SAMPLE_FLOAT, 3, 2});
+  const std::vector<float> first_samples{0.8F, 0.2F, -0.4F, 0.6F, 0.0F, -0.8F};
+  const std::vector<float> second_samples{-0.2F, 0.4F, 0.6F, -0.6F, 1.0F, 0.2F};
+  auto* first_clip = new AudioSequenceClip(vi, make_audio_bytes(first_samples));
+  auto* second_clip = new AudioSequenceClip(vi, make_audio_bytes(second_samples));
+  PClip first(first_clip);
+  PClip second(second_clip);
+  const auto first_before = first_clip->audio();
+  const auto second_before = second_clip->audio();
+
+  MixAudio filter(first, second, 0.25, 0.75, environment.get());
+  GuardedAudioBuffer output(filter.GetVideoInfo().BytesFromAudioSamples(3), 64, 64, 1);
+  filter.GetAudio(output.data(), 0, 3, environment.get());
+
+  expect_float_audio(output, {0.05F, 0.35F, 0.35F, -0.3F, 0.75F, -0.05F});
+  expect_audio_requests(*first_clip, {{0, 3}});
+  expect_audio_requests(*second_clip, {{0, 3}});
+  expect_audio_source_unchanged(*first_clip, first_before);
+  expect_audio_source_unchanged(*second_clip, second_before);
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_SERIALIZED);
+  EXPECT_TRUE(output.memory_intact());
+}
+
+TEST(MixAudioFilter, SaturatesSigned16Results) {
+  AviSynthEnvironment environment;
+  const auto vi = make_audio_video_info(AudioInfoSpec{48000, SAMPLE_INT16, 2, 1});
+  const std::vector<std::int16_t> first_samples{30000, -30000};
+  const std::vector<std::int16_t> second_samples{30000, -30000};
+  auto* first_clip = new AudioSequenceClip(vi, make_audio_bytes(first_samples));
+  auto* second_clip = new AudioSequenceClip(vi, make_audio_bytes(second_samples));
+  PClip first(first_clip);
+  PClip second(second_clip);
+
+  MixAudio filter(first, second, 0.75, 0.75, environment.get());
+  GuardedAudioBuffer output(filter.GetVideoInfo().BytesFromAudioSamples(2), 64, 64, 1);
+  filter.GetAudio(output.data(), 0, 2, environment.get());
+
+  const int factor = static_cast<int>(0.75 * 131072.0 + 0.5);
+  expect_exact_audio<std::int16_t>(output, {mix_int16_reference(30000, 30000, factor, factor),
+                                            mix_int16_reference(-30000, -30000, factor, factor)});
+  expect_audio_requests(*first_clip, {{0, 2}});
+  expect_audio_requests(*second_clip, {{0, 2}});
   EXPECT_TRUE(output.memory_intact());
 }
 
