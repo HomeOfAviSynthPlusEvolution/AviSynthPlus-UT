@@ -74,8 +74,11 @@ belong to the test sources and test vectors.
 - `Turn` 180-degree RGB24/RGB48 rotations: the required pixel types are
   private to the upstream implementation.
 - `Turn` ARM/NEON variants: the current execution scope is Linux x86.
-- `Turn` filter frame allocation, dispatch, and script-environment behavior:
-  these are filter-level concerns rather than direct kernel unit tests.
+- Filter `Create` entry points, `Invoke` conversion orchestration,
+  filter-graph/cache behavior, registration, and plugin loading. Direct
+  construction of a public video filter class with a real environment is a
+  separate narrow unit-test tier; it does not cover these integration
+  contracts.
 - AVX-512 `GetAlphaRect` is Windows/GDI-only and remains outside the current
   Linux execution scope.
 - AVX-512 resize implementations that are disabled or non-production are not

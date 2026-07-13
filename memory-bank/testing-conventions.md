@@ -19,6 +19,7 @@ reserved examples are:
 support.
 turn.
 convert_bits.
+convolution.
 ```
 
 The GoogleTest suite identifies the operation and the relevant element or
@@ -53,6 +54,29 @@ CTest target names follow the same module identity, for example
 `turn_tests` and `convert_bits_tests`. A new module should have its own test
 directory and CMake target rather than adding unrelated cases to an existing
 target.
+
+## Direct Public-Filter Tests
+
+Direct public-filter tests use a module prefix named for the filter area, such
+as `convolution.`. They include the public filter declaration, link the normal
+`AvsCoreExternal` target, construct the class directly, and invoke `GetFrame`.
+They do not call a filter's `Create` function, `IScriptEnvironment::Invoke`,
+registration, or plugin-loading paths.
+
+Use `AviSynthEnvironment` per test or fixture. It owns a real environment from
+`CreateScriptEnvironment2()`; it is not a mock. Use `FrameSequenceClip` for
+input whose frame index matters. It must reject out-of-range frame requests and
+record requested frame indexes and cache hints. Use `StaticFrameClip` only
+when a one-frame, frame-index-independent source is part of the contract. A
+video-only clip must reject unexpected `GetAudio` calls rather than silently
+ignoring them.
+
+Describe `VideoInfo` explicitly, including pixel type, dimensions, frame count,
+and frame rate. Do not add helpers whose hidden defaults alter those fields.
+Use a full-pitch `FrameSnapshot` when checking source immutability; compare
+filter output against an independent active-pixel reference. Frame allocation
+and property propagation exercised by the real environment are part of this
+narrow tier, but script dispatch and filter-graph behavior are not.
 
 ## Parameterized Tests
 

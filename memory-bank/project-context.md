@@ -3,11 +3,11 @@
 ## Purpose
 
 AviSynthPlus-UT is an external C++17 unit-test repository for selected
-AviSynthPlus internal video and audio kernels. The repository tests upstream
-behavior without adding source files to or rebuilding the upstream project
-inside the test source tree. A test-triggered production defect may be fixed
-minimally in the submodule working tree for verification and recorded
-separately from the test-framework changes.
+AviSynthPlus internal video and audio kernels and selected public video filter
+classes. The repository tests upstream behavior without adding source files to
+or rebuilding the upstream project inside the test source tree. A test-triggered
+production defect may be fixed minimally in the submodule working tree for
+verification and recorded separately from the test-framework changes.
 
 The upstream project is consumed as a pinned Git submodule. The baseline
 submodule revision is `fcb9c8a205c1b01ee1ea491adba50e2217594598`; updating the
@@ -17,6 +17,8 @@ pointer or retaining a minimal production fix is an explicit, reviewed change.
 
 - Unit tests for internal video processing functions.
 - Unit tests for public audio sample-conversion kernels.
+- Unit tests for public video filter classes constructed directly with a real
+  `IScriptEnvironment` and test-owned synthetic video clips.
 - Stable output checks using fixed structured inputs or fixed seeds.
 - Differential checks between scalar C and available SIMD implementations.
 - Memory-integrity checks for active pixels, row padding, and allocation guards.
@@ -36,11 +38,11 @@ boundary.
   static library in a separate external build tree and exposes it as an
   imported target.
 - `tests/support` contains reusable C++17 RAII buffers, views, guarded audio
-  buffers, deterministic data, comparison, hashing, CPU-feature, and variant
-  helpers.
+  buffers, deterministic data, comparison, hashing, CPU-feature, variant, real
+  environment, synthetic-video-clip, and frame-snapshot helpers.
 - `tests/turn` and `tests/merge` contain direct unit tests for exposed Turn and
   Merge kernel functions.
-- `tests/convert_audio` will contain direct tests for exposed audio conversion
+- `tests/convert_audio` contains direct tests for exposed audio conversion
   functions.
 
 ## Test Boundary
@@ -51,6 +53,21 @@ normal upstream build. They must not include upstream `.cpp` files, redefine
 source list just to reach a file-local function. A production fix discovered by
 these tests must remain a minimal upstream change and must not expose a private
 function solely for testing.
+
+The direct public-video-filter tier may include a public filter declaration and
+construct that class directly against the normally built `AvsCore` library. It
+uses a real `IScriptEnvironment` created by `CreateScriptEnvironment2()` and
+test-owned concrete `IClip` implementations. Those clips provide controlled
+frames, validate frame indexes, and record frame and cache-hint requests; they
+are test doubles, not replacements for the script environment. The support
+layer must not provide a general `IScriptEnvironment` mock, a universal
+callback clip, or a video clip with silently ignored audio requests.
+
+This tier tests a public constructor and `GetFrame` behavior only. It does not
+call filter `Create` entry points, `IScriptEnvironment::Invoke`, registration,
+plugin loading, or a complete filter graph. Explicit video information and
+full-pitch frame snapshots belong to the test support layer so format metadata,
+source immutability, and padding behavior remain observable.
 
 The direct audio boundary is limited to public pointer/count conversion
 functions. Audio filter classes that require `PClip`, `IScriptEnvironment`,
@@ -65,8 +82,9 @@ disassembly.
 ## Current Non-Goals
 
 - Audio filter-level tests and audio I/O.
-- `.avs` script execution or black-box filter-graph tests.
-- Full distribution or plugin-loading tests.
+- `.avs` script execution, filter `Create` entry points, `Invoke` conversion
+  orchestration, or black-box filter-graph tests.
+- Filter registration, full distribution, or plugin-loading tests.
 - MSVC and Windows presets at the current stage.
 - Performance benchmarks and unbounded fuzzing.
 - ISA-dispatch contract testing, illegal-instruction testing, or FMA-specific

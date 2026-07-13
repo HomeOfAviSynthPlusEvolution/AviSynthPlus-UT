@@ -1,14 +1,15 @@
 # AviSynthPlus-UT
 
-External C++17 unit tests for selected AviSynthPlus internal video and audio kernels.
-The upstream project is pinned as a Git submodule; the test build never
-modifies it. Minimal production fixes discovered by the tests are kept as
-separate upstream changes.
+External C++17 unit tests for selected AviSynthPlus internal video and audio
+kernels, plus selected public video filter classes. The upstream project is
+pinned as a Git submodule; the test build never modifies it. Minimal production
+fixes discovered by the tests are kept as separate upstream changes.
 
-The suite targets internal video and public audio kernels and is designed to
-grow as coverage is added. Tests emphasize independent behavioral checks, deterministic output,
-scalar/SIMD equivalence, active-pixel hashing, input immutability, row padding,
-and allocation guards without modifying the upstream source.
+The suite targets internal video and public audio kernels, then directly
+constructed public video filters with a real AviSynth environment and synthetic
+input clips. Tests emphasize independent behavioral checks, deterministic
+output, scalar/SIMD equivalence, active-pixel hashing, input immutability, row
+padding, and allocation guards without modifying the upstream source.
 
 ## Build and run
 
@@ -30,7 +31,8 @@ separately configured dependency.
 ## Layout
 
 - `tests/support`: C++17 RAII buffers, typed plane views, deterministic data,
-  comparison, hashing, CPU features, and variant helpers.
+  comparison, hashing, CPU features, variant helpers, and reusable support for
+  direct public-filter tests.
 - `tests/turn`: Video-kernel unit tests and scalar/SIMD comparison cases.
 - `cmake/UpstreamTargets.cmake`: isolated full-`AvsCore` upstream build and
   imported target.
