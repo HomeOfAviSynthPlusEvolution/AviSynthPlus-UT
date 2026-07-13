@@ -620,4 +620,128 @@ inline void run_audio_float_case(const AudioFloatCase& test_case) {
   EXPECT_TRUE(actual.memory_intact()) << test_case.name << " output guard or padding corruption";
 }
 
+struct AudioTwoStageCase {
+  AudioFormat source_format{};
+  AudioFormat destination_format{};
+  std::size_t count{};
+  std::size_t source_alignment_offset{};
+  std::size_t stage_alignment_offset{};
+  std::size_t destination_alignment_offset{};
+  Variant<AudioConvertFunction> first_variant;
+  Variant<AudioConvertFunction> second_variant;
+  std::string expected_hash;
+  std::string name;
+};
+
+inline std::string audio_two_stage_case_name(AudioFormat source_format,
+                                             AudioFormat destination_format, std::size_t count,
+                                             std::size_t source_offset, std::size_t stage_offset,
+                                             std::size_t destination_offset,
+                                             const Variant<AudioConvertFunction>& first_variant,
+                                             const Variant<AudioConvertFunction>& second_variant) {
+  std::ostringstream stream;
+  stream << audio_format_name(source_format) << "To" << audio_format_name(destination_format)
+         << "_Count" << count << "_SrcOffset" << source_offset << "_StageOffset" << stage_offset
+         << "_DstOffset" << destination_offset << "_PatternBoundaryValues_"
+         << audio_variant_name(first_variant) << "_Then" << audio_variant_name(second_variant);
+  return stream.str();
+}
+
+inline AudioTwoStageCase make_audio_two_stage_case(AudioFormat source_format,
+                                                   AudioFormat destination_format,
+                                                   std::size_t count,
+                                                   Variant<AudioConvertFunction> first_variant,
+                                                   Variant<AudioConvertFunction> second_variant,
+                                                   std::string expected_hash = {}) {
+  AudioTwoStageCase result{source_format,
+                           destination_format,
+                           count,
+                           audio_alignment_offset(source_format),
+                           audio_alignment_offset(AudioFormat::S32),
+                           audio_alignment_offset(destination_format),
+                           std::move(first_variant),
+                           std::move(second_variant),
+                           std::move(expected_hash),
+                           {}};
+  result.name = audio_two_stage_case_name(
+      result.source_format, result.destination_format, result.count, result.source_alignment_offset,
+      result.stage_alignment_offset, result.destination_alignment_offset, result.first_variant,
+      result.second_variant);
+  return result;
+}
+
+inline void PrintTo(const AudioTwoStageCase& test_case, std::ostream* stream) {
+  *stream << test_case.name;
+}
+
+inline void run_audio_two_stage_case(const AudioTwoStageCase& test_case) {
+  const auto source_bytes = test_case.count * audio_format_bytes(test_case.source_format);
+  const auto stage_bytes = test_case.count * audio_format_bytes(AudioFormat::S32);
+  const auto destination_bytes = test_case.count * audio_format_bytes(test_case.destination_format);
+  GuardedAudioBuffer source(source_bytes, 64, 64, test_case.source_alignment_offset);
+  GuardedAudioBuffer expected_stage(stage_bytes, 64, 64, test_case.stage_alignment_offset);
+  GuardedAudioBuffer expected(destination_bytes, 64, 64, test_case.destination_alignment_offset);
+  GuardedAudioBuffer working(stage_bytes, 64, 64, test_case.stage_alignment_offset);
+  GuardedAudioBuffer actual(destination_bytes, 64, 64, test_case.destination_alignment_offset);
+
+  if (test_case.source_format == AudioFormat::F32)
+    fill_float_audio_source(source, test_case.source_format, test_case.count);
+  else
+    fill_integer_audio_source(source, test_case.source_format, test_case.count);
+  const auto source_snapshot = source.snapshot_active();
+  expected_stage.fill_active(0xCD);
+  expected.fill_active(0xCD);
+  working.fill_active(0xCD);
+  actual.fill_active(0xCD);
+
+  if (test_case.source_format == AudioFormat::F32 &&
+      test_case.destination_format == AudioFormat::S24) {
+    convert_float_to_integer_reference(AudioFormat::S32, source.data(), expected_stage.data(),
+                                       test_case.count);
+    convert_integer_reference(AudioFormat::S32, AudioFormat::S24, expected_stage.data(),
+                              expected.data(), test_case.count);
+    std::memcpy(working.data(), source.data(), source_bytes);
+
+    test_case.first_variant.function(working.data(), working.data(),
+                                     static_cast<int>(test_case.count));
+    EXPECT_TRUE(compare_audio_exact(expected_stage, working))
+        << test_case.name << " first-stage reference mismatch for " << test_case.first_variant.name;
+    test_case.second_variant.function(working.data(), actual.data(),
+                                      static_cast<int>(test_case.count));
+    EXPECT_TRUE(compare_audio_exact(expected, actual))
+        << test_case.name << " second-stage reference mismatch for "
+        << test_case.second_variant.name;
+    if (!test_case.expected_hash.empty()) {
+      EXPECT_EQ(format_hash(hash_audio_active(actual)), test_case.expected_hash) << test_case.name;
+    }
+  } else if (test_case.source_format == AudioFormat::S24 &&
+             test_case.destination_format == AudioFormat::F32) {
+    convert_integer_reference(AudioFormat::S24, AudioFormat::S32, source.data(),
+                              expected_stage.data(), test_case.count);
+    convert_integer_to_float_reference(AudioFormat::S32, expected_stage.data(), expected.data(),
+                                       test_case.count);
+
+    test_case.first_variant.function(source.data(), working.data(),
+                                     static_cast<int>(test_case.count));
+    EXPECT_TRUE(compare_audio_exact(expected_stage, working))
+        << test_case.name << " first-stage reference mismatch for " << test_case.first_variant.name;
+    test_case.second_variant.function(working.data(), working.data(),
+                                      static_cast<int>(test_case.count));
+    EXPECT_TRUE(compare_audio_float(expected, working, test_case.count))
+        << test_case.name << " second-stage reference mismatch for "
+        << test_case.second_variant.name;
+  } else {
+    throw std::invalid_argument("unsupported audio two-stage conversion");
+  }
+
+  EXPECT_TRUE(source.active_matches(source_snapshot)) << test_case.name << " modified source";
+  EXPECT_TRUE(source.memory_intact()) << test_case.name << " source guard or padding corruption";
+  EXPECT_TRUE(expected_stage.memory_intact())
+      << test_case.name << " intermediate reference guard or padding corruption";
+  EXPECT_TRUE(expected.memory_intact())
+      << test_case.name << " reference guard or padding corruption";
+  EXPECT_TRUE(working.memory_intact()) << test_case.name << " working guard or padding corruption";
+  EXPECT_TRUE(actual.memory_intact()) << test_case.name << " output guard or padding corruption";
+}
+
 }  // namespace avsut::test

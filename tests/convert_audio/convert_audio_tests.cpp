@@ -191,6 +191,45 @@ std::vector<AudioFloatCase> audio_float_cases() {
   return cases;
 }
 
+std::vector<AudioTwoStageCase> audio_two_stage_cases() {
+  constexpr std::array<std::size_t, 6> counts{3, 4, 5, 15, 16, 17};
+  constexpr std::array<const char*, 6> f32_to_s24_hashes{"3856194f641f6364", "130bd615dd56e05c",
+                                                         "1ace15baf02dfc76", "f31a61d307ad35b6",
+                                                         "fde8884581bbcf19", "36cfd1c0483386f7"};
+  const std::array<Variant<AudioConvertFunction>, 3> float_to_s32{
+      Variant<AudioConvertFunction>{"c", convertFLTTo32, IsaRequirement::Scalar},
+      Variant<AudioConvertFunction>{"sse4.1", convertFLTTo32_SSE41, IsaRequirement::Sse41},
+      Variant<AudioConvertFunction>{"avx2", convertFLTTo32_AVX2, IsaRequirement::Avx2}};
+  const std::array<Variant<AudioConvertFunction>, 2> s32_to_s24{
+      Variant<AudioConvertFunction>{"c", convert32To24, IsaRequirement::Scalar},
+      Variant<AudioConvertFunction>{"ssse3", convert32To24_SSSE3, IsaRequirement::Ssse3}};
+  const std::array<Variant<AudioConvertFunction>, 2> s24_to_s32{
+      Variant<AudioConvertFunction>{"c", convert24To32, IsaRequirement::Scalar},
+      Variant<AudioConvertFunction>{"ssse3", convert24To32_SSSE3, IsaRequirement::Ssse3}};
+  const std::array<Variant<AudioConvertFunction>, 3> s32_to_float{
+      Variant<AudioConvertFunction>{"c", convert32ToFLT, IsaRequirement::Scalar},
+      Variant<AudioConvertFunction>{"sse2", convert32ToFLT_SSE2, IsaRequirement::Sse2},
+      Variant<AudioConvertFunction>{"avx2", convert32ToFLT_AVX2, IsaRequirement::Avx2}};
+
+  std::vector<AudioTwoStageCase> cases;
+  for (std::size_t index = 0; index < counts.size(); ++index) {
+    const auto count = counts[index];
+    for (const auto& first : float_to_s32) {
+      for (const auto& second : s32_to_s24) {
+        cases.push_back(make_audio_two_stage_case(AudioFormat::F32, AudioFormat::S24, count, first,
+                                                  second, f32_to_s24_hashes[index]));
+      }
+    }
+    for (const auto& first : s24_to_s32) {
+      for (const auto& second : s32_to_float) {
+        cases.push_back(
+            make_audio_two_stage_case(AudioFormat::S24, AudioFormat::F32, count, first, second));
+      }
+    }
+  }
+  return cases;
+}
+
 class AudioIntegerKernels : public ::testing::TestWithParam<AudioIntegerCase> {};
 
 TEST_P(AudioIntegerKernels, MatchesIndependentIntegerReference) {
@@ -234,6 +273,26 @@ TEST_P(AudioFloatKernels, MatchesIndependentFloatConversionReference) {
 
 INSTANTIATE_TEST_SUITE_P(Float, AudioFloatKernels, ::testing::ValuesIn(audio_float_cases()),
                          [](const ::testing::TestParamInfo<AudioFloatCase>& info) {
+                           return info.param.name;
+                         });
+
+class AudioTwoStageKernels : public ::testing::TestWithParam<AudioTwoStageCase> {};
+
+TEST_P(AudioTwoStageKernels, MatchesConvertAudioTwoStageReference) {
+  const auto& test_case = GetParam();
+  const auto features = CpuFeatures::detect();
+  if (!variant_supported(test_case.first_variant, features)) {
+    GTEST_SKIP() << "host does not support " << test_case.first_variant.name;
+  }
+  if (!variant_supported(test_case.second_variant, features)) {
+    GTEST_SKIP() << "host does not support " << test_case.second_variant.name;
+  }
+  run_audio_two_stage_case(test_case);
+}
+
+INSTANTIATE_TEST_SUITE_P(TwoStage, AudioTwoStageKernels,
+                         ::testing::ValuesIn(audio_two_stage_cases()),
+                         [](const ::testing::TestParamInfo<AudioTwoStageCase>& info) {
                            return info.param.name;
                          });
 
