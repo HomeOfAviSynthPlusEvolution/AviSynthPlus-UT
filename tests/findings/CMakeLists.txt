@@ -5,6 +5,7 @@ add_executable(finding_tests
   finding_b4_planeswap_tests.cpp
   finding_b5_filters_tests.cpp
   finding_b6_color_tests.cpp
+  finding_b7_merge_layer_tests.cpp
 )
 target_include_directories(finding_tests PRIVATE
   ${PROJECT_SOURCE_DIR}/tests
