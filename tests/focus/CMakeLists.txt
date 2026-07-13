@@ -1,4 +1,7 @@
-add_executable(focus_tests focus_tests.cpp)
+add_executable(focus_tests
+  focus_tests.cpp
+  temporal_soften_tests.cpp
+)
 target_include_directories(focus_tests PRIVATE
   ${PROJECT_SOURCE_DIR}/tests
   ${PROJECT_SOURCE_DIR}/third_party/AviSynthPlus/avs_core/include
