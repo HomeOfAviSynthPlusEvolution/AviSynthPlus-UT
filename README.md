@@ -34,6 +34,8 @@ separately configured dependency.
   comparison, hashing, CPU features, variant helpers, and reusable support for
   direct public-filter tests.
 - `tests/turn`: Video-kernel unit tests and scalar/SIMD comparison cases.
+- `tests/convolution`: Direct public-filter tests using a real environment and
+  synthetic clips.
 - `cmake/UpstreamTargets.cmake`: isolated full-`AvsCore` upstream build and
   imported target.
 - `third_party/AviSynthPlus`: official pinned submodule.

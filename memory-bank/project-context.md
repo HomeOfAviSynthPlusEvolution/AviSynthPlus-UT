@@ -42,6 +42,7 @@ boundary.
   environment, synthetic-video-clip, and frame-snapshot helpers.
 - `tests/turn` and `tests/merge` contain direct unit tests for exposed Turn and
   Merge kernel functions.
+- `tests/convolution` contains direct tests for public video filter classes.
 - `tests/convert_audio` contains direct tests for exposed audio conversion
   functions.
 
