@@ -103,20 +103,22 @@ struct AudioIntegerCase {
   std::string name;
 };
 
-inline std::string audio_integer_case_name(AudioFormat source_format, AudioFormat destination_format,
-                                           std::size_t count, std::size_t source_offset,
+inline std::string audio_integer_case_name(AudioFormat source_format,
+                                           AudioFormat destination_format, std::size_t count,
+                                           std::size_t source_offset,
                                            std::size_t destination_offset,
                                            const Variant<AudioConvertFunction>& variant) {
   std::ostringstream stream;
   stream << audio_format_name(source_format) << "To" << audio_format_name(destination_format)
-         << "_Count" << count << "_SrcOffset" << source_offset << "_DstOffset"
-         << destination_offset << "_PatternBoundaryValues_" << audio_variant_name(variant);
+         << "_Count" << count << "_SrcOffset" << source_offset << "_DstOffset" << destination_offset
+         << "_PatternBoundaryValues_" << audio_variant_name(variant);
   return stream.str();
 }
 
-inline AudioIntegerCase make_audio_integer_case(
-    AudioFormat source_format, AudioFormat destination_format, std::size_t count,
-    Variant<AudioConvertFunction> variant, std::string expected_hash = {}) {
+inline AudioIntegerCase make_audio_integer_case(AudioFormat source_format,
+                                                AudioFormat destination_format, std::size_t count,
+                                                Variant<AudioConvertFunction> variant,
+                                                std::string expected_hash = {}) {
   AudioIntegerCase result{source_format,
                           destination_format,
                           count,
@@ -125,9 +127,9 @@ inline AudioIntegerCase make_audio_integer_case(
                           std::move(variant),
                           std::move(expected_hash),
                           {}};
-  result.name = audio_integer_case_name(
-      result.source_format, result.destination_format, result.count,
-      result.source_alignment_offset, result.destination_alignment_offset, result.variant);
+  result.name = audio_integer_case_name(result.source_format, result.destination_format,
+                                        result.count, result.source_alignment_offset,
+                                        result.destination_alignment_offset, result.variant);
   return result;
 }
 
@@ -138,14 +140,22 @@ inline void PrintTo(const AudioIntegerCase& test_case, std::ostream* stream) {
 inline std::int64_t integer_anchor(AudioFormat format, std::size_t index) {
   switch (format) {
     case AudioFormat::U8: {
-      constexpr std::array<std::int64_t, 10> values{0, 1, 2, 127, 128,
-                                                     129, 254, 255, 42, 213};
+      constexpr std::array<std::int64_t, 10> values{0, 1, 2, 127, 128, 129, 254, 255, 42, 213};
       return values[index % values.size()];
     }
     case AudioFormat::S16: {
-      constexpr std::array<std::int64_t, 12> values{
-          std::numeric_limits<std::int16_t>::min(), -32767, -32768, -257, -256, -1,
-          0, 1, 255, 256, 32766, std::numeric_limits<std::int16_t>::max()};
+      constexpr std::array<std::int64_t, 12> values{std::numeric_limits<std::int16_t>::min(),
+                                                    -32767,
+                                                    -32768,
+                                                    -257,
+                                                    -256,
+                                                    -1,
+                                                    0,
+                                                    1,
+                                                    255,
+                                                    256,
+                                                    32766,
+                                                    std::numeric_limits<std::int16_t>::max()};
       return values[index % values.size()];
     }
     case AudioFormat::S32: {
@@ -166,7 +176,12 @@ inline std::int64_t integer_anchor(AudioFormat format, std::size_t index) {
           std::numeric_limits<std::int32_t>::max()};
       return values[index % values.size()];
     }
-    case AudioFormat::S24:
+    case AudioFormat::S24: {
+      constexpr std::array<std::int64_t, 14> values{
+          -8388608LL, -8388607LL, -8388606LL, -65536LL, -257LL,  -256LL,    -1LL,
+          0LL,        1LL,        255LL,      256LL,    65535LL, 8388606LL, 8388607LL};
+      return values[index % values.size()];
+    }
     case AudioFormat::F32:
       break;
   }
@@ -183,6 +198,12 @@ inline void write_u32_le(std::uint8_t* destination, std::uint32_t value) {
   destination[1] = static_cast<std::uint8_t>(value >> 8);
   destination[2] = static_cast<std::uint8_t>(value >> 16);
   destination[3] = static_cast<std::uint8_t>(value >> 24);
+}
+
+inline void write_u24_le(std::uint8_t* destination, std::uint32_t value) {
+  destination[0] = static_cast<std::uint8_t>(value);
+  destination[1] = static_cast<std::uint8_t>(value >> 8);
+  destination[2] = static_cast<std::uint8_t>(value >> 16);
 }
 
 inline void fill_integer_audio_source(GuardedAudioBuffer& buffer, AudioFormat format,
@@ -205,6 +226,9 @@ inline void fill_integer_audio_source(GuardedAudioBuffer& buffer, AudioFormat fo
         write_u32_le(destination, static_cast<std::uint32_t>(static_cast<std::int32_t>(value)));
         break;
       case AudioFormat::S24:
+        write_u24_le(destination,
+                     static_cast<std::uint32_t>(static_cast<std::int32_t>(value)) & 0x00ffffffU);
+        break;
       case AudioFormat::F32:
         throw std::invalid_argument("unsupported integer source format");
     }
@@ -219,8 +243,7 @@ inline void convert_integer_reference(AudioFormat source_format, AudioFormat des
                                       const std::uint8_t* source, std::uint8_t* destination,
                                       std::size_t count) {
   if (source_format == AudioFormat::S32 && destination_format == AudioFormat::S16) {
-    for (std::size_t i = 0; i < count; ++i)
-      copy_bytes(destination + i * 2, source + i * 4 + 2, 2);
+    for (std::size_t i = 0; i < count; ++i) copy_bytes(destination + i * 2, source + i * 4 + 2, 2);
     return;
   }
   if (source_format == AudioFormat::S16 && destination_format == AudioFormat::S32) {
@@ -241,8 +264,8 @@ inline void convert_integer_reference(AudioFormat source_format, AudioFormat des
       destination[i * 4] = 0;
       destination[i * 4 + 1] = 0;
       destination[i * 4 + 2] = 0;
-      destination[i * 4 + 3] = static_cast<std::uint8_t>(
-          static_cast<std::int16_t>(source[i]) - static_cast<std::int16_t>(128));
+      destination[i * 4 + 3] = static_cast<std::uint8_t>(static_cast<std::int16_t>(source[i]) -
+                                                         static_cast<std::int16_t>(128));
     }
     return;
   }
@@ -254,8 +277,44 @@ inline void convert_integer_reference(AudioFormat source_format, AudioFormat des
   if (source_format == AudioFormat::U8 && destination_format == AudioFormat::S16) {
     for (std::size_t i = 0; i < count; ++i) {
       destination[i * 2] = 0;
-      destination[i * 2 + 1] = static_cast<std::uint8_t>(
-          static_cast<std::int16_t>(source[i]) - static_cast<std::int16_t>(128));
+      destination[i * 2 + 1] = static_cast<std::uint8_t>(static_cast<std::int16_t>(source[i]) -
+                                                         static_cast<std::int16_t>(128));
+    }
+    return;
+  }
+  if (source_format == AudioFormat::S32 && destination_format == AudioFormat::S24) {
+    for (std::size_t i = 0; i < count; ++i) copy_bytes(destination + i * 3, source + i * 4 + 1, 3);
+    return;
+  }
+  if (source_format == AudioFormat::S24 && destination_format == AudioFormat::S32) {
+    for (std::size_t i = 0; i < count; ++i) {
+      destination[i * 4] = 0;
+      copy_bytes(destination + i * 4 + 1, source + i * 3, 3);
+    }
+    return;
+  }
+  if (source_format == AudioFormat::S24 && destination_format == AudioFormat::S16) {
+    for (std::size_t i = 0; i < count; ++i) copy_bytes(destination + i * 2, source + i * 3 + 1, 2);
+    return;
+  }
+  if (source_format == AudioFormat::S16 && destination_format == AudioFormat::S24) {
+    for (std::size_t i = 0; i < count; ++i) {
+      destination[i * 3] = 0;
+      copy_bytes(destination + i * 3 + 1, source + i * 2, 2);
+    }
+    return;
+  }
+  if (source_format == AudioFormat::S24 && destination_format == AudioFormat::U8) {
+    for (std::size_t i = 0; i < count; ++i)
+      destination[i] = static_cast<std::uint8_t>(static_cast<std::int8_t>(source[i * 3 + 2]) + 128);
+    return;
+  }
+  if (source_format == AudioFormat::U8 && destination_format == AudioFormat::S24) {
+    for (std::size_t i = 0; i < count; ++i) {
+      destination[i * 3] = 0;
+      destination[i * 3 + 1] = 0;
+      destination[i * 3 + 2] = static_cast<std::uint8_t>(static_cast<std::int16_t>(source[i]) -
+                                                         static_cast<std::int16_t>(128));
     }
     return;
   }
@@ -306,7 +365,8 @@ inline void run_audio_integer_case(const AudioIntegerCase& test_case) {
   }
   EXPECT_TRUE(source.active_matches(source_snapshot)) << test_case.name << " modified source";
   EXPECT_TRUE(source.memory_intact()) << test_case.name << " source guard or padding corruption";
-  EXPECT_TRUE(expected.memory_intact()) << test_case.name << " reference guard or padding corruption";
+  EXPECT_TRUE(expected.memory_intact())
+      << test_case.name << " reference guard or padding corruption";
   EXPECT_TRUE(actual.memory_intact()) << test_case.name << " output guard or padding corruption";
 }
 
