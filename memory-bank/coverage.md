@@ -135,6 +135,14 @@ sources and test vectors.
 | `Crop` | Public crop filter | Public `Crop` class for 8-bit YV24 | Direct constructor with an interior subrectangle; independent coordinate reference, output geometry, source full-pitch immutability, frame requests, and output memory checks |
 | `AddBorders` | Public border-padding filter | Public `AddBorders` class for 8-bit YV24 with explicit YUV color | Direct constructor with fixed left/top/right/bottom borders; independent interior copy and per-plane border-color reference, source full-pitch immutability, frame requests, and output memory checks. Transient resampling remains uncovered |
 
+## Finding Test Coverage
+
+| Review group | Operation | Covered implementation types | Test method |
+| --- | --- | --- | --- |
+| `B1` | Non-finite float-to-integer audio conversion | Public C, SSE2/SSE4.1, and AVX2 conversion functions when supported | Fixed quiet-NaN vector-body and scalar-tail inputs; exact cross-implementation byte comparison and source immutability checks |
+| `B1` | Float-to-10-bit FMA rounding thresholds | Public SSE4.1 and AVX2+FMA3 ConvertBits templates | Deterministic `nextafter` scan on both sides of every full-range integer rounding threshold; exact output comparison and bounded buffer-integrity checks |
+| `B1` | ConvertBits frame-property and ordered-dither factory handling | Public `ConvertBits::Create` and returned clip through a real environment | Two-frame dynamic `_ColorRange`, unsupported range enum, and legal `16 -> 16` ordered-dither-with-1-bit-level contracts; fixed source frames, property/output assertions, and source snapshots. This is the documented narrow finding-tier factory exception. |
+
 ## Deliberate Gaps
 
 - The support, video-kernel, audio-kernel, public-video-filter, and

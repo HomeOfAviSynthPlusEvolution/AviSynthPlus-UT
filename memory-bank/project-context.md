@@ -73,6 +73,18 @@ plugin loading, or a complete filter graph. Explicit video information and
 full-pitch frame snapshots belong to the test support layer so format metadata,
 source immutability, and padding behavior remain observable.
 
+The separate `tests/findings` diagnostic tier evaluates reachable hypotheses
+from reviewed upstream code. It has its own `finding.` CTest prefix and is not
+ordinary kernel or filter coverage. A finding test may call an upstream public
+`Create` factory only when the proposed defect is reachable exclusively through
+that factory's argument or property handling. This is a narrow exception to
+the normal direct-filter boundary; it still uses a real environment and
+test-owned clips, and it must not add registration, plugin-loading, or script
+graph coverage. Finding tests retain an asserted production contract even when
+the current upstream revision does not reproduce the suspected defect. Memory
+checks use bounded, realistic allocations and do not manufacture pathological
+audio configurations or intentional out-of-memory conditions.
+
 The direct audio-kernel boundary is limited to public pointer/count conversion
 functions. A separate audio-filter tier may construct public core audio filter
 classes against a real `IScriptEnvironment` and strict test-owned audio clips.

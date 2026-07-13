@@ -20,6 +20,7 @@ support.
 turn.
 convert_bits.
 convolution.
+finding.
 ```
 
 The GoogleTest suite identifies the operation and the relevant element or
@@ -54,6 +55,21 @@ CTest target names follow the same module identity, for example
 `turn_tests` and `convert_bits_tests`. A new module should have its own test
 directory and CMake target rather than adding unrelated cases to an existing
 target.
+
+## Finding Tests
+
+Static-review hypotheses use the separate `finding.` module and a source file
+named after the reviewed group, such as `finding_b1_convert_tests.cpp`. They
+must remain separate from routine kernel and public-filter targets so an
+unresolved production defect is clearly attributable to the reviewed finding.
+
+Use the same stable names, fixed data, ISA gates, and diagnostics as routine
+tests. A finding test asserts the intended production contract; it is retained
+when the current revision does not reproduce the hypothesis, rather than being
+rewritten into a test for current accidental behavior. A direct public
+`Create` factory call is allowed only for a finding whose trigger cannot be
+reached through an existing direct constructor boundary. Record that exception
+in `project-context.md` and `coverage.md` with the finding coverage.
 
 ## Direct Public-Filter Tests
 
