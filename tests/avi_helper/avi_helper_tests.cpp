@@ -24,6 +24,8 @@ namespace {
 
 using ToY416Function = void (*)(uint8_t*, int, const uint8_t*, int, const uint8_t*, const uint8_t*,
                                 int, const uint8_t*, int, int, int);
+using FromY416Function = void (*)(uint8_t*, int, uint8_t*, uint8_t*, int, uint8_t*, int,
+                                  const uint8_t*, int, int, int);
 using BgraToArgbBeFunction = void (*)(uint8_t*, int, const uint8_t*, int, int, int);
 
 struct ToY416Case {
@@ -45,6 +47,20 @@ struct BgraToArgbBeCase {
   Variant<BgraToArgbBeFunction> variant;
   std::string expected_hash;
   std::string name;
+};
+
+template <typename T>
+struct PlaneSet {
+  GuardedVideoBuffer<T> y;
+  GuardedVideoBuffer<T> u;
+  GuardedVideoBuffer<T> v;
+  GuardedVideoBuffer<T> a;
+
+  PlaneSet(std::size_t width, std::size_t height, std::size_t pitch)
+      : y(width, height, pitch, 64),
+        u(width, height, pitch, 64),
+        v(width, height, pitch, 64),
+        a(width, height, pitch, 64) {}
 };
 
 template <typename Function>
@@ -183,6 +199,210 @@ inline void run_to_y416_case(const ToY416Case& test_case) {
   EXPECT_TRUE(actual.memory_intact()) << test_case.name;
 }
 
+template <typename T>
+void fill_yuv444p10(PlaneView<T> y_plane, PlaneView<T> u_plane, PlaneView<T> v_plane,
+                    PlaneView<T> alpha_plane) {
+  static_assert(std::is_same_v<T, std::uint16_t>);
+  constexpr std::array<std::uint16_t, 10> anchors{0, 1, 2, 3, 64, 128, 511, 512, 1022, 1023};
+  for (std::size_t y = 0; y < y_plane.height(); ++y) {
+    for (std::size_t x = 0; x < y_plane.width(); ++x) {
+      const auto sample = [&](std::size_t channel) {
+        const auto anchor = anchors[(x * 3U + y * 5U + channel * 7U) % anchors.size()];
+        return static_cast<std::uint16_t>((anchor + x * 17U + y * 31U + channel * 43U) & 0x3ffU);
+      };
+      y_plane.row(y)[x] = sample(0);
+      u_plane.row(y)[x] = sample(1);
+      v_plane.row(y)[x] = sample(2);
+      alpha_plane.row(y)[x] =
+          static_cast<std::uint16_t>((x * 0x1111U + y * 0x2222U + 0x1357U) & 0xffffU);
+    }
+  }
+}
+
+inline std::string from_y416_case_name(bool has_alpha) {
+  return std::string("FromY416_") + (has_alpha ? "SourceAlpha" : "IgnoreAlpha") +
+         "_Width7_Height3_SrcPitch80_DstPitch64_PatternChannelAnchors";
+}
+
+inline void run_from_y416_case(bool has_alpha, const char* expected_y_hash,
+                               const char* expected_u_hash, const char* expected_v_hash,
+                               const char* expected_a_hash) {
+  constexpr std::size_t width_pixels = 7;
+  constexpr std::size_t height = 3;
+  const auto name = from_y416_case_name(has_alpha);
+  GuardedVideoBuffer<std::uint16_t> source(width_pixels * 4, height, 80, 64);
+  PlaneSet<std::uint16_t> expected(width_pixels, height, 64);
+  PlaneSet<std::uint16_t> actual(width_pixels, height, 64);
+
+  for (std::size_t y = 0; y < height; ++y) {
+    for (std::size_t x = 0; x < width_pixels; ++x) {
+      source.view().row(y)[x * 4 + 0] = static_cast<std::uint16_t>(x * 37U + y * 101U + 3U);
+      source.view().row(y)[x * 4 + 1] = static_cast<std::uint16_t>(x * 41U + y * 107U + 7U);
+      source.view().row(y)[x * 4 + 2] = static_cast<std::uint16_t>(x * 43U + y * 109U + 11U);
+      source.view().row(y)[x * 4 + 3] = static_cast<std::uint16_t>(x * 47U + y * 113U + 13U);
+      expected.y.view().row(y)[x] = source.view().row(y)[x * 4 + 1];
+      expected.u.view().row(y)[x] = source.view().row(y)[x * 4 + 0];
+      expected.v.view().row(y)[x] = source.view().row(y)[x * 4 + 2];
+      expected.a.view().row(y)[x] = has_alpha ? source.view().row(y)[x * 4 + 3] : 0xA55AU;
+      actual.a.view().row(y)[x] = 0xA55AU;
+    }
+  }
+  const auto source_snapshot = source.snapshot_active();
+  const auto alpha_snapshot = actual.a.snapshot_active();
+  const FromY416Function function = has_alpha ? FromY416_c<true> : FromY416_c<false>;
+
+  function(reinterpret_cast<uint8_t*>(actual.y.view().data()),
+           static_cast<int>(actual.y.view().pitch_bytes()),
+           reinterpret_cast<uint8_t*>(actual.u.view().data()),
+           reinterpret_cast<uint8_t*>(actual.v.view().data()),
+           static_cast<int>(actual.u.view().pitch_bytes()),
+           reinterpret_cast<uint8_t*>(actual.a.view().data()),
+           static_cast<int>(actual.a.view().pitch_bytes()),
+           reinterpret_cast<const uint8_t*>(source.view().data()),
+           static_cast<int>(source.view().pitch_bytes()), static_cast<int>(width_pixels),
+           static_cast<int>(height));
+
+  EXPECT_TRUE(compare_exact(expected.y.view().as_const(), actual.y.view().as_const())) << name;
+  EXPECT_TRUE(compare_exact(expected.u.view().as_const(), actual.u.view().as_const())) << name;
+  EXPECT_TRUE(compare_exact(expected.v.view().as_const(), actual.v.view().as_const())) << name;
+  EXPECT_TRUE(compare_exact(expected.a.view().as_const(), actual.a.view().as_const())) << name;
+  EXPECT_EQ(format_hash(hash_active(expected.y.view().as_const())), expected_y_hash) << name;
+  EXPECT_EQ(format_hash(hash_active(expected.u.view().as_const())), expected_u_hash) << name;
+  EXPECT_EQ(format_hash(hash_active(expected.v.view().as_const())), expected_v_hash) << name;
+  EXPECT_EQ(format_hash(hash_active(expected.a.view().as_const())), expected_a_hash) << name;
+  EXPECT_TRUE(source.active_matches(source_snapshot)) << name;
+  if (!has_alpha) {
+    EXPECT_TRUE(actual.a.active_matches(alpha_snapshot)) << name << " modified ignored alpha";
+  }
+  EXPECT_TRUE(source.memory_intact()) << name;
+  EXPECT_TRUE(expected.y.memory_intact()) << name;
+  EXPECT_TRUE(expected.u.memory_intact()) << name;
+  EXPECT_TRUE(expected.v.memory_intact()) << name;
+  EXPECT_TRUE(expected.a.memory_intact()) << name;
+  EXPECT_TRUE(actual.y.memory_intact()) << name;
+  EXPECT_TRUE(actual.u.memory_intact()) << name;
+  EXPECT_TRUE(actual.v.memory_intact()) << name;
+  EXPECT_TRUE(actual.a.memory_intact()) << name;
+}
+
+inline std::string to_y410_case_name(bool has_alpha) {
+  return std::string("ToY410_") + (has_alpha ? "SourceAlpha" : "OpaqueAlpha") +
+         "_Width7_Height3_SrcPitch64_DstPitch64_PatternChannelAnchors";
+}
+
+inline void run_to_y410_case(bool has_alpha, const char* expected_hash) {
+  constexpr std::size_t width_pixels = 7;
+  constexpr std::size_t height = 3;
+  const auto name = to_y410_case_name(has_alpha);
+  PlaneSet<std::uint16_t> source(width_pixels, height, 64);
+  GuardedVideoBuffer<std::uint32_t> expected(width_pixels, height, 64, 64);
+  GuardedVideoBuffer<std::uint32_t> actual(width_pixels, height, 64, 64);
+  fill_yuv444p10(source.y.view(), source.u.view(), source.v.view(), source.a.view());
+  const auto y_snapshot = source.y.snapshot_active();
+  const auto u_snapshot = source.u.snapshot_active();
+  const auto v_snapshot = source.v.snapshot_active();
+  const auto a_snapshot = source.a.snapshot_active();
+
+  for (std::size_t y = 0; y < height; ++y) {
+    for (std::size_t x = 0; x < width_pixels; ++x) {
+      const auto alpha = has_alpha ? (source.a.view().row(y)[x] >> 8) : 3U;
+      expected.view().row(y)[x] = static_cast<std::uint32_t>(source.u.view().row(y)[x]) |
+                                  (static_cast<std::uint32_t>(source.y.view().row(y)[x]) << 10) |
+                                  (static_cast<std::uint32_t>(source.v.view().row(y)[x]) << 20) |
+                                  (alpha << 30);
+    }
+  }
+  const auto function = has_alpha ? ToY410_c<true> : ToY410_c<false>;
+  function(reinterpret_cast<uint8_t*>(actual.view().data()),
+           static_cast<int>(actual.view().pitch_bytes()),
+           reinterpret_cast<const uint8_t*>(source.y.view().data()),
+           static_cast<int>(source.y.view().pitch_bytes()),
+           reinterpret_cast<const uint8_t*>(source.u.view().data()),
+           reinterpret_cast<const uint8_t*>(source.v.view().data()),
+           static_cast<int>(source.u.view().pitch_bytes()),
+           reinterpret_cast<const uint8_t*>(source.a.view().data()),
+           static_cast<int>(source.a.view().pitch_bytes()), static_cast<int>(width_pixels),
+           static_cast<int>(height));
+
+  EXPECT_TRUE(compare_exact(expected.view().as_const(), actual.view().as_const())) << name;
+  EXPECT_EQ(format_hash(hash_active(expected.view().as_const())), expected_hash) << name;
+  EXPECT_TRUE(source.y.active_matches(y_snapshot)) << name;
+  EXPECT_TRUE(source.u.active_matches(u_snapshot)) << name;
+  EXPECT_TRUE(source.v.active_matches(v_snapshot)) << name;
+  EXPECT_TRUE(source.a.active_matches(a_snapshot)) << name;
+  EXPECT_TRUE(source.y.memory_intact()) << name;
+  EXPECT_TRUE(source.u.memory_intact()) << name;
+  EXPECT_TRUE(source.v.memory_intact()) << name;
+  EXPECT_TRUE(source.a.memory_intact()) << name;
+  EXPECT_TRUE(expected.memory_intact()) << name;
+  EXPECT_TRUE(actual.memory_intact()) << name;
+}
+
+inline std::string from_y410_case_name(bool has_alpha) {
+  return std::string("FromY410_") + (has_alpha ? "SourceAlpha" : "IgnoreAlpha") +
+         "_Width7_Height3_SrcPitch64_DstPitch64_PatternBitAnchors";
+}
+
+inline void run_from_y410_case(bool has_alpha, const char* expected_y_hash,
+                               const char* expected_u_hash, const char* expected_v_hash,
+                               const char* expected_a_hash) {
+  constexpr std::size_t width_pixels = 7;
+  constexpr std::size_t height = 3;
+  const auto name = from_y410_case_name(has_alpha);
+  GuardedVideoBuffer<std::uint32_t> source(width_pixels, height, 64, 64);
+  PlaneSet<std::uint16_t> expected(width_pixels, height, 64);
+  PlaneSet<std::uint16_t> actual(width_pixels, height, 64);
+  for (std::size_t y = 0; y < height; ++y) {
+    for (std::size_t x = 0; x < width_pixels; ++x) {
+      const auto u = static_cast<std::uint32_t>((x * 53U + y * 71U + 1U) & 0x3ffU);
+      const auto luma = static_cast<std::uint32_t>((x * 59U + y * 73U + 2U) & 0x3ffU);
+      const auto v = static_cast<std::uint32_t>((x * 61U + y * 79U + 3U) & 0x3ffU);
+      const auto alpha = static_cast<std::uint32_t>((x + y * 2U) & 0x3U);
+      source.view().row(y)[x] = u | (luma << 10) | (v << 20) | (alpha << 30);
+      expected.u.view().row(y)[x] = static_cast<std::uint16_t>(u);
+      expected.y.view().row(y)[x] = static_cast<std::uint16_t>(luma);
+      expected.v.view().row(y)[x] = static_cast<std::uint16_t>(v);
+      expected.a.view().row(y)[x] = has_alpha ? (alpha == 3 ? 0x3ff : alpha << 8) : 0xA55A;
+      actual.a.view().row(y)[x] = 0xA55A;
+    }
+  }
+  const auto source_snapshot = source.snapshot_active();
+  const auto alpha_snapshot = actual.a.snapshot_active();
+  const auto function = has_alpha ? FromY410_c<true> : FromY410_c<false>;
+  function(reinterpret_cast<uint8_t*>(actual.y.view().data()),
+           static_cast<int>(actual.y.view().pitch_bytes()),
+           reinterpret_cast<uint8_t*>(actual.u.view().data()),
+           reinterpret_cast<uint8_t*>(actual.v.view().data()),
+           static_cast<int>(actual.u.view().pitch_bytes()),
+           reinterpret_cast<uint8_t*>(actual.a.view().data()),
+           static_cast<int>(actual.a.view().pitch_bytes()),
+           reinterpret_cast<const uint8_t*>(source.view().data()),
+           static_cast<int>(source.view().pitch_bytes()), static_cast<int>(width_pixels),
+           static_cast<int>(height));
+
+  EXPECT_TRUE(compare_exact(expected.y.view().as_const(), actual.y.view().as_const())) << name;
+  EXPECT_TRUE(compare_exact(expected.u.view().as_const(), actual.u.view().as_const())) << name;
+  EXPECT_TRUE(compare_exact(expected.v.view().as_const(), actual.v.view().as_const())) << name;
+  EXPECT_TRUE(compare_exact(expected.a.view().as_const(), actual.a.view().as_const())) << name;
+  EXPECT_EQ(format_hash(hash_active(expected.y.view().as_const())), expected_y_hash) << name;
+  EXPECT_EQ(format_hash(hash_active(expected.u.view().as_const())), expected_u_hash) << name;
+  EXPECT_EQ(format_hash(hash_active(expected.v.view().as_const())), expected_v_hash) << name;
+  EXPECT_EQ(format_hash(hash_active(expected.a.view().as_const())), expected_a_hash) << name;
+  EXPECT_TRUE(source.active_matches(source_snapshot)) << name;
+  if (!has_alpha) {
+    EXPECT_TRUE(actual.a.active_matches(alpha_snapshot)) << name << " modified ignored alpha";
+  }
+  EXPECT_TRUE(source.memory_intact()) << name;
+  EXPECT_TRUE(expected.y.memory_intact()) << name;
+  EXPECT_TRUE(expected.u.memory_intact()) << name;
+  EXPECT_TRUE(expected.v.memory_intact()) << name;
+  EXPECT_TRUE(expected.a.memory_intact()) << name;
+  EXPECT_TRUE(actual.y.memory_intact()) << name;
+  EXPECT_TRUE(actual.u.memory_intact()) << name;
+  EXPECT_TRUE(actual.v.memory_intact()) << name;
+  EXPECT_TRUE(actual.a.memory_intact()) << name;
+}
+
 inline void fill_bgra_bytes(PlaneView<std::uint8_t> view, std::size_t width_pixels) {
   for (std::size_t y = 0; y < view.height(); ++y) {
     for (std::size_t x = 0; x < width_pixels; ++x) {
@@ -230,6 +450,73 @@ inline std::uint16_t swap16(std::uint16_t value) {
   return static_cast<std::uint16_t>((value << 8) | (value >> 8));
 }
 
+inline std::uint32_t swap32(std::uint32_t value) {
+  return ((value & 0x000000ffU) << 24) | ((value & 0x0000ff00U) << 8) |
+         ((value & 0x00ff0000U) >> 8) | ((value & 0xff000000U) >> 24);
+}
+
+inline void run_from_packed_rgb10_case(bool r210, const char* expected_r_hash,
+                                       const char* expected_g_hash, const char* expected_b_hash) {
+  constexpr std::size_t width_pixels = 5;
+  constexpr std::size_t height = 3;
+  const auto name = std::string(r210 ? "FromR210" : "FromR10k") +
+                    "_Width5_Height3_SrcPitch64_DstPitch64_PatternBitAnchors";
+  GuardedVideoBuffer<std::uint32_t> source(width_pixels, height, 64, 64);
+  GuardedVideoBuffer<std::uint16_t> expected_r(width_pixels, height, 64, 64);
+  GuardedVideoBuffer<std::uint16_t> expected_g(width_pixels, height, 64, 64);
+  GuardedVideoBuffer<std::uint16_t> expected_b(width_pixels, height, 64, 64);
+  GuardedVideoBuffer<std::uint16_t> actual_r(width_pixels, height, 64, 64);
+  GuardedVideoBuffer<std::uint16_t> actual_g(width_pixels, height, 64, 64);
+  GuardedVideoBuffer<std::uint16_t> actual_b(width_pixels, height, 64, 64);
+
+  for (std::size_t y = 0; y < height; ++y) {
+    for (std::size_t x = 0; x < width_pixels; ++x) {
+      const auto r = static_cast<std::uint32_t>((x * 97U + y * 113U + 1U) & 0x3ffU);
+      const auto g = static_cast<std::uint32_t>((x * 101U + y * 127U + 2U) & 0x3ffU);
+      const auto b = static_cast<std::uint32_t>((x * 103U + y * 131U + 3U) & 0x3ffU);
+      const auto packed = r210 ? ((r << 20) | (g << 10) | b) : ((r << 22) | (g << 12) | (b << 2));
+      source.view().row(y)[x] = swap32(packed);
+      expected_r.view().row(y)[x] = static_cast<std::uint16_t>(r);
+      expected_g.view().row(y)[x] = static_cast<std::uint16_t>(g);
+      expected_b.view().row(y)[x] = static_cast<std::uint16_t>(b);
+    }
+  }
+  const auto source_snapshot = source.snapshot_active();
+
+  if (r210) {
+    From_r210_c(reinterpret_cast<uint8_t*>(actual_r.view().data()),
+                reinterpret_cast<uint8_t*>(actual_g.view().data()),
+                reinterpret_cast<uint8_t*>(actual_b.view().data()),
+                static_cast<int>(actual_r.view().pitch_bytes()),
+                reinterpret_cast<uint8_t*>(source.view().data()),
+                static_cast<int>(source.view().pitch_bytes()), static_cast<int>(width_pixels),
+                static_cast<int>(height));
+  } else {
+    From_R10k_c(reinterpret_cast<uint8_t*>(actual_r.view().data()),
+                reinterpret_cast<uint8_t*>(actual_g.view().data()),
+                reinterpret_cast<uint8_t*>(actual_b.view().data()),
+                static_cast<int>(actual_r.view().pitch_bytes()),
+                reinterpret_cast<uint8_t*>(source.view().data()),
+                static_cast<int>(source.view().pitch_bytes()), static_cast<int>(width_pixels),
+                static_cast<int>(height));
+  }
+
+  EXPECT_TRUE(compare_exact(expected_r.view().as_const(), actual_r.view().as_const())) << name;
+  EXPECT_TRUE(compare_exact(expected_g.view().as_const(), actual_g.view().as_const())) << name;
+  EXPECT_TRUE(compare_exact(expected_b.view().as_const(), actual_b.view().as_const())) << name;
+  EXPECT_EQ(format_hash(hash_active(expected_r.view().as_const())), expected_r_hash) << name;
+  EXPECT_EQ(format_hash(hash_active(expected_g.view().as_const())), expected_g_hash) << name;
+  EXPECT_EQ(format_hash(hash_active(expected_b.view().as_const())), expected_b_hash) << name;
+  EXPECT_TRUE(source.active_matches(source_snapshot)) << name;
+  EXPECT_TRUE(source.memory_intact()) << name;
+  EXPECT_TRUE(expected_r.memory_intact()) << name;
+  EXPECT_TRUE(expected_g.memory_intact()) << name;
+  EXPECT_TRUE(expected_b.memory_intact()) << name;
+  EXPECT_TRUE(actual_r.memory_intact()) << name;
+  EXPECT_TRUE(actual_g.memory_intact()) << name;
+  EXPECT_TRUE(actual_b.memory_intact()) << name;
+}
+
 TEST(BgrToRgbBe, ReordersAndByteSwapsPacked16BitPixels) {
   constexpr std::size_t width_pixels = 5;
   constexpr std::size_t height = 3;
@@ -261,6 +548,33 @@ TEST(BgrToRgbBe, ReordersAndByteSwapsPacked16BitPixels) {
   EXPECT_TRUE(source.memory_intact());
   EXPECT_TRUE(expected.memory_intact());
   EXPECT_TRUE(actual.memory_intact());
+}
+
+TEST(FromY416, ExtractsChannelsAndLeavesIgnoredAlphaUntouched) {
+  run_from_y416_case(false, "e3d4e9352341576d", "9259e877473733cc", "8ac97661bb952cb1",
+                     "3238983f1e799a61");
+  run_from_y416_case(true, "e3d4e9352341576d", "9259e877473733cc", "8ac97661bb952cb1",
+                     "b4482fe3776327cc");
+}
+
+TEST(ToY410, PacksTenBitChannelsAndAlphaModes) {
+  run_to_y410_case(false, "ded819d861ea3b15");
+  run_to_y410_case(true, "837e45f9bebba043");
+}
+
+TEST(FromY410, ExtractsTenBitChannelsAndLeavesIgnoredAlphaUntouched) {
+  run_from_y410_case(false, "5cdec5e89160ae43", "7860e260704152d1", "6621c94fa3e5bf10",
+                     "3238983f1e799a61");
+  run_from_y410_case(true, "5cdec5e89160ae43", "7860e260704152d1", "6621c94fa3e5bf10",
+                     "6031275cea930c5d");
+}
+
+TEST(FromR210, ExtractsBigEndianTenBitRgb) {
+  run_from_packed_rgb10_case(true, "9950d5147e5f4240", "eb4956e869eba190", "01ccc44f33d1a66e");
+}
+
+TEST(FromR10k, ExtractsBigEndianTenBitRgb) {
+  run_from_packed_rgb10_case(false, "9950d5147e5f4240", "eb4956e869eba190", "01ccc44f33d1a66e");
 }
 
 std::vector<ToY416Case> to_y416_cases() {
