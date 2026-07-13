@@ -91,6 +91,8 @@ sources and test vectors.
 | `DelayAudio` | Public delayed audio timeline | Public `DelayAudio` class for finite float audio | Direct constructor and `GetAudio` calls with a fixed fractional delay; explicit zero-fill clip policy, negative child request trace, output sample-count change, source immutability, and guarded output memory |
 | `Amplify` | Public per-channel gain | Public `Amplify` class for signed 16-bit and float audio | Direct constructor and `GetAudio` calls with fixed per-channel factors; independent signed-16 saturation and float non-saturation references, source request forwarding, source immutability, and guarded output memory |
 | `MixAudio` | Public two-track weighted mix | Public `MixAudio` class for signed 16-bit and float audio | Direct constructor and `GetAudio` calls with independent fixed track factors; independent float arithmetic and signed-16 saturation references, both source request traces, cache hint, source immutability, and guarded output memory |
+| `Normalize` | Public stream-peak normalization | Public `Normalize` class for signed 16-bit and float audio | Direct constructor and `GetAudio` calls with fixed peak anchors; full-stream scan before output, independent integer/float scaling references, saturation, source request trace, cache hint, source immutability, and guarded output memory |
+| `EnsureVBRMP3Sync` | Public sequential audio access wrapper | Public `EnsureVBRMP3Sync` class for finite float audio | Direct constructor and ordered, skipped, and rewound `GetAudio` requests; exact replayed samples, sequential child request trace, audio cache-mode/size hints, and guarded output memory |
 
 ## Public Video Filter Coverage
 

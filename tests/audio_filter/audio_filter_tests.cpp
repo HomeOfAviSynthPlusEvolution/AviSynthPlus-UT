@@ -19,6 +19,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <vector>
@@ -283,6 +284,70 @@ TEST(MixAudioFilter, SaturatesSigned16Results) {
   expect_audio_requests(*first_clip, {{0, 2}});
   expect_audio_requests(*second_clip, {{0, 2}});
   EXPECT_TRUE(output.memory_intact());
+}
+
+TEST(NormalizeFilter, ScansFloatStreamBeforeNormalizingRequestedWindow) {
+  AviSynthEnvironment environment;
+  const auto vi = make_audio_video_info(AudioInfoSpec{48000, SAMPLE_FLOAT, 4, 1});
+  const std::vector<float> samples{0.25F, -0.5F, 0.125F, 0.0F};
+  auto* source_clip = new AudioSequenceClip(vi, make_audio_bytes(samples));
+  PClip source(source_clip);
+  const auto source_before = source_clip->audio();
+
+  Normalize filter(source, 1.0F, false);
+  GuardedAudioBuffer output(filter.GetVideoInfo().BytesFromAudioSamples(2), 64, 64, 1);
+  filter.GetAudio(output.data(), 1, 2, environment.get());
+
+  expect_float_audio(output, {-1.0F, 0.25F});
+  expect_audio_requests(*source_clip, {{0, 4}, {1, 2}});
+  expect_audio_source_unchanged(*source_clip, source_before);
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_SERIALIZED);
+  EXPECT_TRUE(output.memory_intact());
+}
+
+TEST(NormalizeFilter, ScansSigned16PeaksAndSaturatesOutput) {
+  AviSynthEnvironment environment;
+  const auto vi = make_audio_video_info(AudioInfoSpec{48000, SAMPLE_INT16, 3, 1});
+  const std::vector<std::int16_t> samples{-16384, 8192, 4096};
+  auto* source_clip = new AudioSequenceClip(vi, make_audio_bytes(samples));
+  PClip source(source_clip);
+  const auto source_before = source_clip->audio();
+
+  Normalize filter(source, 1.0F, false);
+  GuardedAudioBuffer output(filter.GetVideoInfo().BytesFromAudioSamples(3), 64, 64, 1);
+  filter.GetAudio(output.data(), 0, 3, environment.get());
+
+  expect_exact_audio<std::int16_t>(output, {-32768, 16384, 8192});
+  expect_audio_requests(*source_clip, {{0, 3}, {0, 3}});
+  expect_audio_source_unchanged(*source_clip, source_before);
+  EXPECT_TRUE(output.memory_intact());
+}
+
+TEST(EnsureVBRMP3SyncFilter, ReplaysSkippedAndRewoundAudioBeforeServingOutput) {
+  AviSynthEnvironment environment;
+  const auto vi = make_audio_video_info(AudioInfoSpec{44100, SAMPLE_FLOAT, 10, 1});
+  const std::vector<float> samples{0.0F, 0.1F, 0.2F, 0.3F, 0.4F, 0.5F, 0.6F, 0.7F, 0.8F, 0.9F};
+  auto* source_clip = new AudioSequenceClip(vi, make_audio_bytes(samples));
+  PClip source(source_clip);
+  EnsureVBRMP3Sync filter(source);
+  GuardedAudioBuffer first(vi.BytesFromAudioSamples(4), 64, 64, 1);
+  GuardedAudioBuffer skipped(vi.BytesFromAudioSamples(2), 64, 64, 1);
+  GuardedAudioBuffer rewound(vi.BytesFromAudioSamples(2), 64, 64, 1);
+
+  filter.GetAudio(first.data(), 0, 4, environment.get());
+  filter.GetAudio(skipped.data(), 8, 2, environment.get());
+  filter.GetAudio(rewound.data(), 2, 2, environment.get());
+
+  expect_float_audio(first, {0.0F, 0.1F, 0.2F, 0.3F});
+  expect_float_audio(skipped, {0.8F, 0.9F});
+  expect_float_audio(rewound, {0.2F, 0.3F});
+  expect_audio_requests(*source_clip, {{0, 4}, {4, 4}, {8, 2}, {0, 2}, {2, 2}});
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GETCHILD_AUDIO_MODE, 0), CACHE_AUDIO);
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GETCHILD_AUDIO_SIZE, 0), 1024 * 1024);
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_SERIALIZED);
+  EXPECT_TRUE(first.memory_intact());
+  EXPECT_TRUE(skipped.memory_intact());
+  EXPECT_TRUE(rewound.memory_intact());
 }
 
 }  // namespace
