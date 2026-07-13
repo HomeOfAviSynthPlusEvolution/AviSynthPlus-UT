@@ -10,6 +10,7 @@
 #include "layer_rgb32_add_test_helpers.h"
 #include "layer_rgb32_fast_test_helpers.h"
 #include "layer_rgb32_lighten_darken_test_helpers.h"
+#include "layer_rgb32_mul_test_helpers.h"
 #include "layer_rgb32_subtract_test_helpers.h"
 #include "layer_yuy2_fast_test_helpers.h"
 
@@ -446,6 +447,54 @@ TEST_P(LayerRgb32LightenDarkenKernels, MatchesIndependentReference) {
 INSTANTIATE_TEST_SUITE_P(Kernels, LayerRgb32LightenDarkenKernels,
                          ::testing::ValuesIn(layer_rgb32_lighten_darken_cases()),
                          [](const ::testing::TestParamInfo<LayerRgb32LightenDarkenCase>& info) {
+                           return info.param.name;
+                         });
+
+std::vector<LayerRgb32MulCase> layer_rgb32_mul_cases() {
+  constexpr std::size_t width_pixels = 7;
+  constexpr std::size_t height = 3;
+  constexpr std::size_t destination_pitch = 64;
+  constexpr std::size_t overlay_pitch = 80;
+  constexpr int full_level = 257;
+  constexpr int partial_level = 173;
+  std::vector<LayerRgb32MulCase> cases;
+  for (const bool use_chroma : {false, true}) {
+    for (const auto& level :
+         {std::pair{full_level, "Full257"}, std::pair{partial_level, "Partial173"}}) {
+      cases.push_back(make_layer_rgb32_mul_case(
+          use_chroma, width_pixels, height, destination_pitch, overlay_pitch, level.first,
+          level.second,
+          Variant<LayerRgb32MulFunction>{
+              "sse2", use_chroma ? layer_rgb32_mul_sse2<true> : layer_rgb32_mul_sse2<false>,
+              IsaRequirement::Sse2},
+          use_chroma ? (level.first == full_level ? "fcb791dc58b06344" : "36675815f43b074b")
+                     : (level.first == full_level ? "13bd888dabfc7d28" : "3bf166e71030c1a2")));
+      cases.push_back(make_layer_rgb32_mul_case(
+          use_chroma, width_pixels, height, destination_pitch, overlay_pitch, level.first,
+          level.second,
+          Variant<LayerRgb32MulFunction>{
+              "avx2", use_chroma ? layer_rgb32_mul_avx2<true> : layer_rgb32_mul_avx2<false>,
+              IsaRequirement::Avx2},
+          use_chroma ? (level.first == full_level ? "fcb791dc58b06344" : "36675815f43b074b")
+                     : (level.first == full_level ? "13bd888dabfc7d28" : "3bf166e71030c1a2")));
+    }
+  }
+  return cases;
+}
+
+class LayerRgb32MulKernels : public ::testing::TestWithParam<LayerRgb32MulCase> {};
+
+TEST_P(LayerRgb32MulKernels, MatchesIndependentReference) {
+  const auto& test_case = GetParam();
+  if (!variant_supported(test_case.variant, CpuFeatures::detect())) {
+    GTEST_SKIP() << "host does not support " << test_case.variant.name;
+  }
+  run_layer_rgb32_mul_case(test_case);
+}
+
+INSTANTIATE_TEST_SUITE_P(Kernels, LayerRgb32MulKernels,
+                         ::testing::ValuesIn(layer_rgb32_mul_cases()),
+                         [](const ::testing::TestParamInfo<LayerRgb32MulCase>& info) {
                            return info.param.name;
                          });
 
