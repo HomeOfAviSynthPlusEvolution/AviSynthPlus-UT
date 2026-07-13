@@ -21,6 +21,9 @@ std::vector<TextOverlayCompareCase> text_overlay_compare_cases() {
       make_text_overlay_compare_case(
           "Yuy2", "Luma", 0x00ff00ffU, 4, 32, 3, 48, 64, 7, 2, 19, -23, 3, -4, 9.0,
           Variant<TextOverlayCompareFunction>{"sse2", compare_sse2, IsaRequirement::Sse2}),
+      make_text_overlay_compare_case(
+          "Rgb24", "AllChannels", 0x00ffffffU, 3, 36, 3, 52, 68, 3, 9, 0, 0, 0, 0, 0.0,
+          Variant<TextOverlayCompareFunction>{"sse2", compare_sse2, IsaRequirement::Sse2}),
   };
 }
 
