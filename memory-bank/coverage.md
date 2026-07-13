@@ -59,6 +59,7 @@ belong to the test sources and test vectors.
 | `AviHelper` | Y416/Y410 unpacking and packed 10-bit RGB unpacking | `FromY416_c`, `ToY410_c`, `FromY410_c`, `From_r210_c`, and `From_R10k_c` | Fixed channel and bit-field anchors with opaque/source/ignored alpha branches; independent layout references, active-plane or packed-output hashes, source immutability, row padding, and allocation guard checks |
 | `AviHelper` | Packed V308/V408/V410 to planar YUV conversion | `v308_to_yuv444p8`, `v408_to_yuva444p8`, and `v410_to_yuv444p10` | Fixed packed channel and 10-bit bit-field anchors with distinct planar output pitches; independent channel extraction references, active-plane hashes, source immutability, row padding, and allocation guard checks |
 | `AviHelper` | Packed V210 4:2:2 conversion in both directions | `yuv422p10_to_v210` and `v210_to_yuv422p10` | Fixed 10-bit YUV 4:2:2 anchors with a complete 6-pixel group and a two-pixel tail; independent bit-field references, active-output hashes, source immutability, permitted full-group tail writes through the aligned row allowance, protected row padding, and allocation guard checks |
+| `AviHelper` | Planar YUV 4:2:2 to and from P210/P216 storage | `yuv42xp10_16_to_Px10_16` and `Px10_16_to_yuv42xp10_16` | Parameterized 10-bit shifted and native 16-bit branches with vector blocks and scalar tails; independent luma/chroma packing references, round-trip plane checks, environment-backed CPU dispatch, active hashes, input immutability, row padding, and allocation guard checks |
 
 ## Deliberate Gaps
 

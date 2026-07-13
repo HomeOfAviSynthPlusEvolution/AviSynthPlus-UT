@@ -15,6 +15,7 @@
 #include <limits>
 #include <ostream>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -28,6 +29,29 @@ using ToY416Function = void (*)(uint8_t*, int, const uint8_t*, int, const uint8_
 using FromY416Function = void (*)(uint8_t*, int, uint8_t*, uint8_t*, int, uint8_t*, int,
                                   const uint8_t*, int, int, int);
 using BgraToArgbBeFunction = void (*)(uint8_t*, int, const uint8_t*, int, int, int);
+
+class AviScriptEnvironment {
+ public:
+  AviScriptEnvironment() : environment_(CreateScriptEnvironment2()) {
+    if (environment_ == nullptr) {
+      throw std::runtime_error("CreateScriptEnvironment2 failed");
+    }
+  }
+
+  ~AviScriptEnvironment() {
+    if (environment_ != nullptr) {
+      environment_->DeleteScriptEnvironment();
+    }
+  }
+
+  AviScriptEnvironment(const AviScriptEnvironment&) = delete;
+  AviScriptEnvironment& operator=(const AviScriptEnvironment&) = delete;
+
+  IScriptEnvironment* get() const noexcept { return environment_; }
+
+ private:
+  IScriptEnvironment2* environment_{};
+};
 
 struct ToY416Case {
   bool has_alpha{};
@@ -874,6 +898,172 @@ TEST(V210ToYuv422p10, UnpacksFullGroupAndTwoPixelTail) {
   EXPECT_TRUE(actual_u.memory_intact());
   EXPECT_TRUE(actual_v.memory_intact());
 }
+
+struct Px10ConversionCase {
+  bool semi_packed_p16{};
+  std::string name;
+  std::string packed_hash;
+  std::string y_hash;
+  std::string u_hash;
+  std::string v_hash;
+};
+
+std::vector<Px10ConversionCase> px10_conversion_cases() {
+  return {{false, "FormatP210", "1f6d2419e7f98ed3", "a2a31cf6c56d226c", "6d4f5bd45212d632",
+           "27d4288bf328167a"},
+          {true, "FormatP216", "a4c76d65c6f47d79", "8a123c262867f5d1", "4511aa36dbc3946e",
+           "0a63986139e846ee"}};
+}
+
+inline void PrintTo(const Px10ConversionCase& test_case, std::ostream* stream) {
+  *stream << test_case.name;
+}
+
+inline std::uint16_t px10_source_value(std::size_t x, std::size_t y, std::size_t channel,
+                                       bool semi_packed_p16) {
+  constexpr std::array<std::uint32_t, 12> anchors{0,   1,   2,    3,    31,    128,
+                                                  511, 512, 1022, 1023, 32767, 65535};
+  const auto anchor = anchors[(x * 5U + y * 7U + channel * 11U) % anchors.size()];
+  const auto value = anchor + x * 257U + y * 4099U + channel * 109U;
+  return static_cast<std::uint16_t>(value & (semi_packed_p16 ? 0xffffU : 0x3ffU));
+}
+
+inline void fill_px10_source(PlaneView<std::uint16_t> y_plane, PlaneView<std::uint16_t> u_plane,
+                             PlaneView<std::uint16_t> v_plane, bool semi_packed_p16) {
+  for (std::size_t y = 0; y < y_plane.height(); ++y) {
+    for (std::size_t x = 0; x < y_plane.width(); ++x) {
+      y_plane.row(y)[x] = px10_source_value(x, y, 0, semi_packed_p16);
+    }
+    for (std::size_t x = 0; x < u_plane.width(); ++x) {
+      u_plane.row(y)[x] = px10_source_value(x, y, 1, semi_packed_p16);
+      v_plane.row(y)[x] = px10_source_value(x, y, 2, semi_packed_p16);
+    }
+  }
+}
+
+inline std::uint16_t px10_packed_value(std::uint16_t value, bool semi_packed_p16) {
+  return semi_packed_p16 ? value : static_cast<std::uint16_t>(value << 6);
+}
+
+inline void make_px10_packed_reference(PlaneView<const std::uint16_t> y_plane,
+                                       PlaneView<const std::uint16_t> u_plane,
+                                       PlaneView<const std::uint16_t> v_plane,
+                                       PlaneView<std::uint16_t> packed, bool semi_packed_p16) {
+  for (std::size_t y = 0; y < y_plane.height(); ++y) {
+    for (std::size_t x = 0; x < y_plane.width(); ++x) {
+      packed.row(y)[x] = px10_packed_value(y_plane.row(y)[x], semi_packed_p16);
+    }
+  }
+  for (std::size_t y = 0; y < u_plane.height(); ++y) {
+    for (std::size_t x = 0; x < u_plane.width(); ++x) {
+      packed.row(y + y_plane.height())[x * 2] =
+          px10_packed_value(u_plane.row(y)[x], semi_packed_p16);
+      packed.row(y + y_plane.height())[x * 2 + 1] =
+          px10_packed_value(v_plane.row(y)[x], semi_packed_p16);
+    }
+  }
+}
+
+class Px10ConversionKernels : public ::testing::TestWithParam<Px10ConversionCase> {};
+
+TEST_P(Px10ConversionKernels, PacksAndUnpacksPitched422Rows) {
+  constexpr std::size_t width_pixels = 18;
+  constexpr std::size_t height = 3;
+  constexpr std::size_t chroma_width = width_pixels / 2;
+  constexpr std::size_t pitch_bytes = 64;
+  const auto& test_case = GetParam();
+
+  GuardedVideoBuffer<std::uint16_t> source_y(width_pixels, height, pitch_bytes, 64);
+  GuardedVideoBuffer<std::uint16_t> source_u(chroma_width, height, pitch_bytes, 64);
+  GuardedVideoBuffer<std::uint16_t> source_v(chroma_width, height, pitch_bytes, 64);
+  GuardedVideoBuffer<std::uint16_t> expected_packed(width_pixels, height * 2, pitch_bytes, 64);
+  GuardedVideoBuffer<std::uint16_t> actual_packed(width_pixels, height * 2, pitch_bytes, 64);
+  fill_px10_source(source_y.view(), source_u.view(), source_v.view(), test_case.semi_packed_p16);
+  const auto y_snapshot = source_y.snapshot_active();
+  const auto u_snapshot = source_u.snapshot_active();
+  const auto v_snapshot = source_v.snapshot_active();
+  make_px10_packed_reference(source_y.view().as_const(), source_u.view().as_const(),
+                             source_v.view().as_const(), expected_packed.view(),
+                             test_case.semi_packed_p16);
+
+  AviScriptEnvironment environment;
+  yuv42xp10_16_to_Px10_16(reinterpret_cast<BYTE*>(actual_packed.view().data()),
+                          static_cast<int>(actual_packed.view().pitch_bytes()),
+                          reinterpret_cast<const BYTE*>(source_y.view().data()),
+                          static_cast<int>(source_y.view().pitch_bytes()),
+                          reinterpret_cast<const BYTE*>(source_u.view().data()),
+                          reinterpret_cast<const BYTE*>(source_v.view().data()),
+                          static_cast<int>(source_u.view().pitch_bytes()),
+                          static_cast<int>(width_pixels), static_cast<int>(height),
+                          static_cast<int>(height), test_case.semi_packed_p16, environment.get());
+
+  EXPECT_TRUE(compare_exact(expected_packed.view().as_const(), actual_packed.view().as_const()))
+      << test_case.name << " packed output mismatch";
+  EXPECT_EQ(format_hash(hash_active(expected_packed.view().as_const())), test_case.packed_hash)
+      << test_case.name << " packed output hash mismatch";
+  EXPECT_TRUE(source_y.active_matches(y_snapshot)) << test_case.name << " modified Y input";
+  EXPECT_TRUE(source_u.active_matches(u_snapshot)) << test_case.name << " modified U input";
+  EXPECT_TRUE(source_v.active_matches(v_snapshot)) << test_case.name << " modified V input";
+  EXPECT_TRUE(source_y.memory_intact()) << test_case.name << " corrupted Y input memory";
+  EXPECT_TRUE(source_u.memory_intact()) << test_case.name << " corrupted U input memory";
+  EXPECT_TRUE(source_v.memory_intact()) << test_case.name << " corrupted V input memory";
+  EXPECT_TRUE(expected_packed.memory_intact()) << test_case.name << " corrupted reference memory";
+  EXPECT_TRUE(actual_packed.memory_intact()) << test_case.name << " corrupted packed memory";
+
+  GuardedVideoBuffer<std::uint16_t> expected_y(width_pixels, height, pitch_bytes, 64);
+  GuardedVideoBuffer<std::uint16_t> expected_u(chroma_width, height, pitch_bytes, 64);
+  GuardedVideoBuffer<std::uint16_t> expected_v(chroma_width, height, pitch_bytes, 64);
+  GuardedVideoBuffer<std::uint16_t> actual_y(width_pixels, height, pitch_bytes, 64);
+  GuardedVideoBuffer<std::uint16_t> actual_u(chroma_width, height, pitch_bytes, 64);
+  GuardedVideoBuffer<std::uint16_t> actual_v(chroma_width, height, pitch_bytes, 64);
+  for (std::size_t y = 0; y < height; ++y) {
+    for (std::size_t x = 0; x < width_pixels; ++x) {
+      expected_y.view().row(y)[x] = source_y.view().row(y)[x];
+    }
+    for (std::size_t x = 0; x < chroma_width; ++x) {
+      expected_u.view().row(y)[x] = source_u.view().row(y)[x];
+      expected_v.view().row(y)[x] = source_v.view().row(y)[x];
+    }
+  }
+  const auto packed_snapshot = actual_packed.snapshot_active();
+  Px10_16_to_yuv42xp10_16(reinterpret_cast<BYTE*>(actual_y.view().data()),
+                          static_cast<int>(actual_y.view().pitch_bytes()),
+                          reinterpret_cast<BYTE*>(actual_u.view().data()),
+                          reinterpret_cast<BYTE*>(actual_v.view().data()),
+                          static_cast<int>(actual_u.view().pitch_bytes()),
+                          reinterpret_cast<const BYTE*>(actual_packed.view().data()),
+                          static_cast<int>(actual_packed.view().pitch_bytes()),
+                          static_cast<int>(width_pixels), static_cast<int>(height),
+                          static_cast<int>(height), test_case.semi_packed_p16, environment.get());
+
+  EXPECT_TRUE(compare_exact(expected_y.view().as_const(), actual_y.view().as_const()))
+      << test_case.name << " unpacked Y mismatch";
+  EXPECT_TRUE(compare_exact(expected_u.view().as_const(), actual_u.view().as_const()))
+      << test_case.name << " unpacked U mismatch";
+  EXPECT_TRUE(compare_exact(expected_v.view().as_const(), actual_v.view().as_const()))
+      << test_case.name << " unpacked V mismatch";
+  EXPECT_EQ(format_hash(hash_active(expected_y.view().as_const())), test_case.y_hash)
+      << test_case.name << " unpacked Y hash mismatch";
+  EXPECT_EQ(format_hash(hash_active(expected_u.view().as_const())), test_case.u_hash)
+      << test_case.name << " unpacked U hash mismatch";
+  EXPECT_EQ(format_hash(hash_active(expected_v.view().as_const())), test_case.v_hash)
+      << test_case.name << " unpacked V hash mismatch";
+  EXPECT_TRUE(actual_packed.active_matches(packed_snapshot))
+      << test_case.name << " modified packed input";
+  EXPECT_TRUE(actual_packed.memory_intact()) << test_case.name << " corrupted packed input memory";
+  EXPECT_TRUE(expected_y.memory_intact()) << test_case.name << " corrupted Y reference memory";
+  EXPECT_TRUE(expected_u.memory_intact()) << test_case.name << " corrupted U reference memory";
+  EXPECT_TRUE(expected_v.memory_intact()) << test_case.name << " corrupted V reference memory";
+  EXPECT_TRUE(actual_y.memory_intact()) << test_case.name << " corrupted Y output memory";
+  EXPECT_TRUE(actual_u.memory_intact()) << test_case.name << " corrupted U output memory";
+  EXPECT_TRUE(actual_v.memory_intact()) << test_case.name << " corrupted V output memory";
+}
+
+INSTANTIATE_TEST_SUITE_P(Packed422, Px10ConversionKernels,
+                         ::testing::ValuesIn(px10_conversion_cases()),
+                         [](const ::testing::TestParamInfo<Px10ConversionCase>& info) {
+                           return info.param.name;
+                         });
 
 std::vector<ToY416Case> to_y416_cases() {
   const auto c_false = Variant<ToY416Function>{"c", ToY416_c<false>, IsaRequirement::Scalar};
