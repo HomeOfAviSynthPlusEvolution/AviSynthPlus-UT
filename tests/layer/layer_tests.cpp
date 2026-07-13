@@ -3,6 +3,7 @@
 #include "layer_test_helpers.h"
 #include "layer_invert_test_helpers.h"
 #include "layer_packed_blend_test_helpers.h"
+#include "layer_planarrgb_add_test_helpers.h"
 
 #include "support/cpu_features.h"
 
@@ -315,6 +316,70 @@ TEST_P(LayerPackedBlendKernels, MatchesIndependentReference) {
 INSTANTIATE_TEST_SUITE_P(Kernels, LayerPackedBlendKernels,
                          ::testing::ValuesIn(layer_packed_blend_cases()),
                          [](const ::testing::TestParamInfo<LayerPackedBlendCase>& info) {
+                           return info.param.name;
+                         });
+
+std::string layer_planarrgb_add_expected_hash(bool blend_alpha, int bits_per_pixel,
+                                              bool full_opacity) {
+  if (bits_per_pixel == 8) {
+    if (blend_alpha) {
+      return full_opacity ? "0e7a603078865d27" : "75680622264aad12";
+    }
+    return full_opacity ? "65773d6eb085583d" : "72a225f6f71380e3";
+  }
+  if (blend_alpha) {
+    return full_opacity ? "94fcfcd368ebb5f1" : "b54328941bb23a77";
+  }
+  return full_opacity ? "173587b424c0f452" : "0b6d809dfd24a08e";
+}
+
+std::vector<LayerPlanarRgbAddCase> layer_planarrgb_add_cases() {
+  std::vector<LayerPlanarRgbAddCase> cases;
+  for (const int bits_per_pixel : {8, 16}) {
+    const auto max_value = (1 << bits_per_pixel) - 1;
+    const auto width = bits_per_pixel == 8 ? std::size_t{37} : std::size_t{19};
+    const auto destination_pitch = bits_per_pixel == 8 ? std::size_t{64} : std::size_t{96};
+    const auto overlay_pitch = bits_per_pixel == 8 ? std::size_t{80} : std::size_t{112};
+    const auto mask_pitch = bits_per_pixel == 8 ? std::size_t{64} : std::size_t{96};
+    for (const bool blend_alpha : {false, true}) {
+      for (const int opacity : {max_value, max_value * 3 / 5}) {
+        const auto opacity_name = opacity == max_value ? "Max" + std::to_string(max_value)
+                                                       : "Partial" + std::to_string(opacity);
+        cases.push_back(make_layer_planarrgb_add_case(
+            blend_alpha, bits_per_pixel, width, 3, destination_pitch, overlay_pitch, mask_pitch,
+            opacity, opacity_name, "sse41", IsaRequirement::Sse41, false,
+            layer_planarrgb_add_expected_hash(blend_alpha, bits_per_pixel, opacity == max_value)));
+        cases.push_back(make_layer_planarrgb_add_case(
+            blend_alpha, bits_per_pixel, width, 3, destination_pitch, overlay_pitch, mask_pitch,
+            opacity, opacity_name, "avx2", IsaRequirement::Avx2, true,
+            layer_planarrgb_add_expected_hash(blend_alpha, bits_per_pixel, opacity == max_value)));
+      }
+    }
+  }
+  return cases;
+}
+
+class LayerPlanarRgbAddKernels : public ::testing::TestWithParam<LayerPlanarRgbAddCase> {};
+
+TEST_P(LayerPlanarRgbAddKernels, MatchesIndependentReference) {
+  const auto& test_case = GetParam();
+  if (!test_case.variant.function) {
+    GTEST_SKIP() << "upstream did not provide " << test_case.variant.name
+                 << " planar RGB add function";
+  }
+  if (!variant_supported(test_case.variant, CpuFeatures::detect())) {
+    GTEST_SKIP() << "host does not support " << test_case.variant.name;
+  }
+  if (test_case.bits_per_pixel == 8) {
+    run_layer_planarrgb_add_case<std::uint8_t>(test_case);
+  } else {
+    run_layer_planarrgb_add_case<std::uint16_t>(test_case);
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(Kernels, LayerPlanarRgbAddKernels,
+                         ::testing::ValuesIn(layer_planarrgb_add_cases()),
+                         [](const ::testing::TestParamInfo<LayerPlanarRgbAddCase>& info) {
                            return info.param.name;
                          });
 
