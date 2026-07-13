@@ -2,6 +2,7 @@ add_executable(overlay_tests
   overlay_mask_tests.cpp
   overlay_chroma_tests.cpp
   overlay_multiply_tests.cpp
+  overlay_lighten_darken_tests.cpp
 )
 target_include_directories(overlay_tests PRIVATE
   ${PROJECT_SOURCE_DIR}/tests
