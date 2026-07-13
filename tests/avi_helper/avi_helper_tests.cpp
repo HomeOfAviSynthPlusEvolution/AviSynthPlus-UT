@@ -577,6 +577,163 @@ TEST(FromR10k, ExtractsBigEndianTenBitRgb) {
   run_from_packed_rgb10_case(false, "9950d5147e5f4240", "eb4956e869eba190", "01ccc44f33d1a66e");
 }
 
+TEST(V308ToYuv444p8, SplitsPackedVYUSamples) {
+  constexpr std::size_t width_pixels = 7;
+  constexpr std::size_t height = 3;
+  GuardedVideoBuffer<std::uint8_t> source(width_pixels * 3, height, width_pixels * 3, 64);
+  GuardedVideoBuffer<std::uint8_t> expected_y(width_pixels, height, 64, 64);
+  GuardedVideoBuffer<std::uint8_t> expected_u(width_pixels, height, 64, 64);
+  GuardedVideoBuffer<std::uint8_t> expected_v(width_pixels, height, 64, 64);
+  GuardedVideoBuffer<std::uint8_t> actual_y(width_pixels, height, 64, 64);
+  GuardedVideoBuffer<std::uint8_t> actual_u(width_pixels, height, 64, 64);
+  GuardedVideoBuffer<std::uint8_t> actual_v(width_pixels, height, 64, 64);
+
+  for (std::size_t y = 0; y < height; ++y) {
+    for (std::size_t x = 0; x < width_pixels; ++x) {
+      const auto v = static_cast<std::uint8_t>(3U + x * 17U + y * 29U);
+      const auto luma = static_cast<std::uint8_t>(7U + x * 19U + y * 31U);
+      const auto u = static_cast<std::uint8_t>(11U + x * 23U + y * 37U);
+      source.view().row(y)[x * 3 + 0] = v;
+      source.view().row(y)[x * 3 + 1] = luma;
+      source.view().row(y)[x * 3 + 2] = u;
+      expected_y.view().row(y)[x] = luma;
+      expected_u.view().row(y)[x] = u;
+      expected_v.view().row(y)[x] = v;
+    }
+  }
+  const auto source_snapshot = source.snapshot_active();
+  v308_to_yuv444p8(reinterpret_cast<BYTE*>(actual_y.view().data()),
+                   static_cast<int>(actual_y.view().pitch_bytes()),
+                   reinterpret_cast<BYTE*>(actual_u.view().data()),
+                   reinterpret_cast<BYTE*>(actual_v.view().data()),
+                   static_cast<int>(actual_u.view().pitch_bytes()),
+                   reinterpret_cast<const BYTE*>(source.view().data()),
+                   static_cast<int>(width_pixels), static_cast<int>(height));
+
+  EXPECT_TRUE(compare_exact(expected_y.view().as_const(), actual_y.view().as_const()));
+  EXPECT_TRUE(compare_exact(expected_u.view().as_const(), actual_u.view().as_const()));
+  EXPECT_TRUE(compare_exact(expected_v.view().as_const(), actual_v.view().as_const()));
+  EXPECT_EQ(format_hash(hash_active(expected_y.view().as_const())), "c28a41c622e9a481");
+  EXPECT_EQ(format_hash(hash_active(expected_u.view().as_const())), "556c33bb2701bf32");
+  EXPECT_EQ(format_hash(hash_active(expected_v.view().as_const())), "d8f027b1a5917757");
+  EXPECT_TRUE(source.active_matches(source_snapshot));
+  EXPECT_TRUE(source.memory_intact());
+  EXPECT_TRUE(expected_y.memory_intact());
+  EXPECT_TRUE(expected_u.memory_intact());
+  EXPECT_TRUE(expected_v.memory_intact());
+  EXPECT_TRUE(actual_y.memory_intact());
+  EXPECT_TRUE(actual_u.memory_intact());
+  EXPECT_TRUE(actual_v.memory_intact());
+}
+
+TEST(V408ToYuva444p8, SplitsPackedVYUABytes) {
+  constexpr std::size_t width_pixels = 7;
+  constexpr std::size_t height = 3;
+  GuardedVideoBuffer<std::uint8_t> source(width_pixels * 4, height, width_pixels * 4, 64);
+  GuardedVideoBuffer<std::uint8_t> expected_y(width_pixels, height, 64, 64);
+  GuardedVideoBuffer<std::uint8_t> expected_u(width_pixels, height, 64, 64);
+  GuardedVideoBuffer<std::uint8_t> expected_v(width_pixels, height, 64, 64);
+  GuardedVideoBuffer<std::uint8_t> expected_a(width_pixels, height, 64, 64);
+  GuardedVideoBuffer<std::uint8_t> actual_y(width_pixels, height, 64, 64);
+  GuardedVideoBuffer<std::uint8_t> actual_u(width_pixels, height, 64, 64);
+  GuardedVideoBuffer<std::uint8_t> actual_v(width_pixels, height, 64, 64);
+  GuardedVideoBuffer<std::uint8_t> actual_a(width_pixels, height, 64, 64);
+
+  for (std::size_t y = 0; y < height; ++y) {
+    for (std::size_t x = 0; x < width_pixels; ++x) {
+      const auto u = static_cast<std::uint8_t>(5U + x * 13U + y * 17U);
+      const auto luma = static_cast<std::uint8_t>(9U + x * 19U + y * 23U);
+      const auto v = static_cast<std::uint8_t>(15U + x * 29U + y * 31U);
+      const auto alpha = static_cast<std::uint8_t>(21U + x * 37U + y * 41U);
+      auto* pixel = source.view().row(y) + x * 4;
+      pixel[0] = u;
+      pixel[1] = luma;
+      pixel[2] = v;
+      pixel[3] = alpha;
+      expected_y.view().row(y)[x] = luma;
+      expected_u.view().row(y)[x] = u;
+      expected_v.view().row(y)[x] = v;
+      expected_a.view().row(y)[x] = alpha;
+    }
+  }
+  const auto source_snapshot = source.snapshot_active();
+  v408_to_yuva444p8(reinterpret_cast<BYTE*>(actual_y.view().data()),
+                    static_cast<int>(actual_y.view().pitch_bytes()),
+                    reinterpret_cast<BYTE*>(actual_u.view().data()),
+                    reinterpret_cast<BYTE*>(actual_v.view().data()),
+                    reinterpret_cast<BYTE*>(actual_a.view().data()),
+                    static_cast<int>(actual_u.view().pitch_bytes()),
+                    static_cast<int>(actual_a.view().pitch_bytes()),
+                    reinterpret_cast<const BYTE*>(source.view().data()),
+                    static_cast<int>(width_pixels), static_cast<int>(height));
+
+  EXPECT_TRUE(compare_exact(expected_y.view().as_const(), actual_y.view().as_const()));
+  EXPECT_TRUE(compare_exact(expected_u.view().as_const(), actual_u.view().as_const()));
+  EXPECT_TRUE(compare_exact(expected_v.view().as_const(), actual_v.view().as_const()));
+  EXPECT_TRUE(compare_exact(expected_a.view().as_const(), actual_a.view().as_const()));
+  EXPECT_EQ(format_hash(hash_active(expected_y.view().as_const())), "ce099906ad31faba");
+  EXPECT_EQ(format_hash(hash_active(expected_u.view().as_const())), "17b8d7edd9fb4ceb");
+  EXPECT_EQ(format_hash(hash_active(expected_v.view().as_const())), "24c4712b0bdc501e");
+  EXPECT_EQ(format_hash(hash_active(expected_a.view().as_const())), "b89cdeb721f56803");
+  EXPECT_TRUE(source.active_matches(source_snapshot));
+  EXPECT_TRUE(source.memory_intact());
+  EXPECT_TRUE(expected_y.memory_intact());
+  EXPECT_TRUE(expected_u.memory_intact());
+  EXPECT_TRUE(expected_v.memory_intact());
+  EXPECT_TRUE(expected_a.memory_intact());
+  EXPECT_TRUE(actual_y.memory_intact());
+  EXPECT_TRUE(actual_u.memory_intact());
+  EXPECT_TRUE(actual_v.memory_intact());
+  EXPECT_TRUE(actual_a.memory_intact());
+}
+
+TEST(V410ToYuv444p10, SplitsPackedTenBitVYUSamples) {
+  constexpr std::size_t width_pixels = 7;
+  constexpr std::size_t height = 3;
+  GuardedVideoBuffer<std::uint32_t> source(width_pixels, height, width_pixels * 4, 64);
+  GuardedVideoBuffer<std::uint16_t> expected_y(width_pixels, height, 64, 64);
+  GuardedVideoBuffer<std::uint16_t> expected_u(width_pixels, height, 64, 64);
+  GuardedVideoBuffer<std::uint16_t> expected_v(width_pixels, height, 64, 64);
+  GuardedVideoBuffer<std::uint16_t> actual_y(width_pixels, height, 64, 64);
+  GuardedVideoBuffer<std::uint16_t> actual_u(width_pixels, height, 64, 64);
+  GuardedVideoBuffer<std::uint16_t> actual_v(width_pixels, height, 64, 64);
+
+  for (std::size_t y = 0; y < height; ++y) {
+    for (std::size_t x = 0; x < width_pixels; ++x) {
+      const auto u = static_cast<std::uint32_t>((x * 43U + y * 59U + 1U) & 0x3ffU);
+      const auto luma = static_cast<std::uint32_t>((x * 47U + y * 61U + 2U) & 0x3ffU);
+      const auto v = static_cast<std::uint32_t>((x * 53U + y * 67U + 3U) & 0x3ffU);
+      source.view().row(y)[x] = (u << 2) | (luma << 12) | (v << 22);
+      expected_y.view().row(y)[x] = static_cast<std::uint16_t>(luma);
+      expected_u.view().row(y)[x] = static_cast<std::uint16_t>(u);
+      expected_v.view().row(y)[x] = static_cast<std::uint16_t>(v);
+    }
+  }
+  const auto source_snapshot = source.snapshot_active();
+  v410_to_yuv444p10(reinterpret_cast<BYTE*>(actual_y.view().data()),
+                    static_cast<int>(actual_y.view().pitch_bytes()),
+                    reinterpret_cast<BYTE*>(actual_u.view().data()),
+                    reinterpret_cast<BYTE*>(actual_v.view().data()),
+                    static_cast<int>(actual_u.view().pitch_bytes()),
+                    reinterpret_cast<const BYTE*>(source.view().data()),
+                    static_cast<int>(width_pixels), static_cast<int>(height));
+
+  EXPECT_TRUE(compare_exact(expected_y.view().as_const(), actual_y.view().as_const()));
+  EXPECT_TRUE(compare_exact(expected_u.view().as_const(), actual_u.view().as_const()));
+  EXPECT_TRUE(compare_exact(expected_v.view().as_const(), actual_v.view().as_const()));
+  EXPECT_EQ(format_hash(hash_active(expected_y.view().as_const())), "1bdca42a4b0dd5e0");
+  EXPECT_EQ(format_hash(hash_active(expected_u.view().as_const())), "e601fd689383acb6");
+  EXPECT_EQ(format_hash(hash_active(expected_v.view().as_const())), "bfa0b87fd25b8cc0");
+  EXPECT_TRUE(source.active_matches(source_snapshot));
+  EXPECT_TRUE(source.memory_intact());
+  EXPECT_TRUE(expected_y.memory_intact());
+  EXPECT_TRUE(expected_u.memory_intact());
+  EXPECT_TRUE(expected_v.memory_intact());
+  EXPECT_TRUE(actual_y.memory_intact());
+  EXPECT_TRUE(actual_u.memory_intact());
+  EXPECT_TRUE(actual_v.memory_intact());
+}
+
 std::vector<ToY416Case> to_y416_cases() {
   const auto c_false = Variant<ToY416Function>{"c", ToY416_c<false>, IsaRequirement::Scalar};
   const auto c_true = Variant<ToY416Function>{"c", ToY416_c<true>, IsaRequirement::Scalar};
