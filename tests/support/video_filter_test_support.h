@@ -1,0 +1,215 @@
+#pragma once
+
+#include "support/avisynth_environment.h"
+
+#include <avisynth.h>
+
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <limits>
+#include <stdexcept>
+#include <utility>
+#include <vector>
+
+namespace avsut::test {
+
+struct VideoInfoSpec {
+  int width;
+  int height;
+  int pixel_type;
+  int num_frames;
+  unsigned fps_numerator;
+  unsigned fps_denominator;
+};
+
+inline VideoInfo make_video_info(const VideoInfoSpec& spec) {
+  if (spec.width <= 0 || spec.height <= 0) {
+    throw std::invalid_argument("video dimensions must be positive");
+  }
+  if (spec.num_frames <= 0) {
+    throw std::invalid_argument("video frame count must be positive");
+  }
+  if (spec.fps_numerator == 0 || spec.fps_denominator == 0) {
+    throw std::invalid_argument("video frame rate must be positive");
+  }
+
+  VideoInfo video_info{};
+  video_info.width = spec.width;
+  video_info.height = spec.height;
+  video_info.pixel_type = spec.pixel_type;
+  video_info.num_frames = spec.num_frames;
+  video_info.fps_numerator = spec.fps_numerator;
+  video_info.fps_denominator = spec.fps_denominator;
+  return video_info;
+}
+
+struct CacheHintRequest {
+  int cache_hint{};
+  int frame_range{};
+
+  friend bool operator==(const CacheHintRequest& lhs, const CacheHintRequest& rhs) {
+    return lhs.cache_hint == rhs.cache_hint && lhs.frame_range == rhs.frame_range;
+  }
+};
+
+class FrameSequenceClip : public IClip {
+ public:
+  FrameSequenceClip(VideoInfo video_info, std::vector<PVideoFrame> frames)
+      : video_info_(video_info), frames_(std::move(frames)) {
+    if (frames_.empty()) {
+      throw std::invalid_argument("frame sequence must not be empty");
+    }
+    if (frames_.size() > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
+        video_info_.num_frames != static_cast<int>(frames_.size())) {
+      throw std::invalid_argument("frame count does not match video info");
+    }
+    for (const auto& frame : frames_) {
+      if (!frame) {
+        throw std::invalid_argument("frame sequence contains a null frame");
+      }
+    }
+  }
+
+  PVideoFrame __stdcall GetFrame(int n, IScriptEnvironment*) override {
+    validate_frame_index(n);
+    frame_requests_.push_back(n);
+    return frames_[static_cast<std::size_t>(n)];
+  }
+
+  bool __stdcall GetParity(int n) override {
+    validate_frame_index(n);
+    parity_requests_.push_back(n);
+    return false;
+  }
+
+  void __stdcall GetAudio(void*, int64_t, int64_t, IScriptEnvironment*) override {
+    throw std::logic_error("video test clip received an unexpected audio request");
+  }
+
+  int __stdcall SetCacheHints(int cachehints, int frame_range) override {
+    cache_hint_requests_.push_back(CacheHintRequest{cachehints, frame_range});
+    return 0;
+  }
+
+  const VideoInfo& __stdcall GetVideoInfo() override { return video_info_; }
+
+  const std::vector<int>& frame_requests() const noexcept { return frame_requests_; }
+  const std::vector<int>& parity_requests() const noexcept { return parity_requests_; }
+  const std::vector<CacheHintRequest>& cache_hint_requests() const noexcept {
+    return cache_hint_requests_;
+  }
+
+ protected:
+  void validate_frame_index(int n) const {
+    if (n < 0 || static_cast<std::size_t>(n) >= frames_.size()) {
+      throw std::out_of_range("frame index is outside the clip");
+    }
+  }
+
+ private:
+  VideoInfo video_info_{};
+  std::vector<PVideoFrame> frames_;
+  std::vector<int> frame_requests_;
+  std::vector<int> parity_requests_;
+  std::vector<CacheHintRequest> cache_hint_requests_;
+};
+
+class StaticFrameClip final : public FrameSequenceClip {
+ public:
+  StaticFrameClip(VideoInfo video_info, PVideoFrame frame)
+      : FrameSequenceClip(video_info, std::vector<PVideoFrame>{std::move(frame)}) {}
+};
+
+struct FramePlaneSnapshot {
+  int plane{};
+  int pitch{};
+  int row_size{};
+  int height{};
+  std::vector<std::uint8_t> bytes;
+
+  friend bool operator==(const FramePlaneSnapshot& lhs, const FramePlaneSnapshot& rhs) {
+    return lhs.plane == rhs.plane && lhs.pitch == rhs.pitch && lhs.row_size == rhs.row_size &&
+           lhs.height == rhs.height && lhs.bytes == rhs.bytes;
+  }
+};
+
+class FrameSnapshot {
+ public:
+  static FrameSnapshot capture(const PVideoFrame& frame, const VideoInfo& video_info) {
+    if (!frame) {
+      throw std::invalid_argument("cannot snapshot a null frame");
+    }
+
+    FrameSnapshot snapshot;
+    for (const int plane : frame_planes(video_info)) {
+      snapshot.planes_.push_back(capture_plane(frame, plane));
+    }
+    return snapshot;
+  }
+
+  const std::vector<FramePlaneSnapshot>& planes() const noexcept { return planes_; }
+
+  friend bool operator==(const FrameSnapshot& lhs, const FrameSnapshot& rhs) {
+    return lhs.planes_ == rhs.planes_;
+  }
+
+ private:
+  static std::vector<int> frame_planes(const VideoInfo& video_info) {
+    if (video_info.IsPlanarRGBA()) {
+      return {PLANAR_G, PLANAR_B, PLANAR_R, PLANAR_A};
+    }
+    if (video_info.IsPlanarRGB()) {
+      return {PLANAR_G, PLANAR_B, PLANAR_R};
+    }
+    if (video_info.IsYUVA()) {
+      return {PLANAR_Y, PLANAR_U, PLANAR_V, PLANAR_A};
+    }
+    if (video_info.IsYUV()) {
+      return {PLANAR_Y, PLANAR_U, PLANAR_V};
+    }
+    if (video_info.IsY()) {
+      return {PLANAR_Y};
+    }
+    return {DEFAULT_PLANE};
+  }
+
+  static FramePlaneSnapshot capture_plane(const PVideoFrame& frame, int plane) {
+    const int pitch = frame->GetPitch(plane);
+    const int row_size = frame->GetRowSize(plane);
+    const int height = frame->GetHeight(plane);
+    if (pitch < 0 || row_size < 0 || height < 0 || row_size > pitch) {
+      throw std::invalid_argument("frame plane has invalid geometry");
+    }
+    const auto pitch_size = static_cast<std::size_t>(pitch);
+    const auto height_size = static_cast<std::size_t>(height);
+    if (height_size != 0 && pitch_size > std::numeric_limits<std::size_t>::max() / height_size) {
+      throw std::overflow_error("frame plane snapshot size overflows");
+    }
+
+    FramePlaneSnapshot snapshot{plane, pitch, row_size, height,
+                                std::vector<std::uint8_t>(pitch_size * height_size)};
+    const auto* source = frame->GetReadPtr(plane);
+    for (int y = 0; y < height; ++y) {
+      std::memcpy(snapshot.bytes.data() + static_cast<std::size_t>(y) * pitch_size,
+                  source + static_cast<std::size_t>(y) * pitch_size, pitch_size);
+    }
+    return snapshot;
+  }
+
+  std::vector<FramePlaneSnapshot> planes_;
+};
+
+inline void fill_plane_full_pitch(PVideoFrame& frame, std::uint8_t value, int plane) {
+  const int pitch = frame->GetPitch(plane);
+  const int height = frame->GetHeight(plane);
+  if (pitch < 0 || height < 0) {
+    throw std::invalid_argument("frame plane has invalid geometry");
+  }
+  for (int y = 0; y < height; ++y) {
+    std::memset(frame->GetWritePtr(plane) + static_cast<std::size_t>(y) * pitch, value,
+                static_cast<std::size_t>(pitch));
+  }
+}
+
+}  // namespace avsut::test

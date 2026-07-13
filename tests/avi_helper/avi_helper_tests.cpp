@@ -2,6 +2,7 @@
 
 #include "support/comparators.h"
 #include "support/cpu_features.h"
+#include "support/avisynth_environment.h"
 #include "support/guarded_video_buffer.h"
 #include "support/stable_hash.h"
 #include "support/variant_registry.h"
@@ -29,29 +30,6 @@ using ToY416Function = void (*)(uint8_t*, int, const uint8_t*, int, const uint8_
 using FromY416Function = void (*)(uint8_t*, int, uint8_t*, uint8_t*, int, uint8_t*, int,
                                   const uint8_t*, int, int, int);
 using BgraToArgbBeFunction = void (*)(uint8_t*, int, const uint8_t*, int, int, int);
-
-class AviScriptEnvironment {
- public:
-  AviScriptEnvironment() : environment_(CreateScriptEnvironment2()) {
-    if (environment_ == nullptr) {
-      throw std::runtime_error("CreateScriptEnvironment2 failed");
-    }
-  }
-
-  ~AviScriptEnvironment() {
-    if (environment_ != nullptr) {
-      environment_->DeleteScriptEnvironment();
-    }
-  }
-
-  AviScriptEnvironment(const AviScriptEnvironment&) = delete;
-  AviScriptEnvironment& operator=(const AviScriptEnvironment&) = delete;
-
-  IScriptEnvironment* get() const noexcept { return environment_; }
-
- private:
-  IScriptEnvironment2* environment_{};
-};
 
 struct ToY416Case {
   bool has_alpha{};
@@ -986,7 +964,7 @@ TEST_P(Px10ConversionKernels, PacksAndUnpacksPitched422Rows) {
                              source_v.view().as_const(), expected_packed.view(),
                              test_case.semi_packed_p16);
 
-  AviScriptEnvironment environment;
+  AviSynthEnvironment environment;
   yuv42xp10_16_to_Px10_16(reinterpret_cast<BYTE*>(actual_packed.view().data()),
                           static_cast<int>(actual_packed.view().pitch_bytes()),
                           reinterpret_cast<const BYTE*>(source_y.view().data()),

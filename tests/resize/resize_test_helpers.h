@@ -17,6 +17,7 @@
 #include "filters/intel/resize_sse.h"
 
 #include "support/comparators.h"
+#include "support/avisynth_environment.h"
 #include "support/guarded_video_buffer.h"
 #include "support/stable_hash.h"
 #include "support/variant_registry.h"
@@ -86,29 +87,6 @@ struct Avx512HorizontalCoefficientLayout {
   int expected_filter_size_real{};
 };
 
-class ScriptEnvironmentOwner {
- public:
-  ScriptEnvironmentOwner() : environment_(CreateScriptEnvironment2()) {
-    if (environment_ == nullptr) {
-      throw std::runtime_error("CreateScriptEnvironment2 failed");
-    }
-  }
-
-  ~ScriptEnvironmentOwner() {
-    if (environment_ != nullptr) {
-      environment_->DeleteScriptEnvironment();
-    }
-  }
-
-  ScriptEnvironmentOwner(const ScriptEnvironmentOwner&) = delete;
-  ScriptEnvironmentOwner& operator=(const ScriptEnvironmentOwner&) = delete;
-
-  IScriptEnvironment* get() const noexcept { return environment_; }
-
- private:
-  IScriptEnvironment2* environment_{};
-};
-
 class ResamplingProgramOwner {
  public:
   ResamplingProgramOwner(int source_size, int target_size, int bits_per_pixel,
@@ -148,7 +126,7 @@ class ResamplingProgramOwner {
   }
 
  private:
-  ScriptEnvironmentOwner environment_;
+  AviSynthEnvironment environment_;
   std::unique_ptr<ResamplingFunction> filter_;
   std::unique_ptr<ResamplingProgram> program_;
 };
