@@ -45,6 +45,7 @@ using ResizeFunction = void (*)(BYTE*, const BYTE*, int, int, ResamplingProgram*
 enum class ResizeFilter {
   Triangle,
   Lanczos3,
+  Lanczos6,
 };
 
 inline std::unique_ptr<ResamplingFunction> make_resize_filter(ResizeFilter filter) {
@@ -53,6 +54,8 @@ inline std::unique_ptr<ResamplingFunction> make_resize_filter(ResizeFilter filte
       return std::make_unique<TriangleFilter>();
     case ResizeFilter::Lanczos3:
       return std::make_unique<LanczosFilter>(3);
+    case ResizeFilter::Lanczos6:
+      return std::make_unique<LanczosFilter>(6);
   }
   throw std::invalid_argument("unsupported resize filter");
 }
@@ -63,6 +66,8 @@ inline const char* resize_filter_name(ResizeFilter filter) {
       return "Triangle";
     case ResizeFilter::Lanczos3:
       return "Lanczos3";
+    case ResizeFilter::Lanczos6:
+      return "Lanczos6";
   }
   return "Unknown";
 }
