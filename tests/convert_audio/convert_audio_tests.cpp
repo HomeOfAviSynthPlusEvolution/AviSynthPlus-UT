@@ -136,6 +136,61 @@ std::vector<AudioIntegerCase> audio_packed_24_cases() {
   return cases;
 }
 
+void add_audio_float_variants(std::vector<AudioFloatCase>& cases, AudioFormat source,
+                              AudioFormat destination, std::size_t count, const char* sse_name,
+                              IsaRequirement sse_requirement, AudioConvertFunction c_function,
+                              AudioConvertFunction sse_function, AudioConvertFunction avx2_function,
+                              const char* expected_hash = "") {
+  cases.push_back(make_audio_float_case(
+      source, destination, count,
+      Variant<AudioConvertFunction>{"c", c_function, IsaRequirement::Scalar}, expected_hash));
+  cases.push_back(make_audio_float_case(
+      source, destination, count,
+      Variant<AudioConvertFunction>{sse_name, sse_function, sse_requirement}, expected_hash));
+  cases.push_back(make_audio_float_case(
+      source, destination, count,
+      Variant<AudioConvertFunction>{"avx2", avx2_function, IsaRequirement::Avx2}, expected_hash));
+}
+
+std::vector<AudioFloatCase> audio_float_cases() {
+  constexpr std::array<std::size_t, 9> counts{3, 4, 5, 7, 8, 9, 15, 16, 17};
+  constexpr std::array<const char*, 9> f32_to_u8{
+      "6f15e63fb37c575a", "3a28021824265c2d", "66b1cfc7b7f25862",
+      "561e5d7d5e7bf725", "83f0e9d7f6ca57a3", "7df3b53ce739e7f9",
+      "70f7678b55537c79", "d26cc00c361369f4", "c52344360f8996c9"};
+  constexpr std::array<const char*, 9> f32_to_s16{
+      "9fdf2c12fa9cda45", "225b4a1ac27203ae", "75c6b5dfe0f9537b",
+      "fa2dbc74fa708fdd", "33e13965e140038a", "0e971aa9e1527ecf",
+      "ffcec376b852647e", "853336eb38ef2a2a", "35972615fb81e5e4"};
+  constexpr std::array<const char*, 9> f32_to_s32{
+      "8025870c1821c9ed", "8fd4e841a1714e07", "ce12e02dabf378d3",
+      "46523c3304543fec", "6c949caf27523637", "b35758abba35b489",
+      "49ff03bf11065eaf", "d4c900a729fc2049", "17f9f15dbbd30f7f"};
+  std::vector<AudioFloatCase> cases;
+  for (std::size_t index = 0; index < counts.size(); ++index) {
+    const auto count = counts[index];
+    add_audio_float_variants(cases, AudioFormat::U8, AudioFormat::F32, count, "sse4.1",
+                             IsaRequirement::Sse41, convert8ToFLT, convert8ToFLT_SSE41,
+                             convert8ToFLT_AVX2);
+    add_audio_float_variants(cases, AudioFormat::F32, AudioFormat::U8, count, "sse2",
+                             IsaRequirement::Sse2, convertFLTTo8, convertFLTTo8_SSE2,
+                             convertFLTTo8_AVX2, f32_to_u8[index]);
+    add_audio_float_variants(cases, AudioFormat::S16, AudioFormat::F32, count, "sse4.1",
+                             IsaRequirement::Sse41, convert16ToFLT, convert16ToFLT_SSE41,
+                             convert16ToFLT_AVX2);
+    add_audio_float_variants(cases, AudioFormat::F32, AudioFormat::S16, count, "sse2",
+                             IsaRequirement::Sse2, convertFLTTo16, convertFLTTo16_SSE2,
+                             convertFLTTo16_AVX2, f32_to_s16[index]);
+    add_audio_float_variants(cases, AudioFormat::S32, AudioFormat::F32, count, "sse2",
+                             IsaRequirement::Sse2, convert32ToFLT, convert32ToFLT_SSE2,
+                             convert32ToFLT_AVX2);
+    add_audio_float_variants(cases, AudioFormat::F32, AudioFormat::S32, count, "sse4.1",
+                             IsaRequirement::Sse41, convertFLTTo32, convertFLTTo32_SSE41,
+                             convertFLTTo32_AVX2, f32_to_s32[index]);
+  }
+  return cases;
+}
+
 class AudioIntegerKernels : public ::testing::TestWithParam<AudioIntegerCase> {};
 
 TEST_P(AudioIntegerKernels, MatchesIndependentIntegerReference) {
@@ -164,6 +219,21 @@ TEST_P(AudioPacked24Kernels, MatchesIndependentPacked24Reference) {
 INSTANTIATE_TEST_SUITE_P(Packed24, AudioPacked24Kernels,
                          ::testing::ValuesIn(audio_packed_24_cases()),
                          [](const ::testing::TestParamInfo<AudioIntegerCase>& info) {
+                           return info.param.name;
+                         });
+
+class AudioFloatKernels : public ::testing::TestWithParam<AudioFloatCase> {};
+
+TEST_P(AudioFloatKernels, MatchesIndependentFloatConversionReference) {
+  const auto& test_case = GetParam();
+  if (!variant_supported(test_case.variant, CpuFeatures::detect())) {
+    GTEST_SKIP() << "host does not support " << test_case.variant.name;
+  }
+  run_audio_float_case(test_case);
+}
+
+INSTANTIATE_TEST_SUITE_P(Float, AudioFloatKernels, ::testing::ValuesIn(audio_float_cases()),
+                         [](const ::testing::TestParamInfo<AudioFloatCase>& info) {
                            return info.param.name;
                          });
 
