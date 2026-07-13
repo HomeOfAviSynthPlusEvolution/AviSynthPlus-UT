@@ -8,6 +8,7 @@
 #include "layer_planarrgb_add_test_helpers.h"
 #include "layer_rgb32_add_test_helpers.h"
 #include "layer_rgb32_fast_test_helpers.h"
+#include "layer_rgb32_lighten_darken_test_helpers.h"
 #include "layer_rgb32_subtract_test_helpers.h"
 
 #include "support/cpu_features.h"
@@ -366,6 +367,83 @@ TEST_P(LayerRgb32SubtractKernels, MatchesIndependentReference) {
 INSTANTIATE_TEST_SUITE_P(Kernels, LayerRgb32SubtractKernels,
                          ::testing::ValuesIn(layer_rgb32_subtract_cases()),
                          [](const ::testing::TestParamInfo<LayerRgb32SubtractCase>& info) {
+                           return info.param.name;
+                         });
+
+std::vector<LayerRgb32LightenDarkenCase> layer_rgb32_lighten_darken_cases() {
+  constexpr std::size_t width_pixels = 7;
+  constexpr std::size_t height = 3;
+  constexpr std::size_t destination_pitch = 64;
+  constexpr std::size_t overlay_pitch = 80;
+  constexpr int full_level = 257;
+  constexpr int partial_level = 173;
+  constexpr int threshold = 5;
+  return {
+      make_layer_rgb32_lighten_darken_case(
+          LayerRgb32LightenDarkenMode::Lighten, width_pixels, height, destination_pitch,
+          overlay_pitch, full_level, "Full257", threshold,
+          Variant<LayerRgb32LightenDarkenFunction>{"sse2", layer_rgb32_lighten_darken_sse2<LIGHTEN>,
+                                                   IsaRequirement::Sse2},
+          "e3275a96d0ef2da4"),
+      make_layer_rgb32_lighten_darken_case(
+          LayerRgb32LightenDarkenMode::Lighten, width_pixels, height, destination_pitch,
+          overlay_pitch, full_level, "Full257", threshold,
+          Variant<LayerRgb32LightenDarkenFunction>{"avx2", layer_rgb32_lighten_darken_avx2<LIGHTEN>,
+                                                   IsaRequirement::Avx2},
+          "e3275a96d0ef2da4"),
+      make_layer_rgb32_lighten_darken_case(
+          LayerRgb32LightenDarkenMode::Lighten, width_pixels, height, destination_pitch,
+          overlay_pitch, partial_level, "Partial173", threshold,
+          Variant<LayerRgb32LightenDarkenFunction>{"sse2", layer_rgb32_lighten_darken_sse2<LIGHTEN>,
+                                                   IsaRequirement::Sse2},
+          "8ae014b1d520042a"),
+      make_layer_rgb32_lighten_darken_case(
+          LayerRgb32LightenDarkenMode::Lighten, width_pixels, height, destination_pitch,
+          overlay_pitch, partial_level, "Partial173", threshold,
+          Variant<LayerRgb32LightenDarkenFunction>{"avx2", layer_rgb32_lighten_darken_avx2<LIGHTEN>,
+                                                   IsaRequirement::Avx2},
+          "8ae014b1d520042a"),
+      make_layer_rgb32_lighten_darken_case(
+          LayerRgb32LightenDarkenMode::Darken, width_pixels, height, destination_pitch,
+          overlay_pitch, full_level, "Full257", threshold,
+          Variant<LayerRgb32LightenDarkenFunction>{"sse2", layer_rgb32_lighten_darken_sse2<DARKEN>,
+                                                   IsaRequirement::Sse2},
+          "1e5764fa360abc46"),
+      make_layer_rgb32_lighten_darken_case(
+          LayerRgb32LightenDarkenMode::Darken, width_pixels, height, destination_pitch,
+          overlay_pitch, full_level, "Full257", threshold,
+          Variant<LayerRgb32LightenDarkenFunction>{"avx2", layer_rgb32_lighten_darken_avx2<DARKEN>,
+                                                   IsaRequirement::Avx2},
+          "1e5764fa360abc46"),
+      make_layer_rgb32_lighten_darken_case(
+          LayerRgb32LightenDarkenMode::Darken, width_pixels, height, destination_pitch,
+          overlay_pitch, partial_level, "Partial173", threshold,
+          Variant<LayerRgb32LightenDarkenFunction>{"sse2", layer_rgb32_lighten_darken_sse2<DARKEN>,
+                                                   IsaRequirement::Sse2},
+          "f9984ff13b4d9cd9"),
+      make_layer_rgb32_lighten_darken_case(
+          LayerRgb32LightenDarkenMode::Darken, width_pixels, height, destination_pitch,
+          overlay_pitch, partial_level, "Partial173", threshold,
+          Variant<LayerRgb32LightenDarkenFunction>{"avx2", layer_rgb32_lighten_darken_avx2<DARKEN>,
+                                                   IsaRequirement::Avx2},
+          "f9984ff13b4d9cd9"),
+  };
+}
+
+class LayerRgb32LightenDarkenKernels
+    : public ::testing::TestWithParam<LayerRgb32LightenDarkenCase> {};
+
+TEST_P(LayerRgb32LightenDarkenKernels, MatchesIndependentReference) {
+  const auto& test_case = GetParam();
+  if (!variant_supported(test_case.variant, CpuFeatures::detect())) {
+    GTEST_SKIP() << "host does not support " << test_case.variant.name;
+  }
+  run_layer_rgb32_lighten_darken_case(test_case);
+}
+
+INSTANTIATE_TEST_SUITE_P(Kernels, LayerRgb32LightenDarkenKernels,
+                         ::testing::ValuesIn(layer_rgb32_lighten_darken_cases()),
+                         [](const ::testing::TestParamInfo<LayerRgb32LightenDarkenCase>& info) {
                            return info.param.name;
                          });
 
