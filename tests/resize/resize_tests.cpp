@@ -385,6 +385,24 @@ std::vector<ResizeHorizontalFloatCase> resize_horizontal_float_cases() {
                                   IsaRequirement::Avx2Fma}),
       make_resize_horizontal_float_case(
           64, 64, 5, 320, 320,
+          Variant<ResizeFunction>{"avx2_fma_gather_permutex_ks4",
+                                  resize_h_planar_float_avx2_gather_permutex_vstripe_ks4<2>,
+                                  IsaRequirement::Avx2Fma},
+          ResizeFilter::Triangle, 2),
+      make_resize_horizontal_float_case(
+          64, 64, 5, 320, 320,
+          Variant<ResizeFunction>{"avx2_fma_transpose_ks4",
+                                  resize_h_planar_float_avx2_transpose_vstripe_ks4<2>,
+                                  IsaRequirement::Avx2Fma},
+          ResizeFilter::Triangle, 2),
+      make_resize_horizontal_float_case(
+          64, 64, 5, 320, 320,
+          Variant<ResizeFunction>{"avx2_fma_permutex_ks4",
+                                  resize_h_planar_float_avx2_permutex_vstripe_ks4,
+                                  IsaRequirement::Avx2Fma},
+          ResizeFilter::Triangle, 2),
+      make_resize_horizontal_float_case(
+          64, 64, 5, 320, 320,
           Variant<ResizeFunction>{"avx512_base", resize_h_planar_float_avx512_permutex_vstripe_ks4,
                                   IsaRequirement::Avx512Base},
           ResizeFilter::Triangle, 2),
