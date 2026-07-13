@@ -2,6 +2,7 @@
 
 #include "layer_test_helpers.h"
 #include "layer_invert_test_helpers.h"
+#include "layer_mask_test_helpers.h"
 #include "layer_packed_blend_test_helpers.h"
 #include "layer_planarrgb_add_test_helpers.h"
 
@@ -172,6 +173,36 @@ TEST_P(LayerYuvAddKernels, MatchesPlacementAwareReference) {
 
 INSTANTIATE_TEST_SUITE_P(Kernels, LayerYuvAddKernels, ::testing::ValuesIn(layer_yuv_add_cases()),
                          [](const ::testing::TestParamInfo<LayerYuvAddCase>& info) {
+                           return info.param.name;
+                         });
+
+std::vector<LayerMaskCase> layer_mask_cases() {
+  constexpr std::size_t width_pixels = 9;
+  constexpr std::size_t height = 3;
+  constexpr std::size_t source_pitch = 64;
+  constexpr std::size_t alpha_pitch = 80;
+  return {
+      make_layer_mask_case(width_pixels, height, source_pitch, alpha_pitch,
+                           Variant<LayerMaskFunction>{"sse2", mask_sse2, IsaRequirement::Sse2},
+                           "1867ef60337953e9"),
+      make_layer_mask_case(width_pixels, height, source_pitch, alpha_pitch,
+                           Variant<LayerMaskFunction>{"avx2", mask_avx2, IsaRequirement::Avx2},
+                           "1867ef60337953e9"),
+  };
+}
+
+class LayerMaskKernels : public ::testing::TestWithParam<LayerMaskCase> {};
+
+TEST_P(LayerMaskKernels, MatchesIndependentReference) {
+  const auto& test_case = GetParam();
+  if (!variant_supported(test_case.variant, CpuFeatures::detect())) {
+    GTEST_SKIP() << "host does not support " << test_case.variant.name;
+  }
+  run_layer_mask_case(test_case);
+}
+
+INSTANTIATE_TEST_SUITE_P(Kernels, LayerMaskKernels, ::testing::ValuesIn(layer_mask_cases()),
+                         [](const ::testing::TestParamInfo<LayerMaskCase>& info) {
                            return info.param.name;
                          });
 
