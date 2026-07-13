@@ -8,6 +8,7 @@
 #include "layer_planarrgb_add_test_helpers.h"
 #include "layer_rgb32_add_test_helpers.h"
 #include "layer_rgb32_fast_test_helpers.h"
+#include "layer_rgb32_subtract_test_helpers.h"
 
 #include "support/cpu_features.h"
 
@@ -318,6 +319,53 @@ TEST_P(LayerRgb32AddKernels, MatchesIndependentReference) {
 INSTANTIATE_TEST_SUITE_P(Kernels, LayerRgb32AddKernels,
                          ::testing::ValuesIn(layer_rgb32_add_cases()),
                          [](const ::testing::TestParamInfo<LayerRgb32AddCase>& info) {
+                           return info.param.name;
+                         });
+
+std::vector<LayerRgb32SubtractCase> layer_rgb32_subtract_cases() {
+  constexpr std::size_t width_pixels = 7;
+  constexpr std::size_t height = 3;
+  constexpr std::size_t destination_pitch = 64;
+  constexpr std::size_t overlay_pitch = 80;
+  constexpr int full_level = 257;
+  constexpr int partial_level = 173;
+  return {
+      make_layer_rgb32_subtract_case(
+          width_pixels, height, destination_pitch, overlay_pitch, full_level, "Full257",
+          Variant<LayerRgb32SubtractFunction>{"sse2", layer_rgb32_subtract_sse2<false>,
+                                              IsaRequirement::Sse2},
+          "6ea3751be3e04826"),
+      make_layer_rgb32_subtract_case(
+          width_pixels, height, destination_pitch, overlay_pitch, full_level, "Full257",
+          Variant<LayerRgb32SubtractFunction>{"avx2", layer_rgb32_subtract_avx2<false>,
+                                              IsaRequirement::Avx2},
+          "6ea3751be3e04826"),
+      make_layer_rgb32_subtract_case(
+          width_pixels, height, destination_pitch, overlay_pitch, partial_level, "Partial173",
+          Variant<LayerRgb32SubtractFunction>{"sse2", layer_rgb32_subtract_sse2<false>,
+                                              IsaRequirement::Sse2},
+          "340ea8bf55efe193"),
+      make_layer_rgb32_subtract_case(
+          width_pixels, height, destination_pitch, overlay_pitch, partial_level, "Partial173",
+          Variant<LayerRgb32SubtractFunction>{"avx2", layer_rgb32_subtract_avx2<false>,
+                                              IsaRequirement::Avx2},
+          "340ea8bf55efe193"),
+  };
+}
+
+class LayerRgb32SubtractKernels : public ::testing::TestWithParam<LayerRgb32SubtractCase> {};
+
+TEST_P(LayerRgb32SubtractKernels, MatchesIndependentReference) {
+  const auto& test_case = GetParam();
+  if (!variant_supported(test_case.variant, CpuFeatures::detect())) {
+    GTEST_SKIP() << "host does not support " << test_case.variant.name;
+  }
+  run_layer_rgb32_subtract_case(test_case);
+}
+
+INSTANTIATE_TEST_SUITE_P(Kernels, LayerRgb32SubtractKernels,
+                         ::testing::ValuesIn(layer_rgb32_subtract_cases()),
+                         [](const ::testing::TestParamInfo<LayerRgb32SubtractCase>& info) {
                            return info.param.name;
                          });
 
