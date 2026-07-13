@@ -12,6 +12,10 @@ namespace {
 std::vector<VerticalReduceCase> vertical_reduce_cases() {
   return {
       make_vertical_reduce_case(
+          16, 4, 2, 32, 48,
+          Variant<VerticalReduceFunction>{"sse2", vertical_reduce_sse2, IsaRequirement::Sse2},
+          "a39538200823a02f"),
+      make_vertical_reduce_case(
           48, 10, 5, 64, 64,
           Variant<VerticalReduceFunction>{"sse2", vertical_reduce_sse2, IsaRequirement::Sse2},
           "b85700f92c22f06d"),
