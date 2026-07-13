@@ -1,6 +1,7 @@
 add_executable(finding_tests
   finding_b1_convert_tests.cpp
   finding_b2_convert_tests.cpp
+  finding_b3_resize_tests.cpp
 )
 target_include_directories(finding_tests PRIVATE
   ${PROJECT_SOURCE_DIR}/tests
