@@ -133,6 +133,22 @@ std::vector<ResizeHorizontal8Case> resize_horizontal8_cases() {
               IsaRequirement::Avx512Fast},
           "f6e8e6b660368276", Avx512HorizontalCoefficientLayout{32, 1, 16, 12},
           ResizeFilter::Lanczos6),
+      make_resize_horizontal8_case(
+          128, 192, 5, 192, 256,
+          Variant<ResizeFunction>{
+              "avx512_base_2s32_ks64",
+              resize_h_planar_uint8_avx512_permutex_vstripe_mpz_2s32_ks64_pretransposed_coeffs_base,
+              IsaRequirement::Avx512Base},
+          "68ce65d5048c6db2", Avx512HorizontalCoefficientLayout{32, 2, 0, 20},
+          ResizeFilter::Lanczos10),
+      make_resize_horizontal8_case(
+          128, 192, 5, 192, 256,
+          Variant<ResizeFunction>{
+              "avx512_fast_2s32_ks64",
+              resize_h_planar_uint8_avx512_permutex_vstripe_mpz_2s32_ks64_pretransposed_coeffs_vnni,
+              IsaRequirement::Avx512Fast},
+          "68ce65d5048c6db2", Avx512HorizontalCoefficientLayout{32, 2, 0, 20},
+          ResizeFilter::Lanczos10),
   };
 }
 
@@ -294,6 +310,42 @@ std::vector<ResizeHorizontal16Case> resize_horizontal16_cases() {
               IsaRequirement::Avx512Fast},
           "c5b56a3e226836dd", Avx512HorizontalCoefficientLayout{32, 1, 16, 12},
           ResizeFilter::Lanczos6),
+      make_resize_horizontal16_case(
+          10, 128, 192, 5, 384, 512,
+          Variant<ResizeFunction>{
+              "avx512_base_4s16_ks48",
+              resize_h_planar_uint16_avx512_permutex_vstripe_mp_4s16_ks48_pretransposed_coeffs_base<
+                  true>,
+              IsaRequirement::Avx512Base},
+          "8d0eb0a015deb7c6", Avx512HorizontalCoefficientLayout{64, 1, 0, 20},
+          ResizeFilter::Lanczos10),
+      make_resize_horizontal16_case(
+          10, 128, 192, 5, 384, 512,
+          Variant<ResizeFunction>{
+              "avx512_fast_4s16_ks48",
+              resize_h_planar_uint16_avx512_permutex_vstripe_mp_4s16_ks48_pretransposed_coeffs_vnni<
+                  true>,
+              IsaRequirement::Avx512Fast},
+          "8d0eb0a015deb7c6", Avx512HorizontalCoefficientLayout{64, 1, 0, 20},
+          ResizeFilter::Lanczos10),
+      make_resize_horizontal16_case(
+          16, 128, 192, 5, 384, 512,
+          Variant<ResizeFunction>{
+              "avx512_base_4s16_ks48",
+              resize_h_planar_uint16_avx512_permutex_vstripe_mp_4s16_ks48_pretransposed_coeffs_base<
+                  false>,
+              IsaRequirement::Avx512Base},
+          "010918a0e33242d6", Avx512HorizontalCoefficientLayout{64, 1, 0, 20},
+          ResizeFilter::Lanczos10),
+      make_resize_horizontal16_case(
+          16, 128, 192, 5, 384, 512,
+          Variant<ResizeFunction>{
+              "avx512_fast_4s16_ks48",
+              resize_h_planar_uint16_avx512_permutex_vstripe_mp_4s16_ks48_pretransposed_coeffs_vnni<
+                  false>,
+              IsaRequirement::Avx512Fast},
+          "010918a0e33242d6", Avx512HorizontalCoefficientLayout{64, 1, 0, 20},
+          ResizeFilter::Lanczos10),
   };
 }
 
