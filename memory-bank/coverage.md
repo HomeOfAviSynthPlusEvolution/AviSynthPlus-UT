@@ -75,6 +75,7 @@ belong to the test sources and test vectors.
 | `PlaneSwap` | Public UV swap and planar channel extraction filters | Public `SwapUV` and `SwapUVToY` classes for 8-bit YV24/YV12 inputs | Direct constructor and `GetFrame` calls with fixed plane patterns; independent plane-layout and subsampled extraction references, source full-pitch immutability, frame request checks, and output memory checks |
 | `Turn` | Public rotation filter dispatch and geometry | Public `Turn` class for 8-bit YV24 left, right, and 180-degree rotations | Direct constructor and `GetFrame` calls with fixed per-plane coordinate patterns; independent coordinate reference, output geometry, source full-pitch immutability, frame request checks, and output memory checks |
 | `Merge` | Public weighted plane merge filters | Public `MergeAll`, `MergeLuma`, and `MergeChroma` classes for 8-bit YV24 inputs | Direct constructors with strict two-source frame sequences; fixed weighted-plane reference for interior and endpoint weights, selected-plane preservation, zero-weight short circuit, source full-pitch immutability, frame request checks, and output memory checks |
+| `Focus` | Public spatial and temporal soften filters | Public `SpatialSoften` for 8-bit YUY2 and `TemporalSoften` for 8-bit YV24 | Direct constructors with independent spatial threshold and temporal thresholded-average references; replicated spatial edges, three-frame sequence requests, cache-window hint, source full-pitch immutability, and output memory checks |
 
 ## Deliberate Gaps
 
