@@ -141,6 +141,10 @@ class ResamplingProgramOwner {
                                    layout.group_count, layout.prepared_filter_size);
   }
 
+  void prepare_avx512_horizontal_float_coefficients() {
+    resize_prepare_coeffs_AVX512_float_H(program_.get(), environment_.get());
+  }
+
  private:
   ScriptEnvironmentOwner environment_;
   std::unique_ptr<ResamplingFunction> filter_;
@@ -214,6 +218,9 @@ struct ResizeHorizontalFloatCase {
   std::size_t source_pitch{};
   std::size_t destination_pitch{};
   Variant<ResizeFunction> variant;
+  ResizeFilter filter{ResizeFilter::Triangle};
+  int expected_filter_size_real{};
+  bool prepare_avx512_float_coefficients{};
   std::string name;
 };
 
@@ -302,11 +309,13 @@ inline std::string resize_horizontal_float_case_name(std::size_t source_width,
                                                      std::size_t target_width, std::size_t height,
                                                      std::size_t source_pitch,
                                                      std::size_t destination_pitch,
+                                                     ResizeFilter filter,
                                                      const Variant<ResizeFunction>& variant) {
   std::ostringstream stream;
   stream << "PlaneFloatHorizontal_SourceWidth" << source_width << "_TargetWidth" << target_width
          << "_Height" << height << "_SrcPitch" << source_pitch << "_DstPitch" << destination_pitch
-         << "_FilterTriangle_PatternFiniteAnchors_" << resize_variant_name(variant);
+         << "_Filter" << resize_filter_name(filter) << "_PatternFiniteAnchors_"
+         << resize_variant_name(variant);
   return stream.str();
 }
 
@@ -410,12 +419,22 @@ inline ResizeVerticalFloatCase make_resize_vertical_float_case(
 
 inline ResizeHorizontalFloatCase make_resize_horizontal_float_case(
     std::size_t source_width, std::size_t target_width, std::size_t height,
-    std::size_t source_pitch, std::size_t destination_pitch, Variant<ResizeFunction> variant) {
-  ResizeHorizontalFloatCase result{source_width,      target_width,       height, source_pitch,
-                                   destination_pitch, std::move(variant), {}};
-  result.name = resize_horizontal_float_case_name(result.source_width, result.target_width,
-                                                  result.height, result.source_pitch,
-                                                  result.destination_pitch, result.variant);
+    std::size_t source_pitch, std::size_t destination_pitch, Variant<ResizeFunction> variant,
+    ResizeFilter filter = ResizeFilter::Triangle, int expected_filter_size_real = 0,
+    bool prepare_avx512_float_coefficients = false) {
+  ResizeHorizontalFloatCase result{source_width,
+                                   target_width,
+                                   height,
+                                   source_pitch,
+                                   destination_pitch,
+                                   std::move(variant),
+                                   filter,
+                                   expected_filter_size_real,
+                                   prepare_avx512_float_coefficients,
+                                   {}};
+  result.name = resize_horizontal_float_case_name(
+      result.source_width, result.target_width, result.height, result.source_pitch,
+      result.destination_pitch, result.filter, result.variant);
   return result;
 }
 
@@ -808,9 +827,16 @@ inline void run_resize_horizontal_float_case(const ResizeHorizontalFloatCase& te
   const auto source_snapshot = source.snapshot_active();
 
   ResamplingProgramOwner program(static_cast<int>(test_case.source_width),
-                                 static_cast<int>(test_case.target_width), 32, 8);
+                                 static_cast<int>(test_case.target_width), 32, 8, test_case.filter);
+  if (test_case.expected_filter_size_real > 0) {
+    ASSERT_EQ(program.get()->filter_size_real, test_case.expected_filter_size_real)
+        << test_case.name << " unexpected filter_size_real";
+  }
   apply_resize_horizontal_float_reference(source.view().as_const(), expected.view(),
                                           *program.get());
+  if (test_case.prepare_avx512_float_coefficients) {
+    program.prepare_avx512_horizontal_float_coefficients();
+  }
   invoke_resize_horizontal(test_case.variant.function, actual.view(), source.view().as_const(),
                            program.get(), 32);
 
