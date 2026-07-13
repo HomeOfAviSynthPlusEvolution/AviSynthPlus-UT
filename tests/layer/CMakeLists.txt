@@ -1,4 +1,7 @@
-add_executable(layer_tests layer_tests.cpp)
+add_executable(layer_tests
+  layer_tests.cpp
+  layer_genericplane_fast_tests.cpp
+)
 target_include_directories(layer_tests PRIVATE
   ${PROJECT_SOURCE_DIR}/tests
   ${PROJECT_SOURCE_DIR}/third_party/AviSynthPlus/avs_core/include
