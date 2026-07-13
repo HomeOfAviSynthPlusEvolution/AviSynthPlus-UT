@@ -11,6 +11,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <iostream>
 #include <limits>
 #include <ostream>
 #include <sstream>
@@ -724,6 +725,146 @@ TEST(V410ToYuv444p10, SplitsPackedTenBitVYUSamples) {
   EXPECT_EQ(format_hash(hash_active(expected_y.view().as_const())), "1bdca42a4b0dd5e0");
   EXPECT_EQ(format_hash(hash_active(expected_u.view().as_const())), "e601fd689383acb6");
   EXPECT_EQ(format_hash(hash_active(expected_v.view().as_const())), "bfa0b87fd25b8cc0");
+  EXPECT_TRUE(source.active_matches(source_snapshot));
+  EXPECT_TRUE(source.memory_intact());
+  EXPECT_TRUE(expected_y.memory_intact());
+  EXPECT_TRUE(expected_u.memory_intact());
+  EXPECT_TRUE(expected_v.memory_intact());
+  EXPECT_TRUE(actual_y.memory_intact());
+  EXPECT_TRUE(actual_u.memory_intact());
+  EXPECT_TRUE(actual_v.memory_intact());
+}
+
+inline void fill_v210_source(PlaneView<std::uint16_t> y_plane, PlaneView<std::uint16_t> u_plane,
+                             PlaneView<std::uint16_t> v_plane) {
+  constexpr std::array<std::uint16_t, 10> anchors{0, 1, 2, 3, 31, 128, 511, 512, 1022, 1023};
+  for (std::size_t y = 0; y < y_plane.height(); ++y) {
+    for (std::size_t x = 0; x < y_plane.width(); ++x) {
+      y_plane.row(y)[x] = static_cast<std::uint16_t>(
+          (anchors[(x * 3U + y * 5U) % anchors.size()] + x * 17U + y * 19U) & 0x3ffU);
+    }
+    for (std::size_t x = 0; x < u_plane.width(); ++x) {
+      u_plane.row(y)[x] = static_cast<std::uint16_t>(
+          (anchors[(x * 7U + y * 11U + 1U) % anchors.size()] + x * 23U + y * 29U) & 0x3ffU);
+      v_plane.row(y)[x] = static_cast<std::uint16_t>(
+          (anchors[(x * 13U + y * 17U + 2U) % anchors.size()] + x * 31U + y * 37U) & 0x3ffU);
+    }
+  }
+}
+
+inline void pack_v210_reference_rows(PlaneView<const std::uint16_t> y_plane,
+                                     PlaneView<const std::uint16_t> u_plane,
+                                     PlaneView<const std::uint16_t> v_plane,
+                                     PlaneView<std::uint32_t> packed) {
+  const auto groups = packed.width() / 4;
+  for (std::size_t y = 0; y < y_plane.height(); ++y) {
+    for (std::size_t group = 0; group < groups; ++group) {
+      const auto y_offset = group * 6;
+      const auto uv_offset = group * 3;
+      auto* output = packed.row(y) + group * 4;
+      output[0] = u_plane.row(y)[uv_offset + 0] | (y_plane.row(y)[y_offset + 0] << 10) |
+                  (v_plane.row(y)[uv_offset + 0] << 20);
+      output[1] = y_plane.row(y)[y_offset + 1] | (u_plane.row(y)[uv_offset + 1] << 10) |
+                  (y_plane.row(y)[y_offset + 2] << 20);
+      output[2] = v_plane.row(y)[uv_offset + 1] | (y_plane.row(y)[y_offset + 3] << 10) |
+                  (u_plane.row(y)[uv_offset + 2] << 20);
+      output[3] = y_plane.row(y)[y_offset + 4] | (v_plane.row(y)[uv_offset + 2] << 10) |
+                  (y_plane.row(y)[y_offset + 5] << 20);
+    }
+  }
+}
+
+TEST(Yuv422p10ToV210, PacksFullGroupAndTwoPixelTail) {
+  constexpr std::size_t width_pixels = 8;
+  constexpr std::size_t height = 3;
+  constexpr std::size_t encoded_groups = (width_pixels + 5) / 6;
+  constexpr std::size_t source_groups = (width_pixels + 10) / 6;
+  constexpr std::size_t source_width = source_groups * 6;
+  constexpr std::size_t source_chroma_width = source_width / 2;
+  // The upstream packer emits one complete extra group for this two-pixel tail.
+  constexpr std::size_t output_tail_end = source_groups * 16;
+  GuardedVideoBuffer<std::uint16_t> source_y(source_width, height, 64, 64);
+  GuardedVideoBuffer<std::uint16_t> source_u(source_chroma_width, height, 64, 64);
+  GuardedVideoBuffer<std::uint16_t> source_v(source_chroma_width, height, 64, 64);
+  GuardedVideoBuffer<std::uint32_t> expected(encoded_groups * 4, height, 128, 64);
+  GuardedVideoBuffer<std::uint32_t> actual(encoded_groups * 4, height, 128, 64);
+  fill_v210_source(source_y.view(), source_u.view(), source_v.view());
+  const auto y_snapshot = source_y.snapshot_active();
+  const auto u_snapshot = source_u.snapshot_active();
+  const auto v_snapshot = source_v.snapshot_active();
+  pack_v210_reference_rows(source_y.view().as_const(), source_u.view().as_const(),
+                           source_v.view().as_const(), expected.view());
+
+  yuv422p10_to_v210(reinterpret_cast<BYTE*>(actual.view().data()),
+                    reinterpret_cast<const BYTE*>(source_y.view().data()),
+                    static_cast<int>(source_y.view().pitch_bytes()),
+                    reinterpret_cast<const BYTE*>(source_u.view().data()),
+                    reinterpret_cast<const BYTE*>(source_v.view().data()),
+                    static_cast<int>(source_u.view().pitch_bytes()), static_cast<int>(width_pixels),
+                    static_cast<int>(height));
+
+  EXPECT_TRUE(compare_exact(expected.view().as_const(), actual.view().as_const()));
+  EXPECT_EQ(format_hash(hash_active(expected.view().as_const())), "b9d3f89892ac9625");
+  EXPECT_TRUE(source_y.active_matches(y_snapshot));
+  EXPECT_TRUE(source_u.active_matches(u_snapshot));
+  EXPECT_TRUE(source_v.active_matches(v_snapshot));
+  EXPECT_TRUE(source_y.memory_intact());
+  EXPECT_TRUE(source_u.memory_intact());
+  EXPECT_TRUE(source_v.memory_intact());
+  EXPECT_TRUE(expected.memory_intact());
+  EXPECT_TRUE(actual.guards_intact());
+  const bool permitted_tail_write =
+      !actual.padding_intact() && actual.padding_intact_from(output_tail_end);
+  if (permitted_tail_write) {
+    std::cout << "[INFO] Yuv422p10ToV210 permitted full-group tail write through byte "
+              << output_tail_end << "\n";
+  }
+  EXPECT_TRUE(actual.padding_intact_from(output_tail_end));
+}
+
+TEST(V210ToYuv422p10, UnpacksFullGroupAndTwoPixelTail) {
+  constexpr std::size_t width_pixels = 8;
+  constexpr std::size_t height = 3;
+  constexpr std::size_t encoded_groups = (width_pixels + 5) / 6;
+  constexpr std::size_t padded_width = encoded_groups * 6;
+  constexpr std::size_t chroma_width = width_pixels / 2;
+  GuardedVideoBuffer<std::uint16_t> source_y(padded_width, height, 64, 64);
+  GuardedVideoBuffer<std::uint16_t> source_u(padded_width / 2, height, 64, 64);
+  GuardedVideoBuffer<std::uint16_t> source_v(padded_width / 2, height, 64, 64);
+  GuardedVideoBuffer<std::uint32_t> source(encoded_groups * 4, height, 128, 64);
+  GuardedVideoBuffer<std::uint16_t> expected_y(width_pixels, height, 64, 64);
+  GuardedVideoBuffer<std::uint16_t> expected_u(chroma_width, height, 64, 64);
+  GuardedVideoBuffer<std::uint16_t> expected_v(chroma_width, height, 64, 64);
+  GuardedVideoBuffer<std::uint16_t> actual_y(width_pixels, height, 64, 64);
+  GuardedVideoBuffer<std::uint16_t> actual_u(chroma_width, height, 64, 64);
+  GuardedVideoBuffer<std::uint16_t> actual_v(chroma_width, height, 64, 64);
+  fill_v210_source(source_y.view(), source_u.view(), source_v.view());
+  pack_v210_reference_rows(source_y.view().as_const(), source_u.view().as_const(),
+                           source_v.view().as_const(), source.view());
+  for (std::size_t y = 0; y < height; ++y) {
+    for (std::size_t x = 0; x < width_pixels; ++x) {
+      expected_y.view().row(y)[x] = source_y.view().row(y)[x];
+    }
+    for (std::size_t x = 0; x < chroma_width; ++x) {
+      expected_u.view().row(y)[x] = source_u.view().row(y)[x];
+      expected_v.view().row(y)[x] = source_v.view().row(y)[x];
+    }
+  }
+  const auto source_snapshot = source.snapshot_active();
+  v210_to_yuv422p10(reinterpret_cast<BYTE*>(actual_y.view().data()),
+                    static_cast<int>(actual_y.view().pitch_bytes()),
+                    reinterpret_cast<BYTE*>(actual_u.view().data()),
+                    reinterpret_cast<BYTE*>(actual_v.view().data()),
+                    static_cast<int>(actual_u.view().pitch_bytes()),
+                    reinterpret_cast<const BYTE*>(source.view().data()),
+                    static_cast<int>(width_pixels), static_cast<int>(height));
+
+  EXPECT_TRUE(compare_exact(expected_y.view().as_const(), actual_y.view().as_const()));
+  EXPECT_TRUE(compare_exact(expected_u.view().as_const(), actual_u.view().as_const()));
+  EXPECT_TRUE(compare_exact(expected_v.view().as_const(), actual_v.view().as_const()));
+  EXPECT_EQ(format_hash(hash_active(expected_y.view().as_const())), "79ce25c85acea312");
+  EXPECT_EQ(format_hash(hash_active(expected_u.view().as_const())), "3ad98637e0f98b65");
+  EXPECT_EQ(format_hash(hash_active(expected_v.view().as_const())), "eac89d5ce8709eb9");
   EXPECT_TRUE(source.active_matches(source_snapshot));
   EXPECT_TRUE(source.memory_intact());
   EXPECT_TRUE(expected_y.memory_intact());
