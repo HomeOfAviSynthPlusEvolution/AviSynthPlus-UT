@@ -179,6 +179,12 @@ sources and test vectors.
 - The B11 `Preroll` zero-count audio loop is not reachable through normal
   public invocation: the surrounding `AvsCache` returns for `count <= 0`
   before the private `Preroll::GetAudio` implementation is called.
+- The B12 AVI/VfW input findings are outside the active Linux unit-test
+  boundary. Every reviewed source file is added to `AvsCore` only for MSVC or
+  MinGW, and the corresponding public source factories are guarded by
+  `AVS_WINDOWS`. Exercising them would require a Windows build and AVI/WAV
+  file-input fixtures through those factories, which are outside the current
+  direct public-unit-test and file-I/O scope.
 - AVX-512 `GetAlphaRect` is Windows/GDI-only and remains outside the current
   Linux execution scope.
 - AVX-512 resize implementations that are disabled or non-production are not
