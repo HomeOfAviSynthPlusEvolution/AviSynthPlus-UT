@@ -8,6 +8,7 @@ add_executable(finding_tests
   finding_b7_merge_layer_tests.cpp
   finding_b8_overlay_tests.cpp
   finding_b9_conditional_tests.cpp
+  finding_b10_expr_tests.cpp
 )
 target_include_directories(finding_tests PRIVATE
   ${PROJECT_SOURCE_DIR}/tests
