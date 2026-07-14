@@ -28,6 +28,22 @@ build tree and linked as a normal imported target. The sanitizer preset applies
 to the test executable and support code; the external upstream build remains a
 separately configured dependency.
 
+On Windows, use the MSVC x64 preset from a Visual Studio 2026 Developer
+PowerShell:
+
+```powershell
+git submodule update --init --recursive
+cmake --preset msvc-debug
+cmake --build --preset msvc-debug
+ctest --preset msvc-debug
+```
+
+The Visual Studio 2026 generator requires a CMake version that supports it
+(CMake 4.2 or newer).
+
+Windows/MSVC is part of the supported test matrix. Continuous integration is
+not configured in this repository yet.
+
 ## Layout
 
 - `tests/support`: C++17 RAII buffers, typed plane views, deterministic data,

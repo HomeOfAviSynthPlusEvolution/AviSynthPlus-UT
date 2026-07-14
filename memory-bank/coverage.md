@@ -6,6 +6,14 @@ variants are exercised, and how the tests establish the behavior. Exact
 dimensions, seeds, hashes, and parameterized instance names belong to the test
 sources and test vectors.
 
+## Test Matrix
+
+| Environment | Presets | Coverage role |
+| --- | --- | --- |
+| Linux x86_64, GCC | `gcc-debug`, `gcc-sanitize` | Supported test matrix; SIMD cases run only when their runtime ISA requirements are available |
+| Linux x86_64, Clang | `clang19-debug`, `clang22-debug` | Supported test matrix; SIMD cases run only when their runtime ISA requirements are available |
+| Windows x64, native MSVC | `msvc-debug` | Supported test matrix with the same CPU-gated SIMD behavior as GCC; continuous integration is outside the current scope |
+
 ## Support Coverage
 
 | Area | Operation | Covered implementation types | Test method |
@@ -13,13 +21,13 @@ sources and test vectors.
 | `Support layer` | Plane views and guarded buffers | C++17 RAII views and buffers | Unit checks for byte-pitch row addressing, invalid pitches, active-pixel snapshots, row padding, and allocation guards |
 | `Support layer` | Guarded audio buffers and sample references | C++17 RAII flat buffers for U8, S16, S24, S32, and F32 storage | Fixed boundary-value samples, signed 24-bit packing, alignment offsets, active-byte snapshots, row padding, and allocation guards |
 | `Support layer` | Deterministic data and stable hashes | XorShift32 input generation and XXH3 64-bit hashing | Known-sequence and repeatability checks; hashes cover active bytes only and exclude padding |
-| `Support layer` | CPU features and variant registry | Scalar, SSE2, SSSE3, AVX2, AVX2+FMA3, and AVX-512 requirement predicates | Injectable feature sets verify exact requirements; unsupported SIMD variants remain visible as skipped |
+| `Support layer` | CPU features and variant registry | GCC/Clang builtin detection and MSVC CPUID/XCR0 detection for scalar, SSE2, SSSE3, AVX2, AVX2+FMA3, and AVX-512 requirement predicates | Injectable feature sets verify exact requirements; unsupported SIMD variants remain visible as skipped |
 
 ## Video Kernel Coverage
 
 | Area | Operation | Covered implementation types | Test method |
 | --- | --- | --- | --- |
-| `Core` | `BitBlt` pitched row copy | Portable `memcpy`/row-loop implementation used by the Linux x86 build | Fixed byte pattern covers multi-row and single-row copies, distinct pitches, negative source pitch, alignment offsets, zero row size/height early returns, active-output XXH3 hashes, source immutability, row padding, and allocation guards |
+| `Core` | `BitBlt` pitched row copy | Portable `memcpy`/row-loop implementation used by the current x86/x64 builds | Fixed byte pattern covers multi-row and single-row copies, distinct pitches, negative source pitch, alignment offsets, zero row size/height early returns, active-output XXH3 hashes, source immutability, row padding, and allocation guards |
 | `Limiter` | 8- and 16-bit plane clamp | 8-bit SSE2; 16-bit SSE2 and SSE4.1 | Fixed boundary-value pattern; independent exact clamp reference; in-place output, active-byte hash, padding, and guard checks |
 | `Overlay` | Masked merge for `MASK444`, `MASK420`, and `MASK422` | Integer C, SSE4.1, and AVX2 for 8/10/12/14/16-bit paths; float C, SSE4.1, and AVX2 | Fixed boundary-value planes and masks; independent placement/opacity reference; C/SIMD differential comparison; integer active-byte hashes; floating-point ULP comparison; input immutability, padding, and guard checks |
 | `Overlay` | Chroma resampling between YV12/YV16/YV24 | YV12/YV16-to-YV24: 8-/16-bit SSE2. YV24-to-YV12: 8-bit SSSE3/AVX2, less-than-16-bit SSE2/SSSE3/AVX2, full-range 16-bit SSE2/SSE4.1/AVX2, float SSE2. YV24-to-YV16: 8-/16-bit SSE2/SSE4.1 and float SSE2 | Fixed chroma-anchor planes; independent replication and rounded-average references; vector blocks and tails, low-bit and full-range 16-bit arithmetic, exact integer hashes shared across ISA variants, float ULP/absolute comparison, source immutability, padding, and guard checks. Public scalar counterparts are unavailable. |
@@ -170,7 +178,7 @@ sources and test vectors.
   `static` functions and are outside the public-kernel boundary.
 - `Turn` 180-degree RGB24/RGB48 rotations: the required pixel types are
   private to the upstream implementation.
-- `Turn` ARM/NEON variants: the current execution scope is Linux x86.
+- `Turn` ARM/NEON variants: the current execution scope is x86/x64.
 - Filter `Create` entry points, `Invoke` conversion orchestration,
   filter-graph/cache behavior, registration, and plugin loading. Direct
   construction of a public video filter class with a real environment is a
@@ -179,14 +187,12 @@ sources and test vectors.
 - The B11 `Preroll` zero-count audio loop is not reachable through normal
   public invocation: the surrounding `AvsCache` returns for `count <= 0`
   before the private `Preroll::GetAudio` implementation is called.
-- The B12 AVI/VfW input findings are outside the active Linux unit-test
-  boundary. Every reviewed source file is added to `AvsCore` only for MSVC or
-  MinGW, and the corresponding public source factories are guarded by
-  `AVS_WINDOWS`. Exercising them would require a Windows build and AVI/WAV
-  file-input fixtures through those factories, which are outside the current
-  direct public-unit-test and file-I/O scope.
+- The B12 AVI/VfW input findings remain outside the direct public-unit-test and
+  file-I/O scope. Every reviewed source file is added to `AvsCore` only for
+  MSVC or MinGW, and the corresponding public source factories are guarded by
+  `AVS_WINDOWS`. Exercising them would require AVI/WAV file-input fixtures.
 - AVX-512 `GetAlphaRect` is Windows/GDI-only and remains outside the current
-  Linux execution scope.
+  unit-test boundary.
 - AVX-512 resize implementations that are disabled or non-production are not
   covered: float `4s4_ks16` (`#if 0`), the old float vertical kernel, the
   `PF_GENERIC_UINT_TEST` integer debug fallbacks, and the unenabled `DTL2D`
@@ -195,8 +201,8 @@ sources and test vectors.
 - ConvertBits Floyd-Steinberg/filter-level paths and exhaustive conversion
   combinations; external Shibatch (`SSRC`/`SuperEQ`) and `TimeStretch` plugin
   behavior, audio I/O, script execution, filter graphs, plugin loading,
-  distribution integration, Windows/MSVC execution, and unsupported-ISA or
-  FMA-specific dispatch auditing.
+  distribution integration, and unsupported-ISA or FMA-specific dispatch
+  auditing.
 
 ## Maintenance Rules
 

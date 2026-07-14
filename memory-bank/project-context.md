@@ -23,7 +23,7 @@ pointer or retaining a minimal production fix is an explicit, reviewed change.
 - Stable output checks using fixed structured inputs or fixed seeds.
 - Differential checks between scalar C and available SIMD implementations.
 - Memory-integrity checks for active pixels, row padding, and allocation guards.
-- Linux GCC and Clang builds at the current stage, with C++17 throughout.
+- Linux GCC/Clang and native Windows x64 MSVC builds, with C++17 throughout.
 
 The test project owns its support layer and converts RAII views to the exact
 raw-pointer and pitch arguments expected by upstream functions at the call
@@ -110,7 +110,7 @@ disassembly.
 - `.avs` script execution, filter `Create` entry points, `Invoke` conversion
   orchestration, or black-box filter-graph tests.
 - Filter registration, full distribution, or plugin-loading tests.
-- MSVC and Windows presets at the current stage.
+- Continuous-integration configuration and hosted execution.
 - Performance benchmarks and unbounded fuzzing.
 - ISA-dispatch contract testing, illegal-instruction testing, or FMA-specific
   environment simulation.
