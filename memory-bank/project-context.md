@@ -86,10 +86,10 @@ checks use bounded, realistic allocations and valid media metadata. They do
 not manufacture pathological audio configurations such as implausible channel
 counts or sample rates, or intentional out-of-memory conditions.
 
-The B1, B2, B3, and B5 finding cases call narrow public factories because their
-respective contracts concern factory argument or frame-property validation.
-They still use a real environment and test-owned clips, without registration,
-plugin loading, or script-graph coverage.
+The B1, B2, B3, B5, and B9 finding cases call narrow public factories because
+their respective contracts concern factory argument, runtime-function, or
+frame-property validation. They still use a real environment and test-owned
+clips, without registration, plugin loading, or script-graph coverage.
 
 The direct audio-kernel boundary is limited to public pointer/count conversion
 functions. A separate audio-filter tier may construct public core audio filter
