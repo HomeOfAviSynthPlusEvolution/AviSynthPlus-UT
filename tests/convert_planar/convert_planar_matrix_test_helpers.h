@@ -108,6 +108,20 @@ struct PlanarMatrixCoefficients {
   int shift{};
 };
 
+struct PlanarRgbToYuvFloatCoefficients {
+  float y_b{};
+  float y_g{};
+  float y_r{};
+  float u_b{};
+  float u_g{};
+  float u_r{};
+  float v_b{};
+  float v_g{};
+  float v_r{};
+  float input_offset{};
+  float output_offset{};
+};
+
 inline int planar_round_symmetric(double value) {
   return static_cast<int>(value >= 0.0 ? value + 0.5 : value - 0.5);
 }
@@ -180,9 +194,41 @@ inline PlanarMatrixCoefficients make_planar_rgb_to_yuv_coefficients(int matrix, 
   return result;
 }
 
+inline PlanarRgbToYuvFloatCoefficients make_planar_rgb_to_yuv_float_coefficients(
+    int matrix, bool source_full, bool destination_full, int bit_depth) {
+  double kr{};
+  double kb{};
+  planar_kr_kb(matrix, kr, kb);
+  const double kg = 1.0 - kr - kb;
+  const double sample_scale = static_cast<double>(std::uint32_t{1} << (bit_depth - 8));
+  const double maximum = static_cast<double>((std::uint32_t{1} << bit_depth) - 1U);
+  const double rgb_span = source_full ? maximum : 219.0 * sample_scale;
+  const double y_span = destination_full ? maximum : 219.0 * sample_scale;
+  const double uv_span = destination_full ? maximum / 2.0 : 112.0 * sample_scale;
+  return {
+      static_cast<float>(y_span * kb / rgb_span),
+      static_cast<float>(y_span * kg / rgb_span),
+      static_cast<float>(y_span * kr / rgb_span),
+      static_cast<float>(uv_span / rgb_span),
+      static_cast<float>(uv_span * kg / (kb - 1.0) / rgb_span),
+      static_cast<float>(uv_span * kr / (kb - 1.0) / rgb_span),
+      static_cast<float>(uv_span * kb / (kr - 1.0) / rgb_span),
+      static_cast<float>(uv_span * kg / (kr - 1.0) / rgb_span),
+      static_cast<float>(uv_span / rgb_span),
+      source_full ? 0.0F : -static_cast<float>(1 << (bit_depth - 4)),
+      destination_full ? 0.0F : static_cast<float>(1 << (bit_depth - 4)),
+  };
+}
+
 inline std::uint16_t planar_clip_sample(std::int64_t value, int bit_depth) {
   const auto maximum = (std::int64_t{1} << bit_depth) - 1;
   return static_cast<std::uint16_t>(std::clamp<std::int64_t>(value, 0, maximum));
+}
+
+inline std::uint16_t planar_round_float_sample(float value, int bit_depth) {
+  const int rounded = static_cast<int>(value + 0.5F);
+  const int maximum = (1 << bit_depth) - 1;
+  return static_cast<std::uint16_t>(std::clamp(rounded, 0, maximum));
 }
 
 inline std::uint16_t planar_shifted_component(int coefficient_a, int coefficient_b,
@@ -219,6 +265,32 @@ inline void make_planar_matrix_reference(const PlanarMatrixCase& test_case,
                                          PlaneView<const T> source0, PlaneView<const T> source1,
                                          PlaneView<const T> source2, PlaneView<T> output0,
                                          PlaneView<T> output1, PlaneView<T> output2) {
+  // Exact 16-bit RGB->YUV uses the upstream float workflow to avoid int32 overflow;
+  // keep its independent range and rounding semantics in the reference.
+  if (test_case.direction == PlanarMatrixDirection::RgbToYuv && test_case.bit_depth == 16) {
+    const auto coefficients = make_planar_rgb_to_yuv_float_coefficients(
+        test_case.matrix, test_case.source_full, test_case.destination_full, test_case.bit_depth);
+    const auto input_offset = static_cast<int>(coefficients.input_offset);
+    const float half_pixel = static_cast<float>(std::int64_t{1} << (test_case.bit_depth - 1));
+    for (std::size_t row = 0; row < source0.height(); ++row) {
+      for (std::size_t column = 0; column < source0.width(); ++column) {
+        const float g = static_cast<float>(static_cast<int>(source0.row(row)[column]) + input_offset);
+        const float b = static_cast<float>(static_cast<int>(source1.row(row)[column]) + input_offset);
+        const float r = static_cast<float>(static_cast<int>(source2.row(row)[column]) + input_offset);
+        const float y = coefficients.y_g * g + coefficients.y_b * b + coefficients.y_r * r +
+                        coefficients.output_offset;
+        const float u = coefficients.u_g * g + coefficients.u_b * b + coefficients.u_r * r +
+                        half_pixel;
+        const float v = coefficients.v_g * g + coefficients.v_b * b + coefficients.v_r * r +
+                        half_pixel;
+        output0.row(row)[column] = static_cast<T>(planar_round_float_sample(y, test_case.bit_depth));
+        output1.row(row)[column] = static_cast<T>(planar_round_float_sample(u, test_case.bit_depth));
+        output2.row(row)[column] = static_cast<T>(planar_round_float_sample(v, test_case.bit_depth));
+      }
+    }
+    return;
+  }
+
   const auto coefficients =
       test_case.direction == PlanarMatrixDirection::YuvToRgb
           ? make_planar_yuv_to_rgb_coefficients(test_case.matrix, test_case.source_full,
@@ -226,7 +298,8 @@ inline void make_planar_matrix_reference(const PlanarMatrixCase& test_case,
           : make_planar_rgb_to_yuv_coefficients(test_case.matrix, test_case.source_full,
                                                 test_case.destination_full, test_case.bit_depth);
   auto adjusted_coefficients = coefficients;
-  if (test_case.direction == PlanarMatrixDirection::RgbToYuv && test_case.destination_full) {
+  if (test_case.direction == PlanarMatrixDirection::RgbToYuv && test_case.source_full &&
+      test_case.destination_full) {
     const auto luma_sum = adjusted_coefficients.y_b + adjusted_coefficients.y_g +
                           adjusted_coefficients.y_r;
     adjusted_coefficients.y_g += (1 << adjusted_coefficients.shift) - luma_sum;

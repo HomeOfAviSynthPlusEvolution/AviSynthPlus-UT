@@ -41,7 +41,7 @@ std::vector<PlanarMatrixCase> planar_matrix_cases() {
   add_planar_matrix_variants(cases, PlanarMatrixDirection::YuvToRgb, AVS_MATRIX_BT709, true, false,
                              {"154e45e386b6f1d9", "df3002d69a0f5b05", "bcb348ef550033c0"}, 10);
   add_planar_matrix_variants(cases, PlanarMatrixDirection::RgbToYuv, AVS_MATRIX_BT470_BG, false, true,
-                             {"01dba4e321f8719e", "3a2072ee4da7819e", "5a53674974150d38"}, 16);
+                             {"65e2a12fe84cea1d", "3379d27f592ddd5c", "8d424504f0c3799d"}, 16);
   return cases;
 }
 
