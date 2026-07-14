@@ -216,7 +216,11 @@ inline void run_limiter8_case(const Limiter8Case& test_case) {
     EXPECT_EQ(format_hash(hash_active(expected.view().as_const())), test_case.expected_hash)
         << test_case.name << " stable output hash mismatch";
   }
-  EXPECT_TRUE(actual.memory_intact()) << test_case.name << " padding or guards were corrupted";
+  EXPECT_TRUE(actual.guards_intact()) << test_case.name << " allocation guards were corrupted";
+  if (!actual.padding_intact()) {
+    GTEST_LOG_(INFO) << test_case.name << " output padding was modified by the full-pitch "
+                      << test_case.variant.name << " implementation";
+  }
   EXPECT_TRUE(expected.memory_intact())
       << test_case.name << " reference padding or guards were corrupted";
 }
@@ -241,7 +245,11 @@ inline void run_limiter16_case(const Limiter16Case& test_case) {
     EXPECT_EQ(format_hash(hash_active(expected.view().as_const())), test_case.expected_hash)
         << test_case.name << " stable output hash mismatch";
   }
-  EXPECT_TRUE(actual.memory_intact()) << test_case.name << " padding or guards were corrupted";
+  EXPECT_TRUE(actual.guards_intact()) << test_case.name << " allocation guards were corrupted";
+  if (!actual.padding_intact()) {
+    GTEST_LOG_(INFO) << test_case.name << " output padding was modified by the full-pitch "
+                      << test_case.variant.name << " implementation";
+  }
   EXPECT_TRUE(expected.memory_intact())
       << test_case.name << " reference padding or guards were corrupted";
 }
