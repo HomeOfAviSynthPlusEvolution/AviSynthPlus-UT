@@ -9,6 +9,11 @@ add_executable(finding_tests
   finding_b8_overlay_tests.cpp
   finding_b9_conditional_tests.cpp
   finding_b10_expr_tests.cpp
+  finding_b11_source_tests.cpp
+  finding_b11_misc_tests.cpp
+  finding_b11_debug_tests.cpp
+  finding_b11_histogram_tests.cpp
+  finding_b11_text_overlay_tests.cpp
 )
 target_include_directories(finding_tests PRIVATE
   ${PROJECT_SOURCE_DIR}/tests

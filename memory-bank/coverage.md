@@ -151,6 +151,9 @@ sources and test vectors.
 | `B8` | Overlay conversion, opacity, and full-mask contracts | Public 4:2:0/4:2:2-to-4:4:4 and 4:4:4-to-4:2:2 conversion dispatchers, plus the public `Overlay` class through a real environment | Real narrow YV12/YV16/YV24 frames run in isolated child processes and assert exact active-pixel conversion plus intact frame memory. Small YV24 clips assert non-finite opacity rejection and the documented equivalence of an omitted mask and a full-scale mask for Darken/Lighten and the affected integer blend modes. Sources are snapshotted and frame requests are checked. |
 | `B9` | Conditional runtime, property, and reader contracts | Public `ConditionalFilter`, `CopyProperties`, `ConditionalReader`, runtime statistics/property functions, and narrow `propShow` factory entry through a real environment | Strict small frame sequences assert independent last-frame clamping for selected clips, Difference, and property sources; double-precision conditional comparison; UTF-8 data-array preservation; non-finite MinMax/propShow rejection; and safe single-frame reader interpolation. Sources are snapshotted and request traces are checked. The runtime-function and `propShow` calls are the documented narrow finding-tier factory exception. |
 | `B10` | Expr relative addressing, format routing, and square-root domain contracts | Public `Exprfilter` constructor and `GetFrame` with scalar C, Vector-C, and SSE2 JIT when supported | Small Y8 and float frames assert edge-clamped relative-row reads, negative float `sqrt` NaN preservation, and documented R-G-B-A to Y-U-V-A plane order for processed and copy format-override paths. Source snapshots and output memory checks remain active. |
+| `B11` | Source, misc, and debug argument/state contracts | Public `BlankClip`, `Tone`, `FixLuminance`, `PeculiarBlend`, `SkewRows`, `SetPlanarLegacyAlignment`, and `Null` paths | Bounded valid clips assert rejection of unsafe factory/constructor arguments, correct final-frame requests, restoration of environment alignment after a child exception, and `Null` completion. Source snapshots, strict request traces, and output memory checks remain active. The `BlankClip`, `Tone`, and alignment calls are the documented narrow finding-tier factory exception. |
+| `B11` | Histogram geometry, non-finite factor, and float-input safety | Public `Histogram` constructor, `Levels` factory, and `GetFrame` | Small valid YUV sources assert AudioLevels geometry rejection and script-generated NaN factor rejection; an isolated float-NaN pixel runs in a child process with output-memory and source-snapshot checks. The `Levels` factory call is the documented narrow finding-tier exception. |
+| `B11` | Compare channel, metric, length, and logfile contracts | Public `Compare` constructor, `GetFrame`, and logfile output | Fixed packed RGB48 component anchors verify selected-channel masking and metric normalization; a normal 4K RGB32 maximum-difference frame verifies non-overflowing metrics; strict short-second-clip construction and zero-frame logfile behavior are checked with source snapshots and frame-memory checks. |
 
 ## Deliberate Gaps
 
@@ -173,6 +176,9 @@ sources and test vectors.
   construction of a public video filter class with a real environment is a
   separate narrow unit-test tier; it does not cover these integration
   contracts.
+- The B11 `Preroll` zero-count audio loop is not reachable through normal
+  public invocation: the surrounding `AvsCache` returns for `count <= 0`
+  before the private `Preroll::GetAudio` implementation is called.
 - AVX-512 `GetAlphaRect` is Windows/GDI-only and remains outside the current
   Linux execution scope.
 - AVX-512 resize implementations that are disabled or non-production are not
