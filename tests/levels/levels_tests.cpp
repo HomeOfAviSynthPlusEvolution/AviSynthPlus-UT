@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cmath>
 #include <vector>
 
 namespace {
@@ -27,6 +28,7 @@ using avsut::test::FrameSnapshot;
 using avsut::test::make_video_info;
 using avsut::test::StaticFrameClip;
 using avsut::test::VideoInfoSpec;
+using avsut::test::write_frame_plane;
 
 template <typename Pixel>
 void write_values(PVideoFrame& frame, int plane, int width, int height,
@@ -105,6 +107,103 @@ TEST(Levels, MapsLumaAndChromaIndependentlyForYuv444) {
         EXPECT_EQ(output_row[x], expected) << "plane=" << plane << " x=" << x << " y=" << y;
       }
     }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+TEST(Levels, MapsSixteenBitYuv420WithIndependentLumaAndChromaRanges) {
+  AviSynthEnvironment environment;
+  constexpr int width = 8;
+  constexpr int height = 6;
+  const auto vi = make_video_info(
+      VideoInfoSpec{width, height, VideoInfo::CS_YUV420P16, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    fill_plane_full_pitch(source, static_cast<std::uint8_t>(0x70 + plane * 0x13), plane);
+    write_frame_plane<std::uint16_t>(source, plane, [](int x, int y) {
+      return 2048 + x * 8192 + y * 4096;
+    });
+  }
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  Levels filter(clip, 8192.0f, 1.0, 57344.0f, 4096.0f, 61440.0f, false, false,
+                environment.get());
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  const auto expected_luma = [](std::uint16_t value) {
+    const double normalized = std::clamp((static_cast<double>(value) - 8192.0) / 49152.0,
+                                         0.0, 1.0);
+    const double mapped = normalized * 57344.0 + 4096.0;
+    return static_cast<std::uint16_t>(static_cast<int>(mapped + 0.5));
+  };
+  const auto expected_chroma = [](std::uint16_t value) {
+    const double mapped = (static_cast<double>(value) - 32768.0) * 57344.0 / 49152.0 + 32768.0;
+    return static_cast<std::uint16_t>(std::clamp(static_cast<int>(mapped + 0.5), 0, 65535));
+  };
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    const int plane_width = output->GetRowSize(plane) / static_cast<int>(sizeof(std::uint16_t));
+    const int plane_height = output->GetHeight(plane);
+    const int source_pitch = source->GetPitch(plane);
+    const int output_pitch = output->GetPitch(plane);
+    for (int y = 0; y < plane_height; ++y) {
+      const auto* source_row = reinterpret_cast<const std::uint16_t*>(
+          source->GetReadPtr(plane) + y * source_pitch);
+      const auto* output_row = reinterpret_cast<const std::uint16_t*>(
+          output->GetReadPtr(plane) + y * output_pitch);
+      for (int x = 0; x < plane_width; ++x) {
+        const auto expected = plane == PLANAR_Y ? expected_luma(source_row[x])
+                                                : expected_chroma(source_row[x]);
+        EXPECT_EQ(output_row[x], expected) << "plane=" << plane << " x=" << x << " y=" << y;
+      }
+    }
+  }
+  EXPECT_EQ(output->GetRowSize(PLANAR_U), width / 2 * static_cast<int>(sizeof(std::uint16_t)));
+  EXPECT_EQ(output->GetHeight(PLANAR_U), height / 2);
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+TEST(Levels, AppliesGammaToFloatYuv444AndPreservesChromaCenter) {
+  AviSynthEnvironment environment;
+  constexpr int width = 5;
+  constexpr int height = 2;
+  const auto vi = make_video_info(
+      VideoInfoSpec{width, height, VideoInfo::CS_YUV444PS, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  const std::array<float, 5> luma{0.0F, 0.04F, 0.25F, 0.64F, 1.0F};
+  const std::array<float, 5> chroma{-0.6F, -0.25F, 0.0F, 0.25F, 0.6F};
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    fill_plane_full_pitch(source, static_cast<std::uint8_t>(0x90 + plane * 0x11), plane);
+    write_frame_plane<float>(source, plane, [plane, &luma, &chroma](int x, int) {
+      return plane == PLANAR_Y ? luma[static_cast<std::size_t>(x)]
+                                : chroma[static_cast<std::size_t>(x)];
+    });
+  }
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  Levels filter(clip, 0.0f, 2.0, 1.0f, 0.0f, 1.0f, false, false, environment.get());
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    const int pitch = output->GetPitch(plane);
+    const auto* output_row = reinterpret_cast<const float*>(output->GetReadPtr(plane));
+    for (int x = 0; x < width; ++x) {
+      const float input = plane == PLANAR_Y ? luma[static_cast<std::size_t>(x)]
+                                            : chroma[static_cast<std::size_t>(x)];
+      const float expected = plane == PLANAR_Y
+                                 ? std::sqrt(std::clamp(input, 0.0F, 1.0F))
+                                 : std::clamp(input, -0.5F, 0.5F);
+      EXPECT_NEAR(output_row[x], expected, 1.0e-5F) << "plane=" << plane << " x=" << x;
+    }
+    EXPECT_EQ(pitch >= output->GetRowSize(plane), true);
   }
   EXPECT_NE(output->CheckMemory(), 1);
   EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
