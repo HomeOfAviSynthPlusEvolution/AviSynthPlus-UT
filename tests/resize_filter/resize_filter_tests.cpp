@@ -39,6 +39,105 @@ struct TriangleTap {
   int coefficient;
 };
 
+enum class ExtraResizeKernel { MitchellNetravali, Lanczos3 };
+
+double mitchell_netravali_value(double value) {
+  constexpr double b = 1.0 / 3.0;
+  constexpr double c = 1.0 / 3.0;
+  const double p0 = (6.0 - 2.0 * b) / 6.0;
+  const double p2 = (-18.0 + 12.0 * b + 6.0 * c) / 6.0;
+  const double p3 = (12.0 - 9.0 * b - 6.0 * c) / 6.0;
+  const double q0 = (8.0 * b + 24.0 * c) / 6.0;
+  const double q1 = (-12.0 * b - 48.0 * c) / 6.0;
+  const double q2 = (6.0 * b + 30.0 * c) / 6.0;
+  const double q3 = (-b - 6.0 * c) / 6.0;
+  value = std::abs(value);
+  return value < 1.0 ? p0 + value * value * (p2 + value * p3)
+                     : value < 2.0 ? q0 + value * (q1 + value * (q2 + value * q3)) : 0.0;
+}
+
+double lanczos3_value(double value) {
+  constexpr double pi = 3.14159265358979323846;
+  constexpr double taps = 3.0;
+  const auto sinc = [pi](double input) {
+    if (input > 0.000001) {
+      input *= pi;
+      return std::sin(input) / input;
+    }
+    return 1.0;
+  };
+  value = std::abs(value);
+  return value < taps ? sinc(value) * sinc(value / taps) : 0.0;
+}
+
+double extra_resize_kernel_value(ExtraResizeKernel kernel, double value) {
+  return kernel == ExtraResizeKernel::MitchellNetravali ? mitchell_netravali_value(value)
+                                                        : lanczos3_value(value);
+}
+
+double extra_resize_kernel_support(ExtraResizeKernel kernel) {
+  return kernel == ExtraResizeKernel::MitchellNetravali ? 2.0 : 3.0;
+}
+
+std::vector<TriangleTap> extra_resize_taps(ExtraResizeKernel kernel, int source_size,
+                                           double crop_start, double crop_size, int target_size,
+                                           int target_index) {
+  const double source_step = crop_size / static_cast<double>(target_size);
+  const double filter_unit = std::max(source_step, 1.0);
+  const double impulse_step = 1.0 / filter_unit;
+  const double filter_support = extra_resize_kernel_support(kernel) * filter_unit;
+  const int fir_filter_size = std::max(static_cast<int>(std::ceil(filter_support * 2.0)), 1);
+  const int last_source = source_size - 1;
+  const double position = crop_start + source_step * 0.5 - 0.5 +
+                          source_step * static_cast<double>(target_index);
+  const int start_position = static_cast<int>(position + filter_support) - fir_filter_size + 1;
+
+  std::vector<double> raw_coefficients;
+  raw_coefficients.reserve(static_cast<std::size_t>(fir_filter_size));
+  double total = 0.0;
+  for (int k = 0; k < fir_filter_size; ++k) {
+    const double coefficient = extra_resize_kernel_value(
+        kernel, (position - (start_position + k)) * impulse_step);
+    raw_coefficients.push_back(coefficient);
+    total += coefficient;
+  }
+  if (total == 0.0) {
+    total = 1.0;
+  }
+
+  std::vector<TriangleTap> taps;
+  double accumulated = 0.0;
+  double previous = 0.0;
+  for (int k = 0; k < fir_filter_size; ++k) {
+    const int source_index = start_position + k;
+    accumulated += raw_coefficients[static_cast<std::size_t>(k)];
+    if (source_index >= 0 && source_index <= last_source) {
+      const double current = previous + accumulated / total;
+      const int current_fixed = static_cast<int>(current * FPScale + 0.5);
+      const int previous_fixed = static_cast<int>(previous * FPScale + 0.5);
+      taps.push_back(TriangleTap{source_index, current_fixed - previous_fixed});
+      previous = current;
+      accumulated = 0.0;
+    }
+  }
+
+  if (accumulated != 0.0) {
+    const double current = previous + accumulated / total;
+    const int current_fixed = static_cast<int>(current * FPScale + 0.5);
+    const int previous_fixed = static_cast<int>(previous * FPScale + 0.5);
+    if (!taps.empty()) {
+      taps.back().coefficient += current_fixed - previous_fixed;
+    } else {
+      taps.push_back(TriangleTap{std::clamp(start_position, 0, last_source), current_fixed});
+    }
+  }
+
+  if (taps.empty()) {
+    taps.push_back(TriangleTap{std::clamp(start_position, 0, last_source), FPScale});
+  }
+  return taps;
+}
+
 std::vector<TriangleTap> triangle_taps(int source_size, double crop_start, double crop_size,
                                        int target_size, int target_index, double center,
                                        int bits_per_pixel) {
@@ -312,6 +411,18 @@ Pixel triangle_integer_sample(const PVideoFrame& source, int plane, bool horizon
   return static_cast<Pixel>(std::clamp(result, 0, limit));
 }
 
+std::uint8_t extra_resize_integer_sample(const PVideoFrame& source, int plane, bool horizontal,
+                                          int fixed_index, const std::vector<TriangleTap>& taps) {
+  int result = 1 << (FPScale8bits - 1);
+  for (const auto& tap : taps) {
+    const auto* row = source->GetReadPtr(plane) +
+                      (horizontal ? fixed_index : tap.source_index) * source->GetPitch(plane);
+    result += row[horizontal ? tap.source_index : fixed_index] * tap.coefficient;
+  }
+  result >>= FPScale8bits;
+  return static_cast<std::uint8_t>(std::clamp(result, 0, 255));
+}
+
 double plane_center_for_placement(int plane, int placement, const VideoInfo& vi, bool horizontal) {
   if ((!vi.IsYUV() && !vi.IsYUVA()) || (plane != PLANAR_U && plane != PLANAR_V)) {
     return 0.5;
@@ -459,6 +570,100 @@ INSTANTIATE_TEST_SUITE_P(
         PlanarResizeCase{VideoInfo::CS_RGBP16, ResizeDirection::Vertical, AVS_CHROMA_UNUSED,
                          "Rgbp16Vertical"}),
     [](const ::testing::TestParamInfo<PlanarResizeCase>& info) { return info.param.name; });
+
+struct ExtraResizeCase {
+  ExtraResizeKernel kernel;
+  ResizeDirection direction;
+  const char* name;
+};
+
+void PrintTo(const ExtraResizeCase& test_case, std::ostream* stream) { *stream << test_case.name; }
+
+void run_extra_resize_case(const ExtraResizeCase& test_case) {
+  AviSynthEnvironment environment;
+  const bool horizontal = test_case.direction == ResizeDirection::Horizontal;
+  constexpr int source_width = 9;
+  constexpr int source_height = 9;
+  const int target_width = horizontal ? 5 : source_width;
+  const int target_height = horizontal ? source_height : 5;
+  const auto vi = make_video_info(
+      VideoInfoSpec{source_width, source_height, VideoInfo::CS_YV24, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_yv24_pattern(source);
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  PVideoFrame output;
+  if (test_case.kernel == ExtraResizeKernel::MitchellNetravali) {
+    MitchellNetravaliFilter filter_function;
+    if (horizontal) {
+      FilteredResizeH filter(clip, 0.0, static_cast<double>(source_width), target_width,
+                             &filter_function, true, AVS_CHROMA_UNUSED, environment.get());
+      EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+      output = filter.GetFrame(0, environment.get());
+    } else {
+      FilteredResizeV filter(clip, 0.0, static_cast<double>(source_height), target_height,
+                             &filter_function, true, AVS_CHROMA_UNUSED, environment.get());
+      EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+      output = filter.GetFrame(0, environment.get());
+    }
+  } else {
+    LanczosFilter filter_function(3);
+    if (horizontal) {
+      FilteredResizeH filter(clip, 0.0, static_cast<double>(source_width), target_width,
+                             &filter_function, true, AVS_CHROMA_UNUSED, environment.get());
+      EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+      output = filter.GetFrame(0, environment.get());
+    } else {
+      FilteredResizeV filter(clip, 0.0, static_cast<double>(source_height), target_height,
+                             &filter_function, true, AVS_CHROMA_UNUSED, environment.get());
+      EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+      output = filter.GetFrame(0, environment.get());
+    }
+  }
+
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    const int source_axis = horizontal ? source->GetRowSize(plane) : source->GetHeight(plane);
+    const int target_axis = horizontal ? output->GetRowSize(plane) : output->GetHeight(plane);
+    const int fixed_count = horizontal ? output->GetHeight(plane) : output->GetRowSize(plane);
+    for (int fixed = 0; fixed < fixed_count; ++fixed) {
+      for (int index = 0; index < target_axis; ++index) {
+        const auto taps = extra_resize_taps(test_case.kernel, source_axis, 0.0,
+                                            static_cast<double>(source_axis), target_axis, index);
+        const auto expected = extra_resize_integer_sample(source, plane, horizontal, fixed, taps);
+        const int output_x = horizontal ? index : fixed;
+        const int output_y = horizontal ? fixed : index;
+        const auto* output_row = output->GetReadPtr(plane) + output_y * output->GetPitch(plane);
+        EXPECT_EQ(output_row[output_x], expected)
+            << "case=" << test_case.name << " plane=" << plane << " x=" << output_x
+            << " y=" << output_y;
+      }
+    }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+class ExtraResizeTest : public ::testing::TestWithParam<ExtraResizeCase> {};
+
+TEST_P(ExtraResizeTest, AppliesIndependentKernelReferenceAcrossDirections) {
+  run_extra_resize_case(GetParam());
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Kernels, ExtraResizeTest,
+    ::testing::Values(
+        ExtraResizeCase{ExtraResizeKernel::MitchellNetravali, ResizeDirection::Horizontal,
+                        "MitchellHorizontal"},
+        ExtraResizeCase{ExtraResizeKernel::MitchellNetravali, ResizeDirection::Vertical,
+                        "MitchellVertical"},
+        ExtraResizeCase{ExtraResizeKernel::Lanczos3, ResizeDirection::Horizontal,
+                        "Lanczos3Horizontal"},
+        ExtraResizeCase{ExtraResizeKernel::Lanczos3, ResizeDirection::Vertical,
+                        "Lanczos3Vertical"}),
+    [](const ::testing::TestParamInfo<ExtraResizeCase>& info) { return info.param.name; });
 
 template <typename Pixel>
 void fill_packed_resize_pattern(PVideoFrame& frame, int components) {
