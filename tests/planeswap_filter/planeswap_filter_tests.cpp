@@ -24,8 +24,10 @@ using avsut::test::AviSynthEnvironment;
 using avsut::test::fill_plane_full_pitch;
 using avsut::test::FrameSnapshot;
 using avsut::test::make_video_info;
+using avsut::test::read_frame_plane_active;
 using avsut::test::StaticFrameClip;
 using avsut::test::VideoInfoSpec;
+using avsut::test::write_frame_plane;
 
 template <typename Pixel>
 void write_values(PVideoFrame& frame, int plane, int width, int height,
@@ -80,6 +82,115 @@ TEST(PlaneSwap, SwapsPlanarUvPointersForYv24) {
   EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
 }
 
+TEST(PlaneSwap, SwapsYv16PlanesWithHorizontalOnlySubsampling) {
+  AviSynthEnvironment environment;
+  constexpr int width = 10;
+  constexpr int height = 3;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_YV16, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(source, 0x41, PLANAR_Y);
+  fill_plane_full_pitch(source, 0x52, PLANAR_U);
+  fill_plane_full_pitch(source, 0x63, PLANAR_V);
+  write_frame_plane<std::uint8_t>(source, PLANAR_Y,
+                                  [](int x, int y) { return 7 + x * 13 + y * 31; });
+  write_frame_plane<std::uint8_t>(source, PLANAR_U,
+                                  [](int x, int y) { return 11 + x * 17 + y * 19; });
+  write_frame_plane<std::uint8_t>(source, PLANAR_V,
+                                  [](int x, int y) { return 211 - x * 7 - y * 23; });
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  SwapUV filter(clip, environment.get());
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  EXPECT_EQ(output->GetRowSize(PLANAR_U), width / 2);
+  EXPECT_EQ(output->GetHeight(PLANAR_U), height);
+  EXPECT_EQ(read_frame_plane_active<std::uint8_t>(output, PLANAR_Y),
+            read_frame_plane_active<std::uint8_t>(source, PLANAR_Y));
+  EXPECT_EQ(read_frame_plane_active<std::uint8_t>(output, PLANAR_U),
+            read_frame_plane_active<std::uint8_t>(source, PLANAR_V));
+  EXPECT_EQ(read_frame_plane_active<std::uint8_t>(output, PLANAR_V),
+            read_frame_plane_active<std::uint8_t>(source, PLANAR_U));
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+TEST(PlaneSwap, SwapsYuv420P16PlanesWithoutChangingComponentStorage) {
+  AviSynthEnvironment environment;
+  constexpr int width = 10;
+  constexpr int height = 4;
+  const auto vi =
+      make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_YUV420P16, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(source, 0x71, PLANAR_Y);
+  fill_plane_full_pitch(source, 0x82, PLANAR_U);
+  fill_plane_full_pitch(source, 0x93, PLANAR_V);
+  write_frame_plane<std::uint16_t>(source, PLANAR_Y,
+                                   [](int x, int y) { return 900 + x * 401 + y * 701; });
+  write_frame_plane<std::uint16_t>(source, PLANAR_U,
+                                   [](int x, int y) { return 12000 + x * 503 + y * 607; });
+  write_frame_plane<std::uint16_t>(source, PLANAR_V,
+                                   [](int x, int y) { return 51000 - x * 307 - y * 409; });
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  SwapUV filter(clip, environment.get());
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  EXPECT_EQ(output->GetRowSize(PLANAR_U) / static_cast<int>(sizeof(std::uint16_t)), width / 2);
+  EXPECT_EQ(output->GetHeight(PLANAR_U), height / 2);
+  EXPECT_EQ(read_frame_plane_active<std::uint16_t>(output, PLANAR_Y),
+            read_frame_plane_active<std::uint16_t>(source, PLANAR_Y));
+  EXPECT_EQ(read_frame_plane_active<std::uint16_t>(output, PLANAR_U),
+            read_frame_plane_active<std::uint16_t>(source, PLANAR_V));
+  EXPECT_EQ(read_frame_plane_active<std::uint16_t>(output, PLANAR_V),
+            read_frame_plane_active<std::uint16_t>(source, PLANAR_U));
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+TEST(PlaneSwap, SwapsYuva420PlanesAndPreservesAlphaPlane) {
+  AviSynthEnvironment environment;
+  constexpr int width = 8;
+  constexpr int height = 4;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_YUVA420, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V, PLANAR_A}) {
+    fill_plane_full_pitch(source, static_cast<std::uint8_t>(0x20 + plane * 0x17), plane);
+  }
+  write_frame_plane<std::uint8_t>(source, PLANAR_Y,
+                                  [](int x, int y) { return 5 + x * 11 + y * 23; });
+  write_frame_plane<std::uint8_t>(source, PLANAR_U,
+                                  [](int x, int y) { return 17 + x * 13 + y * 7; });
+  write_frame_plane<std::uint8_t>(source, PLANAR_V,
+                                  [](int x, int y) { return 229 - x * 9 - y * 5; });
+  write_frame_plane<std::uint8_t>(source, PLANAR_A,
+                                  [](int x, int y) { return 3 + x * 31 + y * 19; });
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  SwapUV filter(clip, environment.get());
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  EXPECT_EQ(read_frame_plane_active<std::uint8_t>(output, PLANAR_U),
+            read_frame_plane_active<std::uint8_t>(source, PLANAR_V));
+  EXPECT_EQ(read_frame_plane_active<std::uint8_t>(output, PLANAR_V),
+            read_frame_plane_active<std::uint8_t>(source, PLANAR_U));
+  EXPECT_EQ(read_frame_plane_active<std::uint8_t>(output, PLANAR_A),
+            read_frame_plane_active<std::uint8_t>(source, PLANAR_A));
+  EXPECT_EQ(output->GetHeight(PLANAR_U), height / 2);
+  EXPECT_EQ(output->GetHeight(PLANAR_A), height);
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
 class SwapUvToYTest : public ::testing::TestWithParam<int> {};
 
 TEST_P(SwapUvToYTest, ExtractsSubsampledPlanarChannel) {
@@ -113,6 +224,187 @@ TEST_P(SwapUvToYTest, ExtractsSubsampledPlanarChannel) {
   EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
   EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
 }
+
+class SwapUvToY16Test : public ::testing::TestWithParam<int> {};
+
+TEST_P(SwapUvToY16Test, ExtractsSixteenBitYuv420ChannelWithSubsampledGeometry) {
+  const int mode = GetParam();
+  AviSynthEnvironment environment;
+  constexpr int width = 10;
+  constexpr int height = 4;
+  const auto vi =
+      make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_YUV420P16, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(source, 0x91, PLANAR_Y);
+  fill_plane_full_pitch(source, 0xa2, PLANAR_U);
+  fill_plane_full_pitch(source, 0xb3, PLANAR_V);
+  write_frame_plane<std::uint16_t>(source, PLANAR_U,
+                                   [](int x, int y) { return 1000 + x * 401 + y * 701; });
+  write_frame_plane<std::uint16_t>(source, PLANAR_V,
+                                   [](int x, int y) { return 60000 - x * 307 - y * 503; });
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  SwapUVToY filter(clip, mode, environment.get());
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  EXPECT_EQ(output->GetRowSize() / static_cast<int>(sizeof(std::uint16_t)), width / 2);
+  EXPECT_EQ(output->GetHeight(), height / 2);
+  const int source_plane = mode == SwapUVToY::UToY8 ? PLANAR_U : PLANAR_V;
+  EXPECT_EQ(read_frame_plane_active<std::uint16_t>(output, DEFAULT_PLANE),
+            read_frame_plane_active<std::uint16_t>(source, source_plane));
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+INSTANTIATE_TEST_SUITE_P(Channels, SwapUvToY16Test,
+                         ::testing::Values(SwapUVToY::UToY8, SwapUVToY::VToY8),
+                         [](const ::testing::TestParamInfo<int>& info) {
+                           return info.param == SwapUVToY::UToY8 ? "UToY8" : "VToY8";
+                         });
+
+class PackedRgbExtractTest : public ::testing::TestWithParam<int> {};
+
+TEST_P(PackedRgbExtractTest, ExtractsBgr24ChannelInLogicalTopDownOrder) {
+  const int mode = GetParam();
+  AviSynthEnvironment environment;
+  constexpr int width = 5;
+  constexpr int height = 3;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_BGR24, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(source, 0xc4, DEFAULT_PLANE);
+  write_frame_plane<std::uint8_t>(source, DEFAULT_PLANE, [&](int byte, int raw_y) {
+    const int x = byte / 3;
+    const int channel = byte % 3;
+    const int logical_y = height - 1 - raw_y;
+    return static_cast<std::uint8_t>(10 + x * 17 + logical_y * 29 + channel * 41);
+  });
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  SwapUVToY filter(clip, mode, environment.get());
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  const int channel = mode == SwapUVToY::BToY8 ? 0 : mode == SwapUVToY::GToY8 ? 1 : 2;
+  const auto values = read_frame_plane_active<std::uint8_t>(output, DEFAULT_PLANE);
+  ASSERT_EQ(values.size(), static_cast<std::size_t>(width * height));
+  for (int y = 0; y < height; ++y) {
+    for (int x = 0; x < width; ++x) {
+      EXPECT_EQ(values[static_cast<std::size_t>(y * width + x)],
+                static_cast<std::uint8_t>(10 + x * 17 + y * 29 + channel * 41))
+          << "channel=" << channel << " x=" << x << " y=" << y;
+    }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+INSTANTIATE_TEST_SUITE_P(Channels, PackedRgbExtractTest,
+                         ::testing::Values(SwapUVToY::BToY8, SwapUVToY::GToY8,
+                                           SwapUVToY::RToY8),
+                         [](const ::testing::TestParamInfo<int>& info) {
+                           return info.param == SwapUVToY::BToY8
+                                      ? "BToY8"
+                                      : info.param == SwapUVToY::GToY8 ? "GToY8" : "RToY8";
+                         });
+
+class PackedRgb48ExtractTest : public ::testing::TestWithParam<int> {};
+
+TEST_P(PackedRgb48ExtractTest, ExtractsBgr48ChannelWithSixteenBitSamples) {
+  const int mode = GetParam();
+  AviSynthEnvironment environment;
+  constexpr int width = 3;
+  constexpr int height = 3;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_BGR48, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(source, 0xd5, DEFAULT_PLANE);
+  write_frame_plane<std::uint16_t>(source, DEFAULT_PLANE, [&](int component, int raw_y) {
+    const int x = component / 3;
+    const int channel = component % 3;
+    const int logical_y = height - 1 - raw_y;
+    return static_cast<std::uint16_t>(1000 + x * 7001 + logical_y * 3001 + channel * 5003);
+  });
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  SwapUVToY filter(clip, mode, environment.get());
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  const int channel = mode == SwapUVToY::BToY8 ? 0 : mode == SwapUVToY::GToY8 ? 1 : 2;
+  const auto values = read_frame_plane_active<std::uint16_t>(output, DEFAULT_PLANE);
+  ASSERT_EQ(values.size(), static_cast<std::size_t>(width * height));
+  for (int y = 0; y < height; ++y) {
+    for (int x = 0; x < width; ++x) {
+      EXPECT_EQ(values[static_cast<std::size_t>(y * width + x)],
+                static_cast<std::uint16_t>(1000 + x * 7001 + y * 3001 + channel * 5003))
+          << "channel=" << channel << " x=" << x << " y=" << y;
+    }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+INSTANTIATE_TEST_SUITE_P(Channels, PackedRgb48ExtractTest,
+                         ::testing::Values(SwapUVToY::BToY8, SwapUVToY::GToY8,
+                                           SwapUVToY::RToY8),
+                         [](const ::testing::TestParamInfo<int>& info) {
+                           return info.param == SwapUVToY::BToY8
+                                      ? "BToY8"
+                                      : info.param == SwapUVToY::GToY8 ? "GToY8" : "RToY8";
+                         });
+
+class PlanarRgb16ExtractTest : public ::testing::TestWithParam<int> {};
+
+TEST_P(PlanarRgb16ExtractTest, ExtractsGbrPlaneAsSixteenBitY) {
+  const int mode = GetParam();
+  AviSynthEnvironment environment;
+  constexpr int width = 5;
+  constexpr int height = 3;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_RGBP16, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  for (const int plane : {PLANAR_G, PLANAR_B, PLANAR_R}) {
+    fill_plane_full_pitch(source, static_cast<std::uint8_t>(0x40 + plane * 0x13), plane);
+  }
+  write_frame_plane<std::uint16_t>(source, PLANAR_G,
+                                   [](int x, int y) { return 3000 + x * 401 + y * 701; });
+  write_frame_plane<std::uint16_t>(source, PLANAR_B,
+                                   [](int x, int y) { return 9000 + x * 503 + y * 607; });
+  write_frame_plane<std::uint16_t>(source, PLANAR_R,
+                                   [](int x, int y) { return 15000 + x * 307 + y * 409; });
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  SwapUVToY filter(clip, mode, environment.get());
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  const int source_plane = mode == SwapUVToY::BToY8
+                               ? PLANAR_B
+                               : mode == SwapUVToY::GToY8 ? PLANAR_G : PLANAR_R;
+  EXPECT_EQ(read_frame_plane_active<std::uint16_t>(output, DEFAULT_PLANE),
+            read_frame_plane_active<std::uint16_t>(source, source_plane));
+  EXPECT_EQ(output->GetRowSize() / static_cast<int>(sizeof(std::uint16_t)), width);
+  EXPECT_EQ(output->GetHeight(), height);
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+INSTANTIATE_TEST_SUITE_P(Channels, PlanarRgb16ExtractTest,
+                         ::testing::Values(SwapUVToY::BToY8, SwapUVToY::GToY8,
+                                           SwapUVToY::RToY8),
+                         [](const ::testing::TestParamInfo<int>& info) {
+                           return info.param == SwapUVToY::BToY8
+                                      ? "BToY8"
+                                      : info.param == SwapUVToY::GToY8 ? "GToY8" : "RToY8";
+                         });
 
 INSTANTIATE_TEST_SUITE_P(Channels, SwapUvToYTest,
                          ::testing::Values(SwapUVToY::UToY8, SwapUVToY::VToY8),
