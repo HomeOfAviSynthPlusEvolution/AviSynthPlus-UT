@@ -18,6 +18,8 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <sstream>
+#include <string>
 #include <vector>
 
 namespace {
@@ -28,6 +30,7 @@ using avsut::test::FrameSnapshot;
 using avsut::test::make_video_info;
 using avsut::test::StaticFrameClip;
 using avsut::test::VideoInfoSpec;
+using avsut::test::write_frame_plane;
 
 template <typename Pixel>
 void fill_ramp(PVideoFrame& frame, int width, int height, int plane = PLANAR_Y) {
@@ -70,6 +73,18 @@ Pixel expected_integer_pixel(const PVideoFrame& source, int x, int y, int width,
       (sum >= 0) ? (sum + divisor / 2) / divisor : (sum - divisor / 2) / divisor;
   const long long clipped = std::clamp(rounded + bias, 0LL, (1LL << bits_per_pixel) - 1);
   return static_cast<Pixel>(clipped);
+}
+
+template <typename Pixel, std::size_t Size>
+std::string matrix_text(const std::array<Pixel, Size>& matrix) {
+  std::ostringstream stream;
+  for (std::size_t i = 0; i < matrix.size(); ++i) {
+    if (i != 0) {
+      stream << ' ';
+    }
+    stream << matrix[i];
+  }
+  return stream.str();
 }
 
 TEST(GeneralConvolution, AppliesThreeByThreeIntegerKernelWithReplicatedEdges) {
@@ -173,6 +188,157 @@ TEST(GeneralConvolution, AppliesThreeByThreeFloatKernelWithReplicatedEdges) {
   EXPECT_NE(output->CheckMemory(), 1);
   EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
   EXPECT_TRUE(FrameSnapshot::capture(source, vi) == source_before);
+}
+
+TEST(GeneralConvolution, AppliesSevenBySevenIntegerKernelToSixteenBitYuv420Luma) {
+  AviSynthEnvironment environment;
+  constexpr int width = 8;
+  constexpr int height = 6;
+  const auto vi = make_video_info(
+      VideoInfoSpec{width, height, VideoInfo::CS_YUV420P16, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(source, 0x4b, PLANAR_Y);
+  fill_ramp<std::uint16_t>(source, width, height, PLANAR_Y);
+  for (const int plane : {PLANAR_U, PLANAR_V}) {
+    fill_plane_full_pitch(source, static_cast<std::uint8_t>(0x60 + plane * 0x11), plane);
+    write_frame_plane<std::uint16_t>(source, plane, [plane](int x, int y) {
+      return 24000 + plane * 900 + x * 17 + y * 23;
+    });
+  }
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+  std::array<int, 49> matrix{};
+  matrix[24] = 1;
+
+  GeneralConvolution filter(clip, 1.0, 3.0f, matrix_text(matrix).c_str(), false, true, false,
+                            false, environment.get());
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  for (int y = 0; y < height; ++y) {
+    const auto* source_row = reinterpret_cast<const std::uint16_t*>(
+        source->GetReadPtr(PLANAR_Y) + y * source->GetPitch(PLANAR_Y));
+    const auto* output_row = reinterpret_cast<const std::uint16_t*>(
+        output->GetReadPtr(PLANAR_Y) + y * output->GetPitch(PLANAR_Y));
+    for (int x = 0; x < width; ++x) {
+      const auto expected = expected_integer_pixel<std::uint16_t>(
+          source, x, y, width, height, matrix, 1, 3, 16);
+      EXPECT_EQ(output_row[x], expected) << "x=" << x << " y=" << y;
+      EXPECT_EQ(output_row[x], static_cast<std::uint16_t>(source_row[x] + 3));
+    }
+  }
+  for (const int plane : {PLANAR_U, PLANAR_V}) {
+    const int plane_width = output->GetRowSize(plane) / static_cast<int>(sizeof(std::uint16_t));
+    const int plane_height = output->GetHeight(plane);
+    for (int y = 0; y < plane_height; ++y) {
+      const auto* source_row = reinterpret_cast<const std::uint16_t*>(
+          source->GetReadPtr(plane) + y * source->GetPitch(plane));
+      const auto* output_row = reinterpret_cast<const std::uint16_t*>(
+          output->GetReadPtr(plane) + y * output->GetPitch(plane));
+      for (int x = 0; x < plane_width; ++x) {
+        EXPECT_EQ(output_row[x], source_row[x]) << "plane=" << plane << " x=" << x << " y=" << y;
+      }
+    }
+  }
+  EXPECT_EQ(output->GetRowSize(PLANAR_U), width / 2 * static_cast<int>(sizeof(std::uint16_t)));
+  EXPECT_EQ(output->GetHeight(PLANAR_U), height / 2);
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+TEST(GeneralConvolution, AppliesNineByNineFloatKernelToAllYuv444Planes) {
+  AviSynthEnvironment environment;
+  constexpr int width = 5;
+  constexpr int height = 4;
+  const auto vi = make_video_info(
+      VideoInfoSpec{width, height, VideoInfo::CS_YUV444PS, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    fill_plane_full_pitch(source, static_cast<std::uint8_t>(0x82 + plane * 0x13), plane);
+    write_frame_plane<float>(source, plane, [plane](int x, int y) {
+      return (plane == PLANAR_Y ? 0.1F : -0.2F) + x * 0.07F + y * 0.03F;
+    });
+  }
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+  std::array<float, 81> matrix{};
+  matrix[40] = 1.0F;
+
+  GeneralConvolution filter(clip, 1.0, 0.125f, matrix_text(matrix).c_str(), false, true, true,
+                            false, environment.get());
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    const int plane_width = output->GetRowSize(plane) / static_cast<int>(sizeof(float));
+    const int plane_height = output->GetHeight(plane);
+    for (int y = 0; y < plane_height; ++y) {
+      const auto* source_row = reinterpret_cast<const float*>(
+          source->GetReadPtr(plane) + y * source->GetPitch(plane));
+      const auto* output_row = reinterpret_cast<const float*>(
+          output->GetReadPtr(plane) + y * output->GetPitch(plane));
+      for (int x = 0; x < plane_width; ++x) {
+        EXPECT_FLOAT_EQ(output_row[x], source_row[x] + 0.125F)
+            << "plane=" << plane << " x=" << x << " y=" << y;
+      }
+    }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+TEST(GeneralConvolution, SelectsLumaAndAlphaPlanesForYuva420) {
+  AviSynthEnvironment environment;
+  constexpr int width = 8;
+  constexpr int height = 6;
+  const auto vi = make_video_info(
+      VideoInfoSpec{width, height, VideoInfo::CS_YUVA420, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V, PLANAR_A}) {
+    fill_plane_full_pitch(source, static_cast<std::uint8_t>(0x31 + plane * 0x17), plane);
+    write_frame_plane<std::uint8_t>(source, plane, [plane](int x, int y) {
+      return 5 + plane * 19 + x * 11 + y * 13;
+    });
+  }
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  GeneralConvolution filter(clip, 1.0, 5.0f, "0 0 0 0 1 0 0 0 0", false, true, false, true,
+                            environment.get());
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  for (const int plane : {PLANAR_Y, PLANAR_A}) {
+    const int plane_width = output->GetRowSize(plane);
+    const int plane_height = output->GetHeight(plane);
+    for (int y = 0; y < plane_height; ++y) {
+      const auto* source_row = source->GetReadPtr(plane) + y * source->GetPitch(plane);
+      const auto* output_row = output->GetReadPtr(plane) + y * output->GetPitch(plane);
+      for (int x = 0; x < plane_width; ++x) {
+        EXPECT_EQ(output_row[x], static_cast<std::uint8_t>(std::min(255, source_row[x] + 5)))
+            << "plane=" << plane << " x=" << x << " y=" << y;
+      }
+    }
+  }
+  for (const int plane : {PLANAR_U, PLANAR_V}) {
+    const int plane_width = output->GetRowSize(plane);
+    const int plane_height = output->GetHeight(plane);
+    for (int y = 0; y < plane_height; ++y) {
+      const auto* source_row = source->GetReadPtr(plane) + y * source->GetPitch(plane);
+      const auto* output_row = output->GetReadPtr(plane) + y * output->GetPitch(plane);
+      for (int x = 0; x < plane_width; ++x) {
+        EXPECT_EQ(output_row[x], source_row[x]) << "plane=" << plane << " x=" << x << " y=" << y;
+      }
+    }
+  }
+  EXPECT_EQ(output->GetRowSize(PLANAR_U), width / 2);
+  EXPECT_EQ(output->GetHeight(PLANAR_U), height / 2);
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
 }
 
 }  // namespace
