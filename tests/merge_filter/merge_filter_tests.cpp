@@ -26,7 +26,9 @@ using avsut::test::fill_plane_full_pitch;
 using avsut::test::FrameSequenceClip;
 using avsut::test::FrameSnapshot;
 using avsut::test::make_video_info;
+using avsut::test::video_frame_planes;
 using avsut::test::VideoInfoSpec;
+using avsut::test::write_frame_plane;
 
 enum class MergeOperation { All, Luma, Chroma };
 
@@ -97,6 +99,69 @@ void expect_plane(const PVideoFrame& first, const PVideoFrame& second, const PVi
       EXPECT_EQ(output_row[x], expected) << "plane=" << plane << " x=" << x << " y=" << y;
     }
   }
+}
+
+struct MergeFormatCase {
+  int pixel_type;
+  int width;
+  int height;
+  MergeOperation operation;
+  float weight;
+  const char* name;
+};
+
+void PrintTo(const MergeFormatCase& test_case, std::ostream* stream) { *stream << test_case.name; }
+
+std::vector<PVideoFrame> make_format_frames(AviSynthEnvironment& environment, const VideoInfo& vi,
+                                            std::uint8_t base) {
+  std::vector<PVideoFrame> frames;
+  for (int frame_index = 0; frame_index < vi.num_frames; ++frame_index) {
+    PVideoFrame frame = environment.get()->NewVideoFrame(vi);
+    for (const int plane : video_frame_planes(vi)) {
+      fill_plane_full_pitch(frame,
+                            static_cast<std::uint8_t>(base + plane * 19 + frame_index * 31),
+                            plane);
+      write_frame_plane<std::uint8_t>(frame, plane, [base, plane, frame_index](int x, int y) {
+        return static_cast<std::uint8_t>(base + plane * 19 + frame_index * 31 + x * 7 + y * 13);
+      });
+    }
+    frames.push_back(frame);
+  }
+  return frames;
+}
+
+bool merge_format_plane(const MergeFormatCase& test_case, const VideoInfo& vi, int plane) {
+  switch (test_case.operation) {
+    case MergeOperation::All:
+      return true;
+    case MergeOperation::Luma:
+      return plane == PLANAR_Y;
+    case MergeOperation::Chroma:
+      return plane == PLANAR_U || plane == PLANAR_V || (vi.IsYUVA() && plane == PLANAR_A);
+  }
+  return false;
+}
+
+PVideoFrame run_format_filter(const MergeFormatCase& test_case, PClip child, PClip other,
+                              IScriptEnvironment* environment) {
+  switch (test_case.operation) {
+    case MergeOperation::All: {
+      MergeAll filter(child, other, test_case.weight, environment);
+      EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+      return filter.GetFrame(1, environment);
+    }
+    case MergeOperation::Luma: {
+      MergeLuma filter(child, other, test_case.weight, environment);
+      EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+      return filter.GetFrame(1, environment);
+    }
+    case MergeOperation::Chroma: {
+      MergeChroma filter(child, other, test_case.weight, environment);
+      EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+      return filter.GetFrame(1, environment);
+    }
+  }
+  throw std::logic_error("unknown merge format operation");
 }
 
 PVideoFrame run_filter(const MergeFilterCase& test_case, PClip child, PClip other,
@@ -176,6 +241,58 @@ TEST(MergeFilter, ZeroWeightDoesNotRequestSecondClip) {
   EXPECT_EQ(snapshot_frames(first_frames, vi), first_snapshots);
   EXPECT_EQ(snapshot_frames(second_frames, vi), second_snapshots);
 }
+
+class MergeFormatFilterTest : public ::testing::TestWithParam<MergeFormatCase> {};
+
+TEST_P(MergeFormatFilterTest, CoversSubsampledAndAlphaPlanesAtNonEndpointWeight) {
+  const auto& test_case = GetParam();
+  AviSynthEnvironment environment;
+  const auto vi = make_video_info(VideoInfoSpec{test_case.width, test_case.height,
+                                                test_case.pixel_type, 2, 25, 1});
+  auto first_frames = make_format_frames(environment, vi, 23);
+  auto second_frames = make_format_frames(environment, vi, 147);
+  const auto first_snapshots = snapshot_frames(first_frames, vi);
+  const auto second_snapshots = snapshot_frames(second_frames, vi);
+  auto* first_clip = new FrameSequenceClip(vi, first_frames);
+  auto* second_clip = new FrameSequenceClip(vi, second_frames);
+  const PClip child(first_clip);
+  const PClip other(second_clip);
+
+  const PVideoFrame output = run_format_filter(test_case, child, other, environment.get());
+  for (const int plane : video_frame_planes(vi)) {
+    expect_plane(first_frames[1], second_frames[1], output, plane,
+                 merge_format_plane(test_case, vi, plane), test_case.weight);
+  }
+
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(first_clip->frame_requests(), std::vector<int>{1});
+  EXPECT_EQ(second_clip->frame_requests(), std::vector<int>{1});
+  EXPECT_EQ(snapshot_frames(first_frames, vi), first_snapshots);
+  EXPECT_EQ(snapshot_frames(second_frames, vi), second_snapshots);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    FormatCases, MergeFormatFilterTest,
+    ::testing::Values(
+        MergeFormatCase{VideoInfo::CS_YV12, 8, 4, MergeOperation::All, 0.25f,
+                        "Yv12_Width8_Height4_All_Weight25"},
+        MergeFormatCase{VideoInfo::CS_YV12, 8, 4, MergeOperation::Luma, 0.25f,
+                        "Yv12_Width8_Height4_Luma_Weight25"},
+        MergeFormatCase{VideoInfo::CS_YV12, 8, 4, MergeOperation::Chroma, 0.25f,
+                        "Yv12_Width8_Height4_Chroma_Weight25"},
+        MergeFormatCase{VideoInfo::CS_YV16, 8, 5, MergeOperation::All, 0.25f,
+                        "Yv16_Width8_Height5_All_Weight25"},
+        MergeFormatCase{VideoInfo::CS_YV16, 8, 5, MergeOperation::Luma, 0.25f,
+                        "Yv16_Width8_Height5_Luma_Weight25"},
+        MergeFormatCase{VideoInfo::CS_YV16, 8, 5, MergeOperation::Chroma, 0.25f,
+                        "Yv16_Width8_Height5_Chroma_Weight25"},
+        MergeFormatCase{VideoInfo::CS_YUVA420, 8, 4, MergeOperation::All, 0.25f,
+                        "Yuva420_Width8_Height4_All_Weight25"},
+        MergeFormatCase{VideoInfo::CS_YUVA420, 8, 4, MergeOperation::Luma, 0.25f,
+                        "Yuva420_Width8_Height4_Luma_Weight25"},
+        MergeFormatCase{VideoInfo::CS_YUVA420, 8, 4, MergeOperation::Chroma, 0.25f,
+                        "Yuva420_Width8_Height4_Chroma_Weight25"}),
+    [](const ::testing::TestParamInfo<MergeFormatCase>& info) { return info.param.name; });
 
 INSTANTIATE_TEST_SUITE_P(
     Operations, MergeFilterTest,
