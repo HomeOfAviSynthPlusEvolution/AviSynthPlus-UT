@@ -27,6 +27,8 @@ using avsut::test::FrameSnapshot;
 using avsut::test::make_video_info;
 using avsut::test::StaticFrameClip;
 using avsut::test::VideoInfoSpec;
+using avsut::test::read_frame_plane_active;
+using avsut::test::write_frame_plane;
 
 template <typename Pixel>
 void write_values(PVideoFrame& frame, int plane, int width, int height,
@@ -113,6 +115,48 @@ TEST(ColorYUV, ConvertsLimitedLumaToFullRange) {
   EXPECT_NE(output->CheckMemory(), 1);
   const std::vector<int> expected_requests{0, 0};
   EXPECT_EQ(source_clip->frame_requests(), expected_requests);
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+TEST(ColorYUV, AppliesOffsetsToYuva420AndCopiesAlpha) {
+  AviSynthEnvironment environment;
+  constexpr int width = 8;
+  constexpr int height = 6;
+  const auto vi = make_video_info(
+      VideoInfoSpec{width, height, VideoInfo::CS_YUVA420, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V, PLANAR_A}) {
+    fill_plane_full_pitch(source, static_cast<std::uint8_t>(0x44 + plane * 0x15), plane);
+    write_frame_plane<std::uint8_t>(source, plane, [plane](int x, int y) {
+      return 5 + plane * 23 + x * 17 + y * 11;
+    });
+  }
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  const auto alpha_before = read_frame_plane_active<std::uint8_t>(source, PLANAR_A);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  ColorYUV filter = make_offset_filter(clip, environment.get());
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    const int plane_width = output->GetRowSize(plane);
+    const int plane_height = output->GetHeight(plane);
+    const int offset = plane == PLANAR_Y ? 16 : plane == PLANAR_U ? -16 : 32;
+    for (int y = 0; y < plane_height; ++y) {
+      const auto* source_row = source->GetReadPtr(plane) + y * source->GetPitch(plane);
+      const auto* output_row = output->GetReadPtr(plane) + y * output->GetPitch(plane);
+      for (int x = 0; x < plane_width; ++x) {
+        const int expected = std::clamp(static_cast<int>(source_row[x]) + offset, 0, 255);
+        EXPECT_EQ(output_row[x], expected) << "plane=" << plane << " x=" << x << " y=" << y;
+      }
+    }
+  }
+  EXPECT_EQ(read_frame_plane_active<std::uint8_t>(output, PLANAR_A), alpha_before);
+  EXPECT_EQ(output->GetRowSize(PLANAR_U), width / 2);
+  EXPECT_EQ(output->GetHeight(PLANAR_U), height / 2);
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>({0, 0}));
   EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
 }
 
