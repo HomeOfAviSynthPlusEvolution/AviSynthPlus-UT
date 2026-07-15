@@ -35,11 +35,25 @@ void add_planar_matrix_variants(std::vector<PlanarMatrixCase>& cases,
 std::vector<PlanarMatrixCase> planar_matrix_cases() {
   std::vector<PlanarMatrixCase> cases;
   add_planar_matrix_variants(cases, PlanarMatrixDirection::YuvToRgb, AVS_MATRIX_BT709, false, true,
-                             {"f325006d548ebb54", "facfe79dc019c4b8", "e4032aafc3eff0f3"});
+                             {"9220436c8c8beea6", "9dca5bdef66702d1", "65ec7e8bf2be60ca"});
+  add_planar_matrix_variants(cases, PlanarMatrixDirection::YuvToRgb, AVS_MATRIX_BT470_BG, true, true,
+                             {"34591881d47524ae", "9d30f5cdc314dbbb", "a9be29014e3c2cdc"});
+  add_planar_matrix_variants(cases, PlanarMatrixDirection::YuvToRgb, AVS_MATRIX_BT470_BG, true, false,
+                             {"22e3df3aa66892f0", "740fccc45c01d676", "340f68e1baac4ca5"});
+  add_planar_matrix_variants(cases, PlanarMatrixDirection::YuvToRgb, AVS_MATRIX_BT470_BG, false, false,
+                             {"a4104bc5c63ff6e8", "6184e70f37f69207", "43739202bd94f0be"});
+  add_planar_matrix_variants(cases, PlanarMatrixDirection::YuvToRgb, AVS_MATRIX_BT2020_NCL, false,
+                             true, {"89c7146fd04957ad", "c9b6c786aab11e8b", "cb0bf966f007078e"}, 10);
+  add_planar_matrix_variants(cases, PlanarMatrixDirection::YuvToRgb, AVS_MATRIX_BT2020_CL, true,
+                             false, {"3c5c71c1ed9df96d", "11d3c48091578d0a", "d4b8af3d4b390109"}, 16);
+  add_planar_matrix_variants(cases, PlanarMatrixDirection::YuvToRgb, AVS_MATRIX_BT470_M, false, true,
+                             {"07872cb96b268fdf", "9dca5bdef66702d1", "3f577d3ee1d1ff5a"});
+  add_planar_matrix_variants(cases, PlanarMatrixDirection::YuvToRgb, AVS_MATRIX_ST240_M, true, true,
+                             {"b907cb80f155fdb3", "1593f46b40af3cd4", "d460e9bc7069605a"});
   add_planar_matrix_variants(cases, PlanarMatrixDirection::RgbToYuv, AVS_MATRIX_BT470_BG, true,
                              false, {"31d45deab1a469cd", "5daee92036e3c06d", "3d34e7e301d4927a"});
   add_planar_matrix_variants(cases, PlanarMatrixDirection::YuvToRgb, AVS_MATRIX_BT709, true, false,
-                             {"154e45e386b6f1d9", "df3002d69a0f5b05", "bcb348ef550033c0"}, 10);
+                             {"6085b145b00a60c1", "68dddb121ad246fd", "90795b6cae10d8de"}, 10);
   add_planar_matrix_variants(cases, PlanarMatrixDirection::RgbToYuv, AVS_MATRIX_BT470_BG, false, true,
                              {"65e2a12fe84cea1d", "3379d27f592ddd5c", "8d424504f0c3799d"}, 16);
   return cases;

@@ -60,7 +60,20 @@ inline const char* planar_direction_name(PlanarMatrixDirection direction) {
 }
 
 inline const char* planar_matrix_name(int matrix) {
-  return matrix == AVS_MATRIX_BT709 ? "Bt709" : "Bt601";
+  switch (matrix) {
+    case AVS_MATRIX_BT709:
+      return "Bt709";
+    case AVS_MATRIX_BT2020_NCL:
+      return "Bt2020Ncl";
+    case AVS_MATRIX_BT2020_CL:
+      return "Bt2020Cl";
+    case AVS_MATRIX_BT470_M:
+      return "Bt470M";
+    case AVS_MATRIX_ST240_M:
+      return "St240M";
+    default:
+      return "Bt601Family";
+  }
 }
 
 inline std::string planar_matrix_variant_name(const std::string& name) {
@@ -127,13 +140,29 @@ inline int planar_round_symmetric(double value) {
 }
 
 inline void planar_kr_kb(int matrix, double& kr, double& kb) {
-  if (matrix == AVS_MATRIX_BT709) {
-    kr = 0.2126;
-    kb = 0.0722;
-    return;
+  switch (matrix) {
+    case AVS_MATRIX_BT709:
+      kr = 0.2126;
+      kb = 0.0722;
+      return;
+    case AVS_MATRIX_BT2020_NCL:
+    case AVS_MATRIX_BT2020_CL:
+      kr = 0.2627;
+      kb = 0.0593;
+      return;
+    case AVS_MATRIX_BT470_M:
+      kr = 0.3;
+      kb = 0.11;
+      return;
+    case AVS_MATRIX_ST240_M:
+      kr = 0.212;
+      kb = 0.087;
+      return;
+    default:
+      kr = 0.299;
+      kb = 0.114;
+      return;
   }
-  kr = 0.299;
-  kb = 0.114;
 }
 
 inline PlanarMatrixCoefficients make_planar_yuv_to_rgb_coefficients(int matrix, bool source_full,
@@ -244,9 +273,86 @@ inline std::uint16_t planar_shifted_component(int coefficient_a, int coefficient
 
 template <typename T>
 inline void fill_planar_matrix_inputs(PlaneView<T> plane0, PlaneView<T> plane1,
-                                       PlaneView<T> plane2, int bit_depth) {
+                                       PlaneView<T> plane2, int bit_depth,
+                                       bool yuv_to_rgb = false, bool source_full = true) {
   const auto scale = std::uint32_t{1} << (bit_depth - 8);
   const auto maximum = (std::uint32_t{1} << bit_depth) - 1U;
+  if (yuv_to_rgb) {
+    const auto y_low = source_full ? 0U : 16U * scale;
+    const auto y_high = source_full ? maximum : 235U * scale;
+    const auto uv_low = source_full ? 0U : 16U * scale;
+    const auto uv_high = source_full ? maximum : 240U * scale;
+    const auto uv_mid = std::uint32_t{128} * scale;
+    const auto y_mid = source_full ? (maximum + 1U) / 2U : 128U * scale;
+    for (std::size_t row = 0; row < plane0.height(); ++row) {
+      for (std::size_t column = 0; column < plane0.width(); ++column) {
+        const auto anchor = (column + row * 3) % 12;
+        switch (anchor) {
+          case 0:
+            plane0.row(row)[column] = static_cast<T>(y_mid);
+            plane1.row(row)[column] = static_cast<T>(uv_mid);
+            plane2.row(row)[column] = static_cast<T>(uv_mid);
+            break;
+          case 1:
+            plane0.row(row)[column] = static_cast<T>(y_low);
+            plane1.row(row)[column] = static_cast<T>(uv_mid);
+            plane2.row(row)[column] = static_cast<T>(uv_mid);
+            break;
+          case 2:
+            plane0.row(row)[column] = static_cast<T>(y_high);
+            plane1.row(row)[column] = static_cast<T>(uv_mid);
+            plane2.row(row)[column] = static_cast<T>(uv_mid);
+            break;
+          case 3:
+            plane0.row(row)[column] = static_cast<T>(y_mid);
+            plane1.row(row)[column] = static_cast<T>(uv_low);
+            plane2.row(row)[column] = static_cast<T>(uv_mid);
+            break;
+          case 4:
+            plane0.row(row)[column] = static_cast<T>(y_mid);
+            plane1.row(row)[column] = static_cast<T>(uv_high);
+            plane2.row(row)[column] = static_cast<T>(uv_mid);
+            break;
+          case 5:
+            plane0.row(row)[column] = static_cast<T>(y_mid);
+            plane1.row(row)[column] = static_cast<T>(uv_mid);
+            plane2.row(row)[column] = static_cast<T>(uv_low);
+            break;
+          case 6:
+            plane0.row(row)[column] = static_cast<T>(y_mid);
+            plane1.row(row)[column] = static_cast<T>(uv_mid);
+            plane2.row(row)[column] = static_cast<T>(uv_high);
+            break;
+          case 7:
+            plane0.row(row)[column] = static_cast<T>(y_high);
+            plane1.row(row)[column] = static_cast<T>(uv_high);
+            plane2.row(row)[column] = static_cast<T>(uv_high);
+            break;
+          case 8:
+            plane0.row(row)[column] = static_cast<T>(y_low);
+            plane1.row(row)[column] = static_cast<T>(uv_low);
+            plane2.row(row)[column] = static_cast<T>(uv_low);
+            break;
+          case 9:
+            plane0.row(row)[column] = static_cast<T>(y_mid);
+            plane1.row(row)[column] = static_cast<T>(uv_low);
+            plane2.row(row)[column] = static_cast<T>(uv_high);
+            break;
+          case 10:
+            plane0.row(row)[column] = static_cast<T>(y_mid);
+            plane1.row(row)[column] = static_cast<T>(uv_high);
+            plane2.row(row)[column] = static_cast<T>(uv_low);
+            break;
+          default:
+            plane0.row(row)[column] = static_cast<T>(64U * scale);
+            plane1.row(row)[column] = static_cast<T>(96U * scale);
+            plane2.row(row)[column] = static_cast<T>(192U * scale);
+            break;
+        }
+      }
+    }
+    return;
+  }
   const std::array<std::uint32_t, 16> anchors{
       0U,       1U,       15U * scale,  16U * scale, 17U * scale, 63U * scale,
       64U * scale, 96U * scale, 127U * scale, 128U * scale, 192U * scale,
@@ -400,7 +506,9 @@ inline void run_planar_matrix_case_typed(const PlanarMatrixCase& test_case) {
   GuardedVideoBuffer<T> actual0(test_case.width, test_case.height, test_case.destination_pitch, 64);
   GuardedVideoBuffer<T> actual1(test_case.width, test_case.height, test_case.destination_pitch, 64);
   GuardedVideoBuffer<T> actual2(test_case.width, test_case.height, test_case.destination_pitch, 64);
-  fill_planar_matrix_inputs(source0.view(), source1.view(), source2.view(), test_case.bit_depth);
+  fill_planar_matrix_inputs(source0.view(), source1.view(), source2.view(), test_case.bit_depth,
+                            test_case.direction == PlanarMatrixDirection::YuvToRgb,
+                            test_case.source_full);
   const auto source0_snapshot = source0.snapshot_active();
   const auto source1_snapshot = source1.snapshot_active();
   const auto source2_snapshot = source2.snapshot_active();
