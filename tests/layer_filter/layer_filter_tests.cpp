@@ -26,14 +26,24 @@ using avsut::test::fill_plane_full_pitch;
 using avsut::test::FrameSequenceClip;
 using avsut::test::FrameSnapshot;
 using avsut::test::make_video_info;
+using avsut::test::read_frame_plane_active;
 using avsut::test::StaticFrameClip;
 using avsut::test::VideoInfoSpec;
+using avsut::test::video_frame_planes;
+using avsut::test::write_frame_plane;
 
 struct Rgb32Pixel {
   std::uint8_t blue;
   std::uint8_t green;
   std::uint8_t red;
   std::uint8_t alpha;
+};
+
+struct Rgb64Pixel {
+  std::uint16_t blue;
+  std::uint16_t green;
+  std::uint16_t red;
+  std::uint16_t alpha;
 };
 
 void write_rgb32(PVideoFrame& frame, const std::vector<Rgb32Pixel>& pixels) {
@@ -48,6 +58,18 @@ void write_rgb32(PVideoFrame& frame, const std::vector<Rgb32Pixel>& pixels) {
       row[4 * x + 1] = pixel.green;
       row[4 * x + 2] = pixel.red;
       row[4 * x + 3] = pixel.alpha;
+    }
+  }
+}
+
+void write_bgr64(PVideoFrame& frame, const std::vector<Rgb64Pixel>& pixels) {
+  const int pitch = frame->GetPitch();
+  const int width = frame->GetRowSize() / static_cast<int>(sizeof(Rgb64Pixel));
+  ASSERT_EQ(pixels.size(), static_cast<std::size_t>(width));
+  for (int y = 0; y < frame->GetHeight(); ++y) {
+    auto* row = reinterpret_cast<Rgb64Pixel*>(frame->GetWritePtr() + y * pitch);
+    for (int x = 0; x < width; ++x) {
+      row[x] = pixels[static_cast<std::size_t>(x)];
     }
   }
 }
@@ -282,6 +304,271 @@ std::uint8_t layer_add_reference(std::uint8_t base, std::uint8_t overlay,
   const auto numerator = static_cast<std::uint32_t>(base) * (max_value - effective_alpha) +
                          static_cast<std::uint32_t>(overlay) * effective_alpha + half;
   return static_cast<std::uint8_t>(numerator / max_value);
+}
+
+struct LayerYuvFormatCase {
+  int pixel_type;
+  int width;
+  int height;
+  const char* name;
+};
+
+void PrintTo(const LayerYuvFormatCase& test_case, std::ostream* stream) { *stream << test_case.name; }
+
+std::vector<PVideoFrame> make_layer_yuv_frames(AviSynthEnvironment& environment,
+                                               const VideoInfo& vi, std::uint8_t base) {
+  std::vector<PVideoFrame> frames;
+  for (int frame_index = 0; frame_index < vi.num_frames; ++frame_index) {
+    PVideoFrame frame = environment.get()->NewVideoFrame(vi);
+    for (const int plane : video_frame_planes(vi)) {
+      fill_plane_full_pitch(frame,
+                            static_cast<std::uint8_t>(base + plane * 17 + frame_index * 23),
+                            plane);
+      write_frame_plane<std::uint8_t>(frame, plane, [base, plane, frame_index](int x, int y) {
+        return static_cast<std::uint8_t>(base + plane * 17 + frame_index * 23 + x * 9 + y * 15);
+      });
+    }
+    frames.push_back(frame);
+  }
+  return frames;
+}
+
+std::uint8_t layer_masked_u8(std::uint8_t base, std::uint8_t overlay, std::uint8_t mask) {
+  constexpr int max_value = 255;
+  constexpr int half = 127;
+  constexpr int opacity = 128;
+  const int effective_alpha = (static_cast<int>(mask) * opacity + half) / max_value;
+  return static_cast<std::uint8_t>(
+      (static_cast<int>(base) * (max_value - effective_alpha) +
+       static_cast<int>(overlay) * effective_alpha + half) /
+      max_value);
+}
+
+std::uint8_t layer_alpha_for_chroma(const PVideoFrame& overlay, int x, int y) {
+  const int pitch = overlay->GetPitch(PLANAR_A);
+  const auto* row0 = overlay->GetReadPtr(PLANAR_A) + (2 * y) * pitch;
+  const auto* row1 = overlay->GetReadPtr(PLANAR_A) + (2 * y + 1) * pitch;
+  const int sum = static_cast<int>(row0[2 * x]) + static_cast<int>(row0[2 * x + 1]) +
+                  static_cast<int>(row1[2 * x]) + static_cast<int>(row1[2 * x + 1]);
+  return static_cast<std::uint8_t>((sum + 2) >> 2);
+}
+
+class LayerYuvFormatTest : public ::testing::TestWithParam<LayerYuvFormatCase> {};
+
+TEST_P(LayerYuvFormatTest, BlendsSubsampledPlanesAndPreservesBaseAlpha) {
+  const auto& test_case = GetParam();
+  AviSynthEnvironment environment;
+  const auto vi = make_video_info(VideoInfoSpec{test_case.width, test_case.height,
+                                                test_case.pixel_type, 2, 25, 1});
+  auto base_frames = make_layer_yuv_frames(environment, vi, 19);
+  auto overlay_frames = make_layer_yuv_frames(environment, vi, 137);
+  const auto base_before = FrameSnapshot::capture(base_frames[1], vi);
+  const auto overlay_before = FrameSnapshot::capture(overlay_frames[1], vi);
+  auto* base_clip = new FrameSequenceClip(vi, base_frames);
+  auto* overlay_clip = new FrameSequenceClip(vi, overlay_frames);
+  const PClip base(base_clip);
+  const PClip overlay(overlay_clip);
+
+  Layer filter(base, overlay, nullptr, "Add", -1, 0, 0, 0, true, 0.5f, PLACEMENT_MPEG1,
+               environment.get());
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(1, environment.get());
+
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    const int width = output->GetRowSize(plane);
+    const int height = output->GetHeight(plane);
+    for (int y = 0; y < height; ++y) {
+      const auto* base_row = base_frames[1]->GetReadPtr(plane) + y * base_frames[1]->GetPitch(plane);
+      const auto* overlay_row =
+          overlay_frames[1]->GetReadPtr(plane) + y * overlay_frames[1]->GetPitch(plane);
+      const auto* output_row = output->GetReadPtr(plane) + y * output->GetPitch(plane);
+      for (int x = 0; x < width; ++x) {
+        std::uint8_t expected{};
+        if (!vi.IsYUVA()) {
+          expected = static_cast<std::uint8_t>((static_cast<int>(base_row[x]) + overlay_row[x] + 1) / 2);
+        } else {
+          const std::uint8_t mask = plane == PLANAR_Y
+                                        ? overlay_frames[1]->GetReadPtr(PLANAR_A)[y * overlay_frames[1]->GetPitch(PLANAR_A) + x]
+                                        : layer_alpha_for_chroma(overlay_frames[1], x, y);
+          expected = layer_masked_u8(base_row[x], overlay_row[x], mask);
+        }
+        EXPECT_EQ(output_row[x], expected) << "format=" << test_case.name << " plane=" << plane
+                                           << " x=" << x << " y=" << y;
+      }
+    }
+  }
+  if (vi.IsYUVA()) {
+    EXPECT_EQ(read_frame_plane_active<std::uint8_t>(output, PLANAR_A),
+              read_frame_plane_active<std::uint8_t>(base_frames[1], PLANAR_A));
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(base_clip->frame_requests(), std::vector<int>{1});
+  EXPECT_EQ(overlay_clip->frame_requests(), std::vector<int>{1});
+  EXPECT_EQ(FrameSnapshot::capture(base_frames[1], vi), base_before);
+  EXPECT_EQ(FrameSnapshot::capture(overlay_frames[1], vi), overlay_before);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    FormatCases, LayerYuvFormatTest,
+    ::testing::Values(LayerYuvFormatCase{VideoInfo::CS_YV12, 8, 4,
+                                         "Yv12_Width8_Height4_AddAlphaFree"},
+                      LayerYuvFormatCase{VideoInfo::CS_YV16, 8, 5,
+                                         "Yv16_Width8_Height5_AddAlphaFree"},
+                      LayerYuvFormatCase{VideoInfo::CS_YUVA420, 8, 4,
+                                         "Yuva420_Width8_Height4_AddAlphaMask"}),
+    [](const ::testing::TestParamInfo<LayerYuvFormatCase>& info) { return info.param.name; });
+
+std::uint16_t layer_mul_u16(std::uint16_t base, std::uint16_t overlay,
+                            std::uint16_t mask, std::uint16_t alpha_target) {
+  constexpr std::uint64_t max_value = 65535;
+  constexpr std::uint64_t half = 32767;
+  constexpr std::uint64_t opacity = 32768;
+  const auto effective_alpha = (static_cast<std::uint64_t>(mask) * opacity + half) / max_value;
+  const auto product = (static_cast<std::uint64_t>(base) * alpha_target) >> 16;
+  return static_cast<std::uint16_t>(
+      (static_cast<std::uint64_t>(base) * (max_value - effective_alpha) +
+       product * effective_alpha + half) /
+      max_value);
+}
+
+TEST(LayerFilter, BlendsPlanarRgbap16UsingMulAndOverlayAlpha) {
+  AviSynthEnvironment environment;
+  constexpr int width = 6;
+  constexpr int height = 2;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_RGBAP16, 2, 25, 1});
+  std::vector<PVideoFrame> base_frames;
+  std::vector<PVideoFrame> overlay_frames;
+  for (int frame_index = 0; frame_index < 2; ++frame_index) {
+    PVideoFrame base = environment.get()->NewVideoFrame(vi);
+    PVideoFrame overlay = environment.get()->NewVideoFrame(vi);
+    for (const int plane : video_frame_planes(vi)) {
+      fill_plane_full_pitch(base, 0x91, plane);
+      fill_plane_full_pitch(overlay, 0x42, plane);
+      write_frame_plane<std::uint16_t>(base, plane, [plane, frame_index](int x, int y) {
+        return static_cast<std::uint16_t>(3000 + plane * 1700 + frame_index * 900 + x * 700 + y * 1100);
+      });
+      write_frame_plane<std::uint16_t>(overlay, plane, [plane, frame_index](int x, int y) {
+        return static_cast<std::uint16_t>(39000 + plane * 2300 + frame_index * 500 + x * 900 + y * 1300);
+      });
+    }
+    base_frames.push_back(base);
+    overlay_frames.push_back(overlay);
+  }
+  const auto base_before = FrameSnapshot::capture(base_frames[1], vi);
+  const auto overlay_before = FrameSnapshot::capture(overlay_frames[1], vi);
+  auto* base_clip = new FrameSequenceClip(vi, base_frames);
+  auto* overlay_clip = new FrameSequenceClip(vi, overlay_frames);
+  const PClip base(base_clip);
+  const PClip overlay(overlay_clip);
+
+  Layer filter(base, overlay, nullptr, "Mul", -1, 0, 0, 0, true, 0.5f, PLACEMENT_MPEG2,
+               environment.get());
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(1, environment.get());
+
+  for (const int plane : video_frame_planes(vi)) {
+    const int width_samples = output->GetRowSize(plane) / static_cast<int>(sizeof(std::uint16_t));
+    const int plane_height = output->GetHeight(plane);
+    const auto* mask_row = overlay_frames[1]->GetReadPtr(PLANAR_A);
+    for (int y = 0; y < plane_height; ++y) {
+      const auto* base_row = reinterpret_cast<const std::uint16_t*>(
+          base_frames[1]->GetReadPtr(plane) + y * base_frames[1]->GetPitch(plane));
+      const auto* overlay_row = reinterpret_cast<const std::uint16_t*>(
+          overlay_frames[1]->GetReadPtr(plane) + y * overlay_frames[1]->GetPitch(plane));
+      const auto* output_row = reinterpret_cast<const std::uint16_t*>(
+          output->GetReadPtr(plane) + y * output->GetPitch(plane));
+      const auto* alpha_row = reinterpret_cast<const std::uint16_t*>(
+          mask_row + y * overlay_frames[1]->GetPitch(PLANAR_A));
+      for (int x = 0; x < width_samples; ++x) {
+        EXPECT_EQ(output_row[x],
+                  layer_mul_u16(base_row[x], overlay_row[x], alpha_row[x], overlay_row[x]))
+            << "plane=" << plane << " x=" << x << " y=" << y;
+      }
+    }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(base_clip->frame_requests(), std::vector<int>{1});
+  EXPECT_EQ(overlay_clip->frame_requests(), std::vector<int>{1});
+  EXPECT_EQ(FrameSnapshot::capture(base_frames[1], vi), base_before);
+  EXPECT_EQ(FrameSnapshot::capture(overlay_frames[1], vi), overlay_before);
+}
+
+std::uint16_t layer_blend_u16(std::uint16_t base, std::uint16_t overlay,
+                              std::uint16_t mask) {
+  constexpr std::uint64_t max_value = 65535;
+  constexpr std::uint64_t half = 32767;
+  constexpr std::uint64_t opacity = 32768;
+  const auto effective_alpha = (static_cast<std::uint64_t>(mask) * opacity + half) / max_value;
+  return static_cast<std::uint16_t>(
+      (static_cast<std::uint64_t>(base) * (max_value - effective_alpha) +
+       static_cast<std::uint64_t>(overlay) * effective_alpha + half) /
+      max_value);
+}
+
+TEST(LayerFilter, BlendsBgr64PackedChannelsUsingOverlayAlpha) {
+  AviSynthEnvironment environment;
+  constexpr int width = 5;
+  constexpr int height = 2;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_BGR64, 2, 25, 1});
+  const std::vector<Rgb64Pixel> base_pixels{{0, 1000, 2000, 3000},
+                                             {9000, 12000, 15000, 18000},
+                                             {23000, 26000, 29000, 32000},
+                                             {37000, 40000, 43000, 46000},
+                                             {52000, 55000, 58000, 61000}};
+  const std::vector<Rgb64Pixel> overlay_pixels{{65535, 50000, 40000, 0},
+                                                {1000, 3000, 7000, 9000},
+                                                {12000, 18000, 24000, 30000},
+                                                {33000, 39000, 45000, 51000},
+                                                {60000, 62000, 64000, 65535}};
+  std::vector<PVideoFrame> base_frames;
+  std::vector<PVideoFrame> overlay_frames;
+  for (int frame_index = 0; frame_index < 2; ++frame_index) {
+    PVideoFrame base = environment.get()->NewVideoFrame(vi);
+    PVideoFrame overlay = environment.get()->NewVideoFrame(vi);
+    fill_plane_full_pitch(base, 0xa1, DEFAULT_PLANE);
+    fill_plane_full_pitch(overlay, 0xb2, DEFAULT_PLANE);
+    write_bgr64(base, base_pixels);
+    write_bgr64(overlay, overlay_pixels);
+    base_frames.push_back(base);
+    overlay_frames.push_back(overlay);
+  }
+  const auto base_before = FrameSnapshot::capture(base_frames[1], vi);
+  const auto overlay_before = FrameSnapshot::capture(overlay_frames[1], vi);
+  auto* base_clip = new FrameSequenceClip(vi, base_frames);
+  auto* overlay_clip = new FrameSequenceClip(vi, overlay_frames);
+  const PClip base(base_clip);
+  const PClip overlay(overlay_clip);
+
+  Layer filter(base, overlay, nullptr, "Add", -1, 0, 0, 0, true, 0.5f, PLACEMENT_MPEG1,
+               environment.get());
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(1, environment.get());
+
+  for (int y = 0; y < height; ++y) {
+    const auto* output_row = reinterpret_cast<const Rgb64Pixel*>(
+        output->GetReadPtr() + y * output->GetPitch());
+    for (int x = 0; x < width; ++x) {
+      const auto& base_pixel = base_pixels[static_cast<std::size_t>(x)];
+      const auto& overlay_pixel = overlay_pixels[static_cast<std::size_t>(x)];
+      EXPECT_EQ(output_row[x].blue,
+                layer_blend_u16(base_pixel.blue, overlay_pixel.blue, overlay_pixel.alpha))
+          << "blue x=" << x << " y=" << y;
+      EXPECT_EQ(output_row[x].green,
+                layer_blend_u16(base_pixel.green, overlay_pixel.green, overlay_pixel.alpha))
+          << "green x=" << x << " y=" << y;
+      EXPECT_EQ(output_row[x].red,
+                layer_blend_u16(base_pixel.red, overlay_pixel.red, overlay_pixel.alpha))
+          << "red x=" << x << " y=" << y;
+      EXPECT_EQ(output_row[x].alpha,
+                layer_blend_u16(base_pixel.alpha, overlay_pixel.alpha, overlay_pixel.alpha))
+          << "alpha x=" << x << " y=" << y;
+    }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(base_clip->frame_requests(), std::vector<int>{1});
+  EXPECT_EQ(overlay_clip->frame_requests(), std::vector<int>{1});
+  EXPECT_EQ(FrameSnapshot::capture(base_frames[1], vi), base_before);
+  EXPECT_EQ(FrameSnapshot::capture(overlay_frames[1], vi), overlay_before);
 }
 
 TEST(LayerFilter, BlendsRgb32ChannelsUsingOverlayAlphaAndExplicitOpacity) {
