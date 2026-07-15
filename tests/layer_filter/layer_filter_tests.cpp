@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -304,6 +305,24 @@ std::uint8_t layer_add_reference(std::uint8_t base, std::uint8_t overlay,
   const auto numerator = static_cast<std::uint32_t>(base) * (max_value - effective_alpha) +
                          static_cast<std::uint32_t>(overlay) * effective_alpha + half;
   return static_cast<std::uint8_t>(numerator / max_value);
+}
+
+std::uint8_t layer_rgb32_lighten_darken_reference(std::uint8_t base, std::uint8_t overlay,
+                                                 std::uint8_t overlay_alpha, int base_luma,
+                                                 int overlay_luma, bool lighten) {
+  constexpr int level = 129;  // opacity=0.5 with an alpha-bearing 8-bit input
+  constexpr int rounder = 128;
+  constexpr int threshold = 5;
+  const int alpha = (static_cast<int>(overlay_alpha) * level + 1) >> 8;
+  const bool selected = lighten ? overlay_luma > base_luma + threshold
+                                : overlay_luma < base_luma - threshold;
+  const int effective_alpha = selected ? alpha : 0;
+  return static_cast<std::uint8_t>(static_cast<int>(base) +
+                                   (((static_cast<int>(overlay) - base) * effective_alpha + rounder) >> 8));
+}
+
+int layer_rgb32_luma(const Rgb32Pixel& pixel) {
+  return (3736 * pixel.blue + 19234 * pixel.green + 9798 * pixel.red) >> 15;
 }
 
 struct LayerYuvFormatCase {
@@ -632,6 +651,80 @@ TEST(LayerFilter, BlendsRgb32ChannelsUsingOverlayAlphaAndExplicitOpacity) {
   EXPECT_EQ(overlay_clip->frame_requests(), std::vector<int>{0});
   EXPECT_EQ(FrameSnapshot::capture(base_frame1, vi_two_frames), base_before);
   EXPECT_EQ(FrameSnapshot::capture(overlay_frame, vi_one_frame), overlay_before);
+}
+
+TEST(LayerFilter, SelectsStrictLumaThresholdForLightenAndDarken) {
+  constexpr int width = 7;
+  constexpr int height = 2;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_BGR32, 2, 25, 1});
+  const std::vector<Rgb32Pixel> base_pixels{
+      {50, 50, 50, 17},  {200, 200, 200, 31}, {100, 100, 100, 45},
+      {100, 100, 100, 59}, {100, 100, 100, 73}, {100, 100, 100, 87},
+      {30, 80, 140, 101}};
+  const std::vector<Rgb32Pixel> overlay_pixels{
+      {200, 200, 200, 255}, {50, 50, 50, 255}, {100, 100, 100, 255},
+      {105, 105, 105, 255}, {106, 106, 106, 255}, {94, 94, 94, 255},
+      {220, 40, 60, 0}};
+
+  for (const auto& operation : {std::pair{"Lighten", true}, std::pair{"Darken", false}}) {
+    AviSynthEnvironment environment;
+    std::vector<PVideoFrame> base_frames;
+    std::vector<PVideoFrame> overlay_frames;
+    for (int frame_index = 0; frame_index < 2; ++frame_index) {
+      PVideoFrame base = environment.get()->NewVideoFrame(vi);
+      PVideoFrame overlay = environment.get()->NewVideoFrame(vi);
+      fill_plane_full_pitch(base, static_cast<std::uint8_t>(0xa1 + frame_index), DEFAULT_PLANE);
+      fill_plane_full_pitch(overlay, static_cast<std::uint8_t>(0xb2 + frame_index), DEFAULT_PLANE);
+      write_rgb32(base, base_pixels);
+      write_rgb32(overlay, overlay_pixels);
+      base_frames.push_back(base);
+      overlay_frames.push_back(overlay);
+    }
+    const auto base_before = FrameSnapshot::capture(base_frames[1], vi);
+    const auto overlay_before = FrameSnapshot::capture(overlay_frames[1], vi);
+    auto* base_clip = new FrameSequenceClip(vi, base_frames);
+    auto* overlay_clip = new FrameSequenceClip(vi, overlay_frames);
+    const PClip base(base_clip);
+    const PClip overlay(overlay_clip);
+
+    Layer filter(base, overlay, nullptr, operation.first, -1, 0, 0, 5, true, 0.5f,
+                 PLACEMENT_MPEG1, environment.get());
+    EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+    const PVideoFrame output = filter.GetFrame(1, environment.get());
+
+    for (int y = 0; y < height; ++y) {
+      const auto* output_row = output->GetReadPtr() + y * output->GetPitch();
+      for (int x = 0; x < width; ++x) {
+        const auto& base_pixel = base_pixels[static_cast<std::size_t>(x)];
+        const auto& overlay_pixel = overlay_pixels[static_cast<std::size_t>(x)];
+        const int base_luma = layer_rgb32_luma(base_pixel);
+        const int overlay_luma = layer_rgb32_luma(overlay_pixel);
+        const std::array<std::uint8_t, 4> expected{
+            layer_rgb32_lighten_darken_reference(base_pixel.blue, overlay_pixel.blue,
+                                                 overlay_pixel.alpha, base_luma, overlay_luma,
+                                                 operation.second),
+            layer_rgb32_lighten_darken_reference(base_pixel.green, overlay_pixel.green,
+                                                 overlay_pixel.alpha, base_luma, overlay_luma,
+                                                 operation.second),
+            layer_rgb32_lighten_darken_reference(base_pixel.red, overlay_pixel.red,
+                                                 overlay_pixel.alpha, base_luma, overlay_luma,
+                                                 operation.second),
+            layer_rgb32_lighten_darken_reference(base_pixel.alpha, overlay_pixel.alpha,
+                                                 overlay_pixel.alpha, base_luma, overlay_luma,
+                                                 operation.second)};
+        for (int component = 0; component < 4; ++component) {
+          EXPECT_EQ(output_row[x * 4 + component], expected[static_cast<std::size_t>(component)])
+              << "operation=" << operation.first << " component=" << component << " x=" << x
+              << " y=" << y;
+        }
+      }
+    }
+    EXPECT_NE(output->CheckMemory(), 1);
+    EXPECT_EQ(base_clip->frame_requests(), std::vector<int>{1});
+    EXPECT_EQ(overlay_clip->frame_requests(), std::vector<int>{1});
+    EXPECT_EQ(FrameSnapshot::capture(base_frames[1], vi), base_before);
+    EXPECT_EQ(FrameSnapshot::capture(overlay_frames[1], vi), overlay_before);
+  }
 }
 
 }  // namespace
