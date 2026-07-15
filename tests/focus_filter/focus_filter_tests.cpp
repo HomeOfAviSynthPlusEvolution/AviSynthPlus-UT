@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
+#include <cmath>
 #include <stdexcept>
 #include <vector>
 
@@ -29,6 +30,7 @@ using avsut::test::FrameSnapshot;
 using avsut::test::make_video_info;
 using avsut::test::StaticFrameClip;
 using avsut::test::VideoInfoSpec;
+using avsut::test::write_frame_plane;
 
 void fill_yuy2_pattern(PVideoFrame& frame) {
   const int pitch = frame->GetPitch();
@@ -220,6 +222,175 @@ TEST(TemporalSoftenFilter, AveragesThresholdMatchesAcrossFrameSequence) {
   for (std::size_t i = 0; i < frames.size(); ++i) {
     EXPECT_EQ(FrameSnapshot::capture(frames[i], vi), snapshots[i]);
   }
+}
+
+std::vector<PVideoFrame> make_sixteen_bit_temporal_frames(AviSynthEnvironment& environment,
+                                                           const VideoInfo& vi,
+                                                           unsigned luma_threshold,
+                                                           unsigned chroma_threshold) {
+  std::vector<PVideoFrame> frames;
+  for (int frame_index = 0; frame_index < 3; ++frame_index) {
+    PVideoFrame frame = environment.get()->NewVideoFrame(vi);
+    for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+      fill_plane_full_pitch(frame, static_cast<std::uint8_t>(0x21 + plane * 0x15 + frame_index),
+                            plane);
+      const int threshold = static_cast<int>((plane == PLANAR_Y ? luma_threshold
+                                                                 : chroma_threshold) *
+                                             256U);
+      write_frame_plane<std::uint16_t>(frame, plane, [plane, frame_index, threshold](int x, int y) {
+        const int base = plane == PLANAR_Y ? 18000 + x * 701 + y * 311
+                                           : 30000 + x * 503 + y * 211;
+        if (frame_index == 0) {
+          return base + (((x + y + plane) % 3 == 0) ? threshold : threshold + 256);
+        }
+        if (frame_index == 2) {
+          return base - (((x + y + plane) % 4 == 0) ? threshold : threshold + 512);
+        }
+        return base;
+      });
+    }
+    frames.push_back(frame);
+  }
+  return frames;
+}
+
+std::uint16_t temporal_reference_sixteen(std::uint16_t current, std::uint16_t previous,
+                                         std::uint16_t next, unsigned threshold) {
+  const int scaled_threshold = static_cast<int>(threshold * 256U);
+  int sum = current;
+  sum += std::abs(static_cast<int>(current) - previous) <= scaled_threshold ? previous : current;
+  sum += std::abs(static_cast<int>(current) - next) <= scaled_threshold ? next : current;
+  return static_cast<std::uint16_t>(std::nearbyintf(static_cast<float>(sum) / 3.0F));
+}
+
+TEST(TemporalSoftenFilter, AveragesThresholdMatchesForSixteenBitYuv422) {
+  AviSynthEnvironment environment;
+  constexpr int width = 8;
+  constexpr int height = 5;
+  constexpr unsigned luma_threshold = 10;
+  constexpr unsigned chroma_threshold = 7;
+  const auto vi = make_video_info(
+      VideoInfoSpec{width, height, VideoInfo::CS_YUV422P16, 3, 25, 1});
+  auto frames = make_sixteen_bit_temporal_frames(environment, vi, luma_threshold,
+                                                  chroma_threshold);
+  std::vector<FrameSnapshot> snapshots;
+  for (const auto& frame : frames) {
+    snapshots.push_back(FrameSnapshot::capture(frame, vi));
+  }
+  auto* source_clip = new FrameSequenceClip(vi, frames);
+  const PClip clip(source_clip);
+
+  TemporalSoften filter(clip, 1, luma_threshold, chroma_threshold, 0, environment.get());
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(1, environment.get());
+
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    const unsigned threshold = plane == PLANAR_Y ? luma_threshold : chroma_threshold;
+    const int plane_width = output->GetRowSize(plane) / static_cast<int>(sizeof(std::uint16_t));
+    const int plane_height = output->GetHeight(plane);
+    for (int y = 0; y < plane_height; ++y) {
+      const auto* previous_row = reinterpret_cast<const std::uint16_t*>(
+          frames[0]->GetReadPtr(plane) + y * frames[0]->GetPitch(plane));
+      const auto* current_row = reinterpret_cast<const std::uint16_t*>(
+          frames[1]->GetReadPtr(plane) + y * frames[1]->GetPitch(plane));
+      const auto* next_row = reinterpret_cast<const std::uint16_t*>(
+          frames[2]->GetReadPtr(plane) + y * frames[2]->GetPitch(plane));
+      const auto* output_row = reinterpret_cast<const std::uint16_t*>(
+          output->GetReadPtr(plane) + y * output->GetPitch(plane));
+      for (int x = 0; x < plane_width; ++x) {
+        EXPECT_EQ(output_row[x], temporal_reference_sixteen(current_row[x], previous_row[x],
+                                                             next_row[x], threshold))
+            << "plane=" << plane << " x=" << x << " y=" << y;
+      }
+    }
+  }
+  EXPECT_EQ(output->GetRowSize(PLANAR_U), width / 2 * static_cast<int>(sizeof(std::uint16_t)));
+  EXPECT_EQ(output->GetHeight(PLANAR_U), height);
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>({0, 1, 2}));
+  ASSERT_EQ(source_clip->cache_hint_requests().size(), 1U);
+  EXPECT_EQ(source_clip->cache_hint_requests()[0],
+            (avsut::test::CacheHintRequest{CACHE_WINDOW, 3}));
+  for (std::size_t i = 0; i < frames.size(); ++i) {
+    EXPECT_EQ(FrameSnapshot::capture(frames[i], vi), snapshots[i]);
+  }
+}
+
+std::vector<PVideoFrame> make_float_temporal_frames(AviSynthEnvironment& environment,
+                                                    const VideoInfo& vi, unsigned threshold) {
+  std::vector<PVideoFrame> frames;
+  for (int frame_index = 0; frame_index < 3; ++frame_index) {
+    PVideoFrame frame = environment.get()->NewVideoFrame(vi);
+    for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+      fill_plane_full_pitch(frame, static_cast<std::uint8_t>(0x61 + plane * 0x11 + frame_index),
+                            plane);
+      write_frame_plane<float>(frame, plane, [plane, frame_index, threshold](int x, int y) {
+        const float base = plane == PLANAR_Y ? 0.2F + x * 0.07F + y * 0.03F
+                                             : -0.25F + x * 0.04F + y * 0.02F;
+        const float scaled = static_cast<float>(threshold) / 255.0F;
+        if (frame_index == 0) {
+          return base + (((x + y + plane) % 3 == 0) ? scaled * 0.5F : scaled * 1.5F);
+        }
+        if (frame_index == 2) {
+          return base - (((x + y + plane) % 4 == 0) ? scaled * 0.5F : scaled * 1.5F);
+        }
+        return base;
+      });
+    }
+    frames.push_back(frame);
+  }
+  return frames;
+}
+
+float temporal_reference_float(float current, float previous, float next, unsigned threshold) {
+  const float scaled_threshold = static_cast<float>(threshold) / 255.0F;
+  float sum = current;
+  sum += std::fabs(current - previous) <= scaled_threshold ? previous : current;
+  sum += std::fabs(current - next) <= scaled_threshold ? next : current;
+  return sum / 3.0F;
+}
+
+TEST(TemporalSoftenFilter, AveragesThresholdMatchesForFloatYuv444) {
+  AviSynthEnvironment environment;
+  constexpr int width = 6;
+  constexpr int height = 3;
+  constexpr unsigned threshold = 20;
+  const auto vi = make_video_info(
+      VideoInfoSpec{width, height, VideoInfo::CS_YUV444PS, 3, 25, 1});
+  auto frames = make_float_temporal_frames(environment, vi, threshold);
+  const auto first_before = FrameSnapshot::capture(frames[0], vi);
+  const auto current_before = FrameSnapshot::capture(frames[1], vi);
+  const auto last_before = FrameSnapshot::capture(frames[2], vi);
+  auto* source_clip = new FrameSequenceClip(vi, frames);
+  const PClip clip(source_clip);
+
+  TemporalSoften filter(clip, 1, threshold, threshold, 0, environment.get());
+  const PVideoFrame output = filter.GetFrame(1, environment.get());
+
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    const int plane_width = output->GetRowSize(plane) / static_cast<int>(sizeof(float));
+    const int plane_height = output->GetHeight(plane);
+    for (int y = 0; y < plane_height; ++y) {
+      const auto* previous_row = reinterpret_cast<const float*>(
+          frames[0]->GetReadPtr(plane) + y * frames[0]->GetPitch(plane));
+      const auto* current_row = reinterpret_cast<const float*>(
+          frames[1]->GetReadPtr(plane) + y * frames[1]->GetPitch(plane));
+      const auto* next_row = reinterpret_cast<const float*>(
+          frames[2]->GetReadPtr(plane) + y * frames[2]->GetPitch(plane));
+      const auto* output_row = reinterpret_cast<const float*>(
+          output->GetReadPtr(plane) + y * output->GetPitch(plane));
+      for (int x = 0; x < plane_width; ++x) {
+        EXPECT_FLOAT_EQ(output_row[x], temporal_reference_float(current_row[x], previous_row[x],
+                                                                next_row[x], threshold))
+            << "plane=" << plane << " x=" << x << " y=" << y;
+      }
+    }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>({0, 1, 2}));
+  EXPECT_EQ(FrameSnapshot::capture(frames[0], vi), first_before);
+  EXPECT_EQ(FrameSnapshot::capture(frames[1], vi), current_before);
+  EXPECT_EQ(FrameSnapshot::capture(frames[2], vi), last_before);
 }
 
 }  // namespace
