@@ -3,6 +3,7 @@ add_executable(convert_planar_tests
   convert_yv24_rgb_tests.cpp
   convert_planar_matrix_tests.cpp
   convert_yuv_to_yuv_tests.cpp
+  convert_rgb_to_y_tests.cpp
 )
 target_include_directories(convert_planar_tests PRIVATE
   ${PROJECT_SOURCE_DIR}/tests
