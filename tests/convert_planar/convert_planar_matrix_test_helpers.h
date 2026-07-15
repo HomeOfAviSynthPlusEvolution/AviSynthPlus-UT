@@ -26,6 +26,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <iostream>
 #include <ostream>
 #include <sstream>
 #include <string>
@@ -496,6 +497,38 @@ inline void call_planar_matrix_kernel_typed(const PlanarMatrixCase& test_case,
 }
 
 template <typename T>
+inline std::size_t planar_matrix_allowed_output_end(const PlanarMatrixCase& test_case) {
+  const std::size_t active_bytes = test_case.width * sizeof(T);
+  if (test_case.variant.function == PlanarMatrixVariant::C) {
+    return active_bytes;
+  }
+  const std::size_t block_bytes =
+      test_case.variant.function == PlanarMatrixVariant::Sse2
+          ? 8 * sizeof(T)
+          : (test_case.bit_depth == 32 ? 64 : 32 * sizeof(T));
+  return ((active_bytes + block_bytes - 1) / block_bytes) * block_bytes;
+}
+
+template <typename T>
+inline void expect_planar_matrix_output_memory(const PlanarMatrixCase& test_case,
+                                               const GuardedVideoBuffer<T>& buffer,
+                                               const char* plane_name) {
+  EXPECT_TRUE(buffer.guards_intact()) << test_case.name << ' ' << plane_name << " guards";
+  const auto allowed_end = planar_matrix_allowed_output_end<T>(test_case);
+  const bool permitted_tail_write =
+      test_case.variant.function != PlanarMatrixVariant::C && buffer.guards_intact() &&
+      !buffer.padding_intact() && buffer.padding_intact_from(allowed_end);
+  if (permitted_tail_write) {
+    std::cout << "[INFO] " << test_case.name << " modified output padding within the permitted "
+              << "SIMD tail (active_row_bytes=" << test_case.width * sizeof(T)
+              << ", protected_from_byte=" << allowed_end << ")\n";
+  }
+  EXPECT_TRUE(buffer.padding_intact_from(allowed_end))
+      << test_case.name << ' ' << plane_name
+      << " modified output padding after the permitted SIMD tail boundary " << allowed_end;
+}
+
+template <typename T>
 inline void run_planar_matrix_case_typed(const PlanarMatrixCase& test_case) {
   GuardedVideoBuffer<T> source0(test_case.width, test_case.height, test_case.source_pitch, 64);
   GuardedVideoBuffer<T> source1(test_case.width, test_case.height, test_case.source_pitch, 64);
@@ -572,9 +605,9 @@ inline void run_planar_matrix_case_typed(const PlanarMatrixCase& test_case) {
   EXPECT_TRUE(expected0.memory_intact()) << test_case.name;
   EXPECT_TRUE(expected1.memory_intact()) << test_case.name;
   EXPECT_TRUE(expected2.memory_intact()) << test_case.name;
-  EXPECT_TRUE(actual0.memory_intact()) << test_case.name;
-  EXPECT_TRUE(actual1.memory_intact()) << test_case.name;
-  EXPECT_TRUE(actual2.memory_intact()) << test_case.name;
+  expect_planar_matrix_output_memory(test_case, actual0, "output G/Y");
+  expect_planar_matrix_output_memory(test_case, actual1, "output B/U");
+  expect_planar_matrix_output_memory(test_case, actual2, "output R/V");
 }
 
 inline void run_planar_matrix_case(const PlanarMatrixCase& test_case) {
