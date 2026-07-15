@@ -27,6 +27,8 @@ using avsut::test::FrameSnapshot;
 using avsut::test::make_video_info;
 using avsut::test::StaticFrameClip;
 using avsut::test::VideoInfoSpec;
+using avsut::test::read_frame_plane_active;
+using avsut::test::write_frame_plane;
 
 template <typename Pixel>
 void write_values(PVideoFrame& frame, int plane, int width, int height,
@@ -106,6 +108,72 @@ TEST(Limiter, ScalesLimitsForTenBitYuv444WhenParamScaleIsEnabled) {
   expect_clamped_plane<std::uint16_t>(source, output, PLANAR_Y, vi.width, vi.height, 64, 940);
   expect_clamped_plane<std::uint16_t>(source, output, PLANAR_U, vi.width, vi.height, 64, 960);
   expect_clamped_plane<std::uint16_t>(source, output, PLANAR_V, vi.width, vi.height, 64, 960);
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+TEST(Limiter, ScalesLimitsForSixteenBitYuv422WhenParamScaleIsEnabled) {
+  AviSynthEnvironment environment;
+  constexpr int width = 8;
+  constexpr int height = 5;
+  const auto vi = make_video_info(
+      VideoInfoSpec{width, height, VideoInfo::CS_YUV422P16, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    fill_plane_full_pitch(source, static_cast<std::uint8_t>(0x41 + plane * 0x15), plane);
+    write_frame_plane<std::uint16_t>(source, plane, [](int x, int y) {
+      return x * 8192 + y * 4096;
+    });
+  }
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  Limiter filter(clip, 16.0f, 235.0f, 16.0f, 240.0f, 0, true, environment.get());
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    const int plane_width = output->GetRowSize(plane) / static_cast<int>(sizeof(std::uint16_t));
+    const int plane_height = output->GetHeight(plane);
+    const auto min_value = static_cast<std::uint16_t>(4096);
+    const auto max_value = static_cast<std::uint16_t>(plane == PLANAR_Y ? 60160 : 61440);
+    expect_clamped_plane<std::uint16_t>(source, output, plane, plane_width, plane_height,
+                                        min_value, max_value);
+  }
+  EXPECT_EQ(output->GetRowSize(PLANAR_U), width / 2 * static_cast<int>(sizeof(std::uint16_t)));
+  EXPECT_EQ(output->GetHeight(PLANAR_U), height);
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+TEST(Limiter, ClampsYuva420AndPreservesTheAlphaPlane) {
+  AviSynthEnvironment environment;
+  constexpr int width = 8;
+  constexpr int height = 6;
+  const auto vi = make_video_info(
+      VideoInfoSpec{width, height, VideoInfo::CS_YUVA420, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V, PLANAR_A}) {
+    fill_plane_full_pitch(source, static_cast<std::uint8_t>(0x62 + plane * 0x17), plane);
+    write_frame_plane<std::uint8_t>(source, plane, [plane](int x, int y) {
+      return 3 + plane * 29 + x * 31 + y * 7;
+    });
+  }
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  const auto alpha_before = read_frame_plane_active<std::uint8_t>(source, PLANAR_A);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  Limiter filter(clip, 32.0f, 220.0f, 40.0f, 210.0f, 0, false, environment.get());
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  expect_clamped_plane<std::uint8_t>(source, output, PLANAR_Y, width, height, 32, 220);
+  expect_clamped_plane<std::uint8_t>(source, output, PLANAR_U, width / 2, height / 2, 40, 210);
+  expect_clamped_plane<std::uint8_t>(source, output, PLANAR_V, width / 2, height / 2, 40, 210);
+  EXPECT_EQ(read_frame_plane_active<std::uint8_t>(output, PLANAR_A), alpha_before);
   EXPECT_NE(output->CheckMemory(), 1);
   EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
   EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
