@@ -22,3 +22,7 @@ When adding or changing tests:
 Keep AviSynthPlus as a read-only submodule. Do not add upstream source files to
 the test target, patch upstream code, or commit build artifacts, generated
 reports, temporary references, or compiler output.
+
+Keep documentation under `docs/` out of Git commits. AI may create or update
+those documents when requested, but must never stage or commit any file under
+`docs/`.
