@@ -43,6 +43,38 @@ void write_values(PVideoFrame& frame, int plane, const std::array<std::uint8_t, 
   }
 }
 
+std::array<std::uint8_t, 2> expected_conditional_chroma(std::uint8_t source_u,
+                                                          std::uint8_t source_v) {
+  constexpr double pi = 3.14159265358979323846;
+  constexpr double start_hue = 329.0;
+  constexpr double end_hue = 31.0;
+  constexpr double max_sat = 1.19 * 100.0;
+  constexpr double min_sat = 1.19 * 40.0;
+  constexpr int middle_chroma = 128;
+  constexpr int sat = static_cast<int>(1.5 * 512.0);
+  const int u = static_cast<int>(source_u) - middle_chroma;
+  const int v = static_cast<int>(source_v) - middle_chroma;
+
+  double hue = std::atan2(static_cast<double>(v), static_cast<double>(u)) * 180.0 / pi;
+  if (hue < 0.0) {
+    hue += 360.0;
+  }
+  const bool hue_selected = start_hue < end_hue
+                                ? hue >= start_hue && hue <= end_hue
+                                : !(hue < start_hue && hue > end_hue);
+  const double squared_sat = static_cast<double>(u * u + v * v);
+  const bool sat_selected = min_sat * min_sat <= squared_sat && squared_sat <= max_sat * max_sat;
+  if (!hue_selected || !sat_selected) {
+    return {source_u, source_v};
+  }
+
+  const double hue_radians = 90.0 * pi / 180.0;
+  const int mapped_u = static_cast<int>((u * std::cos(hue_radians) + v * std::sin(hue_radians)) * sat) >> 9;
+  const int mapped_v = static_cast<int>((v * std::cos(hue_radians) - u * std::sin(hue_radians)) * sat) >> 9;
+  return {static_cast<std::uint8_t>(std::clamp(mapped_u + middle_chroma, 0, 255)),
+          static_cast<std::uint8_t>(std::clamp(mapped_v + middle_chroma, 0, 255))};
+}
+
 TEST(TweakFilter, AppliesEightBitLumaBrightnessWithoutTouchingSource) {
   AviSynthEnvironment environment;
   const auto vi = make_video_info(VideoInfoSpec{8, 2, VideoInfo::CS_Y8, 1, 25, 1});
@@ -220,6 +252,48 @@ TEST(TweakFilter, AppliesFloatHueSaturationAndBrightnessWithRealCalc) {
     EXPECT_NEAR(output_y[x], expected_y, 1.0e-5F) << "x=" << x;
     EXPECT_NEAR(output_u[x], expected_u, 1.0e-5F) << "U x=" << x;
     EXPECT_NEAR(output_v[x], expected_v, 1.0e-5F) << "V x=" << x;
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+TEST(TweakFilter, SelectsConditionalHueAndSaturationRangesWithWrapping) {
+  AviSynthEnvironment environment;
+  constexpr int width = 7;
+  constexpr int height = 3;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_YV24, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(source, 0x91, PLANAR_Y);
+  fill_plane_full_pitch(source, 0xa2, PLANAR_U);
+  fill_plane_full_pitch(source, 0xb3, PLANAR_V);
+  constexpr std::array<std::uint8_t, width> u_values{192, 183, 183, 173, 173, 152, 254};
+  constexpr std::array<std::uint8_t, width> v_values{128, 160, 96, 173, 83, 128, 128};
+  constexpr std::array<std::uint8_t, width> y_values{16, 48, 96, 128, 192, 224, 235};
+  write_values(source, PLANAR_Y, y_values);
+  write_values(source, PLANAR_U, u_values);
+  write_values(source, PLANAR_V, v_values);
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  Tweak filter(clip, 90.0, 1.5, 0.0, 1.0, false, 329.0, 31.0, 100.0, 40.0, 0.0, false,
+               false, 1.0, environment.get());
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  for (int y = 0; y < height; ++y) {
+    const auto* output_u = output->GetReadPtr(PLANAR_U) + y * output->GetPitch(PLANAR_U);
+    const auto* output_v = output->GetReadPtr(PLANAR_V) + y * output->GetPitch(PLANAR_V);
+    const auto* output_y = output->GetReadPtr(PLANAR_Y) + y * output->GetPitch(PLANAR_Y);
+    for (int x = 0; x < width; ++x) {
+      const auto expected = expected_conditional_chroma(u_values[static_cast<std::size_t>(x)],
+                                                         v_values[static_cast<std::size_t>(x)]);
+      EXPECT_EQ(output_u[x], expected[0]) << "U x=" << x << " y=" << y;
+      EXPECT_EQ(output_v[x], expected[1]) << "V x=" << x << " y=" << y;
+      EXPECT_EQ(output_y[x], y_values[static_cast<std::size_t>(x)])
+          << "Y x=" << x << " y=" << y;
+    }
   }
   EXPECT_NE(output->CheckMemory(), 1);
   EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
