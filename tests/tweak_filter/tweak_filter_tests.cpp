@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <vector>
 
@@ -27,6 +28,7 @@ using avsut::test::FrameSnapshot;
 using avsut::test::make_video_info;
 using avsut::test::StaticFrameClip;
 using avsut::test::VideoInfoSpec;
+using avsut::test::write_frame_plane;
 
 template <std::size_t N>
 void write_values(PVideoFrame& frame, int plane, const std::array<std::uint8_t, N>& values) {
@@ -63,6 +65,161 @@ TEST(TweakFilter, AppliesEightBitLumaBrightnessWithoutTouchingSource) {
       const int expected = std::clamp(static_cast<int>(source_row[x]) + 12, 0, 255);
       EXPECT_EQ(output_row[x], expected) << "x=" << x << " y=" << y;
     }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+TEST(TweakFilter, AppliesRealCalcToSixteenBitYuv420LumaAndChroma) {
+  AviSynthEnvironment environment;
+  constexpr int width = 8;
+  constexpr int height = 6;
+  const auto vi = make_video_info(
+      VideoInfoSpec{width, height, VideoInfo::CS_YUV420P16, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    fill_plane_full_pitch(source, static_cast<std::uint8_t>(0x31 + plane * 0x19), plane);
+    write_frame_plane<std::uint16_t>(source, plane, [plane](int x, int y) {
+      return plane == PLANAR_Y ? 5000 + x * 7000 + y * 1000 : 28000 + x * 1400 + y * 800;
+    });
+  }
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  Tweak filter(clip, 0.0, 1.0, 2.0, 1.25, false, 0.0, 360.0, 150.0, 0.0, 0.0, false,
+               true, 1.0, environment.get());
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  const int y_width = output->GetRowSize(PLANAR_Y) / static_cast<int>(sizeof(std::uint16_t));
+  const int y_height = output->GetHeight(PLANAR_Y);
+  for (int y = 0; y < y_height; ++y) {
+    const auto* source_row = reinterpret_cast<const std::uint16_t*>(
+        source->GetReadPtr(PLANAR_Y) + y * source->GetPitch(PLANAR_Y));
+    const auto* output_row = reinterpret_cast<const std::uint16_t*>(
+        output->GetReadPtr(PLANAR_Y) + y * output->GetPitch(PLANAR_Y));
+    for (int x = 0; x < y_width; ++x) {
+      const auto expected = static_cast<std::uint16_t>(std::clamp(
+          static_cast<int>(source_row[x] * 1.25 + 512.0), 0, 65535));
+      EXPECT_EQ(output_row[x], expected) << "plane=Y x=" << x << " y=" << y;
+    }
+  }
+  for (const int plane : {PLANAR_U, PLANAR_V}) {
+    const int plane_width = output->GetRowSize(plane) / static_cast<int>(sizeof(std::uint16_t));
+    const int plane_height = output->GetHeight(plane);
+    for (int y = 0; y < plane_height; ++y) {
+      const auto* source_row = reinterpret_cast<const std::uint16_t*>(
+          source->GetReadPtr(plane) + y * source->GetPitch(plane));
+      const auto* output_row = reinterpret_cast<const std::uint16_t*>(
+          output->GetReadPtr(plane) + y * output->GetPitch(plane));
+      for (int x = 0; x < plane_width; ++x) {
+        EXPECT_EQ(output_row[x], source_row[x]) << "plane=" << plane << " x=" << x << " y=" << y;
+      }
+    }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+TEST(TweakFilter, KeepsSixteenBitDitherWithinOneEightBitStep) {
+  AviSynthEnvironment environment;
+  constexpr int width = 8;
+  constexpr int height = 6;
+  const auto vi = make_video_info(
+      VideoInfoSpec{width, height, VideoInfo::CS_YUV420P16, 1, 25, 1});
+  PVideoFrame plain_source = environment.get()->NewVideoFrame(vi);
+  PVideoFrame dither_source = environment.get()->NewVideoFrame(vi);
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    fill_plane_full_pitch(plain_source, static_cast<std::uint8_t>(0x71 + plane * 0x13), plane);
+    fill_plane_full_pitch(dither_source, static_cast<std::uint8_t>(0x71 + plane * 0x13), plane);
+    const auto values = [plane](int x, int y) {
+      return plane == PLANAR_Y ? 10000 + x * 997 + y * 503 : 30000 + x * 401 + y * 211;
+    };
+    write_frame_plane<std::uint16_t>(plain_source, plane, values);
+    write_frame_plane<std::uint16_t>(dither_source, plane, values);
+  }
+  const auto plain_before = FrameSnapshot::capture(plain_source, vi);
+  const auto dither_before = FrameSnapshot::capture(dither_source, vi);
+  auto* plain_clip_impl = new StaticFrameClip(vi, plain_source);
+  auto* dither_clip_impl = new StaticFrameClip(vi, dither_source);
+  const PClip plain_clip(plain_clip_impl);
+  const PClip dither_clip(dither_clip_impl);
+
+  Tweak plain_filter(plain_clip, 0.0, 1.0, 0.0, 1.0, false, 0.0, 360.0, 150.0, 0.0, 0.0,
+                     false, true, 256.0, environment.get());
+  Tweak dither_filter(dither_clip, 0.0, 1.0, 0.0, 1.0, false, 0.0, 360.0, 150.0, 0.0, 0.0,
+                      true, true, 256.0, environment.get());
+  const PVideoFrame plain_output = plain_filter.GetFrame(0, environment.get());
+  const PVideoFrame dither_output = dither_filter.GetFrame(0, environment.get());
+
+  int changed_luma_samples = 0;
+  const int plane_width = vi.width;
+  const int plane_height = vi.height;
+  for (int y = 0; y < plane_height; ++y) {
+    const auto* plain_row = reinterpret_cast<const std::uint16_t*>(
+        plain_output->GetReadPtr(PLANAR_Y) + y * plain_output->GetPitch(PLANAR_Y));
+    const auto* dither_row = reinterpret_cast<const std::uint16_t*>(
+        dither_output->GetReadPtr(PLANAR_Y) + y * dither_output->GetPitch(PLANAR_Y));
+    for (int x = 0; x < plane_width; ++x) {
+      const int delta = std::abs(static_cast<int>(dither_row[x]) - static_cast<int>(plain_row[x]));
+      EXPECT_LE(delta, 128) << "x=" << x << " y=" << y;
+      changed_luma_samples += dither_row[x] != plain_row[x] ? 1 : 0;
+    }
+  }
+  EXPECT_GT(changed_luma_samples, 0);
+  EXPECT_NE(plain_output->CheckMemory(), 1);
+  EXPECT_NE(dither_output->CheckMemory(), 1);
+  EXPECT_EQ(plain_clip_impl->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(dither_clip_impl->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(plain_source, vi), plain_before);
+  EXPECT_EQ(FrameSnapshot::capture(dither_source, vi), dither_before);
+}
+
+TEST(TweakFilter, AppliesFloatHueSaturationAndBrightnessWithRealCalc) {
+  AviSynthEnvironment environment;
+  constexpr int width = 5;
+  constexpr int height = 2;
+  const auto vi = make_video_info(
+      VideoInfoSpec{width, height, VideoInfo::CS_YUV444PS, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  const std::array<float, 5> luma{0.0F, 0.1F, 0.5F, 0.9F, 1.0F};
+  const std::array<float, 5> u{-0.4F, -0.2F, 0.0F, 0.2F, 0.4F};
+  const std::array<float, 5> v{0.3F, 0.1F, -0.1F, -0.3F, 0.45F};
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    fill_plane_full_pitch(source, static_cast<std::uint8_t>(0x57 + plane * 0x13), plane);
+    write_frame_plane<float>(source, plane, [plane, &luma, &u, &v](int x, int) {
+      const auto index = static_cast<std::size_t>(x);
+      return plane == PLANAR_Y ? luma[index] : plane == PLANAR_U ? u[index] : v[index];
+    });
+  }
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  constexpr double hue_radians = 30.0 * 3.14159265358979323846 / 180.0;
+  constexpr double saturation = 1.25;
+  Tweak filter(clip, 30.0, saturation, 25.6, 1.0, false, 0.0, 360.0, 150.0, 0.0, 0.0,
+               false, true, 1.0, environment.get());
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  for (int x = 0; x < width; ++x) {
+    const float expected_y = std::clamp(luma[static_cast<std::size_t>(x)] + 0.1F, 0.0F, 1.0F);
+    const double expected_u = std::clamp(
+        (u[static_cast<std::size_t>(x)] * std::cos(hue_radians) +
+         v[static_cast<std::size_t>(x)] * std::sin(hue_radians)) * saturation,
+        -0.5, 0.5);
+    const double expected_v = std::clamp(
+        (v[static_cast<std::size_t>(x)] * std::cos(hue_radians) -
+         u[static_cast<std::size_t>(x)] * std::sin(hue_radians)) * saturation,
+        -0.5, 0.5);
+    const auto* output_y = reinterpret_cast<const float*>(output->GetReadPtr(PLANAR_Y));
+    const auto* output_u = reinterpret_cast<const float*>(output->GetReadPtr(PLANAR_U));
+    const auto* output_v = reinterpret_cast<const float*>(output->GetReadPtr(PLANAR_V));
+    EXPECT_NEAR(output_y[x], expected_y, 1.0e-5F) << "x=" << x;
+    EXPECT_NEAR(output_u[x], expected_u, 1.0e-5F) << "U x=" << x;
+    EXPECT_NEAR(output_v[x], expected_v, 1.0e-5F) << "V x=" << x;
   }
   EXPECT_NE(output->CheckMemory(), 1);
   EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
