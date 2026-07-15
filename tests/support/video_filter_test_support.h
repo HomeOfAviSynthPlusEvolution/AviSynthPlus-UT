@@ -53,6 +53,71 @@ struct CacheHintRequest {
   }
 };
 
+struct FramePlaneGeometry {
+  int width{};
+  int height{};
+  int row_size{};
+  int pitch{};
+};
+
+inline FramePlaneGeometry frame_plane_geometry(const PVideoFrame& frame, int plane,
+                                               std::size_t component_size) {
+  if (!frame || component_size == 0) {
+    throw std::invalid_argument("frame plane requires a non-null frame and component size");
+  }
+  const int row_size = frame->GetRowSize(plane);
+  const int height = frame->GetHeight(plane);
+  const int pitch = frame->GetPitch(plane);
+  if (row_size < 0 || height < 0 || pitch < row_size ||
+      static_cast<std::size_t>(row_size) % component_size != 0) {
+    throw std::invalid_argument("frame plane has invalid typed geometry");
+  }
+  return FramePlaneGeometry{row_size / static_cast<int>(component_size), height, row_size,
+                            pitch};
+}
+
+template <typename Pixel, typename ValueFunction>
+void write_frame_plane(PVideoFrame& frame, int plane, ValueFunction&& value_at) {
+  const auto geometry = frame_plane_geometry(frame, plane, sizeof(Pixel));
+  for (int y = 0; y < geometry.height; ++y) {
+    auto* row = reinterpret_cast<Pixel*>(frame->GetWritePtr(plane) + y * geometry.pitch);
+    for (int x = 0; x < geometry.width; ++x) {
+      row[x] = static_cast<Pixel>(value_at(x, y));
+    }
+  }
+}
+
+template <typename Pixel>
+std::vector<Pixel> read_frame_plane_active(const PVideoFrame& frame, int plane) {
+  const auto geometry = frame_plane_geometry(frame, plane, sizeof(Pixel));
+  std::vector<Pixel> values;
+  values.reserve(static_cast<std::size_t>(geometry.width) * geometry.height);
+  for (int y = 0; y < geometry.height; ++y) {
+    const auto* row = reinterpret_cast<const Pixel*>(frame->GetReadPtr(plane) + y * geometry.pitch);
+    values.insert(values.end(), row, row + geometry.width);
+  }
+  return values;
+}
+
+inline std::vector<int> video_frame_planes(const VideoInfo& video_info) {
+  if (video_info.IsPlanarRGBA()) {
+    return {PLANAR_G, PLANAR_B, PLANAR_R, PLANAR_A};
+  }
+  if (video_info.IsPlanarRGB()) {
+    return {PLANAR_G, PLANAR_B, PLANAR_R};
+  }
+  if (video_info.IsYUVA()) {
+    return {PLANAR_Y, PLANAR_U, PLANAR_V, PLANAR_A};
+  }
+  if (video_info.IsYUV()) {
+    return {PLANAR_Y, PLANAR_U, PLANAR_V};
+  }
+  if (video_info.IsY()) {
+    return {PLANAR_Y};
+  }
+  return {DEFAULT_PLANE};
+}
+
 class FrameSequenceClip : public IClip {
  public:
   FrameSequenceClip(VideoInfo video_info, std::vector<PVideoFrame> frames)
@@ -142,7 +207,7 @@ class FrameSnapshot {
     }
 
     FrameSnapshot snapshot;
-    for (const int plane : frame_planes(video_info)) {
+    for (const int plane : video_frame_planes(video_info)) {
       snapshot.planes_.push_back(capture_plane(frame, plane));
     }
     return snapshot;
@@ -155,25 +220,6 @@ class FrameSnapshot {
   }
 
  private:
-  static std::vector<int> frame_planes(const VideoInfo& video_info) {
-    if (video_info.IsPlanarRGBA()) {
-      return {PLANAR_G, PLANAR_B, PLANAR_R, PLANAR_A};
-    }
-    if (video_info.IsPlanarRGB()) {
-      return {PLANAR_G, PLANAR_B, PLANAR_R};
-    }
-    if (video_info.IsYUVA()) {
-      return {PLANAR_Y, PLANAR_U, PLANAR_V, PLANAR_A};
-    }
-    if (video_info.IsYUV()) {
-      return {PLANAR_Y, PLANAR_U, PLANAR_V};
-    }
-    if (video_info.IsY()) {
-      return {PLANAR_Y};
-    }
-    return {DEFAULT_PLANE};
-  }
-
   static FramePlaneSnapshot capture_plane(const PVideoFrame& frame, int plane) {
     const int pitch = frame->GetPitch(plane);
     const int row_size = frame->GetRowSize(plane);
