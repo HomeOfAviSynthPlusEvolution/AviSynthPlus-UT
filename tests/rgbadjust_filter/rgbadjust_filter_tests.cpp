@@ -287,4 +287,132 @@ TEST(RGBAdjustFilter, AppliesFloatScaleBiasGammaToPlanarRgbAlpha) {
   EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
 }
 
+TEST(RGBAdjustFilter, AppliesOrderedDitherToEightBitPackedChannels) {
+  AviSynthEnvironment environment;
+  constexpr int width = 7;
+  constexpr int height = 3;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_BGR24, 1, 25, 1});
+  PVideoFrame plain_source = environment.get()->NewVideoFrame(vi);
+  PVideoFrame dither_source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(plain_source, 0x81, DEFAULT_PLANE);
+  fill_plane_full_pitch(dither_source, 0x81, DEFAULT_PLANE);
+  const auto value_at = [](int byte, int y) {
+    const int component = byte % 3;
+    const int x = byte / 3;
+    return static_cast<std::uint8_t>((x * 31 + y * 47 + component * 59 + 3) & 0xff);
+  };
+  write_frame_plane<std::uint8_t>(plain_source, DEFAULT_PLANE, value_at);
+  write_frame_plane<std::uint8_t>(dither_source, DEFAULT_PLANE, value_at);
+  const auto plain_before = FrameSnapshot::capture(plain_source, vi);
+  const auto dither_before = FrameSnapshot::capture(dither_source, vi);
+  auto* plain_clip_impl = new StaticFrameClip(vi, plain_source);
+  auto* dither_clip_impl = new StaticFrameClip(vi, dither_source);
+  const PClip plain_clip(plain_clip_impl);
+  const PClip dither_clip(dither_clip_impl);
+
+  RGBAdjust plain_filter(plain_clip, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0,
+                         1.0, 1.0, false, false, false, "", environment.get());
+  RGBAdjust dither_filter(dither_clip, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0,
+                          1.0, 1.0, false, true, false, "", environment.get());
+  const PVideoFrame plain_output = plain_filter.GetFrame(0, environment.get());
+  const PVideoFrame dither_output = dither_filter.GetFrame(0, environment.get());
+
+  int changed_components = 0;
+  for (int y = 0; y < height; ++y) {
+    const auto* plain_row = plain_output->GetReadPtr() + y * plain_output->GetPitch();
+    const auto* dither_row = dither_output->GetReadPtr() + y * dither_output->GetPitch();
+    const auto* source_row = plain_source->GetReadPtr() + y * plain_source->GetPitch();
+    for (int byte = 0; byte < vi.width * 3; ++byte) {
+      EXPECT_EQ(plain_row[byte], source_row[byte]) << "byte=" << byte << " y=" << y;
+      EXPECT_LE(std::abs(static_cast<int>(dither_row[byte]) - static_cast<int>(plain_row[byte])), 1)
+          << "byte=" << byte << " y=" << y;
+      changed_components += dither_row[byte] != plain_row[byte] ? 1 : 0;
+    }
+  }
+  EXPECT_GT(changed_components, 0);
+  EXPECT_NE(plain_output->CheckMemory(), 1);
+  EXPECT_NE(dither_output->CheckMemory(), 1);
+  EXPECT_EQ(plain_clip_impl->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(dither_clip_impl->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(plain_source, vi), plain_before);
+  EXPECT_EQ(FrameSnapshot::capture(dither_source, vi), dither_before);
+}
+
+TEST(RGBAdjustFilter, ReadsConditionalScaleBiasAndGammaVariables) {
+  AviSynthEnvironment environment;
+  constexpr int width = 5;
+  constexpr int height = 2;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_BGR24, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(source, 0x92, DEFAULT_PLANE);
+  write_frame_plane<std::uint8_t>(source, DEFAULT_PLANE, [](int byte, int y) {
+    const int component = byte % 3;
+    const int x = byte / 3;
+    return static_cast<std::uint8_t>(17 + x * 29 + y * 13 + component * 7);
+  });
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+  ASSERT_TRUE(environment.get()->SetVar("rgbadjust_r_f23", AVSValue(0.5)));
+  ASSERT_TRUE(environment.get()->SetVar("rgbadjust_gb_f23", AVSValue(10.0)));
+  ASSERT_TRUE(environment.get()->SetVar("rgbadjust_bg_f23", AVSValue(2.0)));
+
+  RGBAdjust filter(clip, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0,
+                   false, false, true, "_f23", environment.get());
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  for (int y = 0; y < height; ++y) {
+    const auto* source_row = source->GetReadPtr() + y * source->GetPitch();
+    const auto* output_row = output->GetReadPtr() + y * output->GetPitch();
+    for (int x = 0; x < width; ++x) {
+      const auto blue = source_row[x * 3 + 0];
+      const auto green = source_row[x * 3 + 1];
+      const auto red = source_row[x * 3 + 2];
+      EXPECT_EQ(output_row[x * 3 + 0], adjust_sample(blue, 1.0, 0.0, 2.0, 255.0))
+          << "blue x=" << x << " y=" << y;
+      EXPECT_EQ(output_row[x * 3 + 1], adjust_channel(green, 1.0, 10.0))
+          << "green x=" << x << " y=" << y;
+      EXPECT_EQ(output_row[x * 3 + 2], adjust_channel(red, 0.5, 0.0))
+          << "red x=" << x << " y=" << y;
+    }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+TEST(RGBAdjustFilter, AnalyzeOverlaysStatisticsOnPackedOutput) {
+  AviSynthEnvironment environment;
+  constexpr int width = 320;
+  constexpr int height = 120;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_BGR24, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(source, 0x63, DEFAULT_PLANE);
+  write_frame_plane<std::uint8_t>(source, DEFAULT_PLANE, [](int byte, int y) {
+    const int component = byte % 3;
+    const int x = byte / 3;
+    return static_cast<std::uint8_t>((x * 11 + y * 17 + component * 43) & 0xff);
+  });
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  RGBAdjust filter(clip, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0,
+                   true, false, false, "", environment.get());
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  std::size_t changed_components = 0;
+  for (int y = 0; y < height; ++y) {
+    const auto* source_row = source->GetReadPtr() + y * source->GetPitch();
+    const auto* output_row = output->GetReadPtr() + y * output->GetPitch();
+    for (int byte = 0; byte < vi.width * 3; ++byte) {
+      changed_components += output_row[byte] != source_row[byte] ? 1U : 0U;
+    }
+  }
+  EXPECT_GT(changed_components, 0U);
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
 }  // namespace
