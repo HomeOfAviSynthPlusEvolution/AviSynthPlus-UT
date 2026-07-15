@@ -10,6 +10,7 @@
 #undef AVS_UNUSED
 #undef AVSUT_RESIZE_FILTER_UNDEF_AVS_UNUSED
 #endif
+#include "convert/convert_helper.h"
 
 #include "support/video_filter_test_support.h"
 
@@ -19,6 +20,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <ostream>
 #include <vector>
 
 namespace {
@@ -29,6 +31,76 @@ using avsut::test::FrameSnapshot;
 using avsut::test::make_video_info;
 using avsut::test::StaticFrameClip;
 using avsut::test::VideoInfoSpec;
+using avsut::test::video_frame_planes;
+using avsut::test::write_frame_plane;
+
+struct TriangleTap {
+  int source_index;
+  int coefficient;
+};
+
+std::vector<TriangleTap> triangle_taps(int source_size, double crop_start, double crop_size,
+                                       int target_size, int target_index, double center,
+                                       int bits_per_pixel) {
+  const double source_step = crop_size / static_cast<double>(target_size);
+  const double filter_unit = std::max(source_step, 1.0);
+  const double impulse_step = 1.0 / filter_unit;
+  const double filter_support = filter_unit;
+  const int fir_filter_size = std::max(static_cast<int>(std::ceil(filter_support * 2.0)), 1);
+  const int last_source = source_size - 1;
+  const int fixed_point_scale =
+      bits_per_pixel > 8 && bits_per_pixel <= 16 ? FPScale16 : FPScale;
+
+  // Mirror the public triangle-kernel setup, including edge folding and its fixed-point
+  // differential rounding, without using the upstream coefficient table as the oracle.
+  const double position = crop_start + source_step * center - center +
+                          source_step * static_cast<double>(target_index);
+  const int start_position = static_cast<int>(position + filter_support) - fir_filter_size + 1;
+  std::vector<double> raw_coefficients;
+  double total = 0.0;
+  for (int k = 0; k < fir_filter_size; ++k) {
+    const int source_index = start_position + k;
+    const double distance = std::abs((position - source_index) * impulse_step);
+    const double coefficient = distance < 1.0 ? 1.0 - distance : 0.0;
+    raw_coefficients.push_back(coefficient);
+    total += coefficient;
+  }
+  if (total == 0.0) {
+    total = 1.0;
+  }
+
+  std::vector<TriangleTap> taps;
+  double accumulated = 0.0;
+  double previous = 0.0;
+  for (int k = 0; k < fir_filter_size; ++k) {
+    const int source_index = start_position + k;
+    accumulated += raw_coefficients[static_cast<std::size_t>(k)];
+    if (source_index >= 0 && source_index <= last_source) {
+      const double current = previous + accumulated / total;
+      const int current_fixed = static_cast<int>(current * fixed_point_scale + 0.5);
+      const int previous_fixed = static_cast<int>(previous * fixed_point_scale + 0.5);
+      taps.push_back(TriangleTap{source_index, current_fixed - previous_fixed});
+      previous = current;
+      accumulated = 0.0;
+    }
+  }
+
+  if (accumulated != 0.0) {
+    const double current = previous + accumulated / total;
+    const int current_fixed = static_cast<int>(current * fixed_point_scale + 0.5);
+    const int previous_fixed = static_cast<int>(previous * fixed_point_scale + 0.5);
+    if (!taps.empty()) {
+      taps.back().coefficient += current_fixed - previous_fixed;
+    } else {
+      taps.push_back(TriangleTap{std::clamp(start_position, 0, last_source), current_fixed});
+    }
+  }
+
+  if (taps.empty()) {
+    taps.push_back(TriangleTap{std::clamp(start_position, 0, last_source), fixed_point_scale});
+  }
+  return taps;
+}
 
 void fill_yv24_pattern(PVideoFrame& frame) {
   constexpr std::array<std::uint8_t, 3> bases{3, 67, 131};
@@ -210,6 +282,350 @@ TEST(FilteredResizeFilter, PointResizeVerticalUsesNearestSourceCoordinates) {
   }
   EXPECT_NE(output->CheckMemory(), 1);
   EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+template <typename Pixel>
+Pixel triangle_integer_sample(const PVideoFrame& source, int plane, bool horizontal, int fixed_index,
+                              const std::vector<TriangleTap>& taps, int bits_per_pixel) {
+  constexpr int scale_bits = sizeof(Pixel) == 1 ? FPScale8bits : FPScale16bits;
+  int result = 1 << (scale_bits - 1);
+  for (const auto& tap : taps) {
+    const auto* row = reinterpret_cast<const Pixel*>(source->GetReadPtr(plane) +
+                                                     (horizontal ? fixed_index : tap.source_index) *
+                                                         source->GetPitch(plane));
+    int value = row[horizontal ? tap.source_index : fixed_index];
+    if constexpr (sizeof(Pixel) == sizeof(std::uint16_t)) {
+      if (bits_per_pixel == 16) {
+        value -= 32768;
+      }
+    }
+    result += value * tap.coefficient;
+  }
+  if constexpr (sizeof(Pixel) == sizeof(std::uint16_t)) {
+    if (bits_per_pixel == 16) {
+      result += 32768 << FPScale16bits;
+    }
+  }
+  result >>= scale_bits;
+  const int limit = (1 << bits_per_pixel) - 1;
+  return static_cast<Pixel>(std::clamp(result, 0, limit));
+}
+
+double plane_center_for_placement(int plane, int placement, const VideoInfo& vi, bool horizontal) {
+  if ((!vi.IsYUV() && !vi.IsYUVA()) || (plane != PLANAR_U && plane != PLANAR_V)) {
+    return 0.5;
+  }
+  const int subsampling = horizontal ? vi.GetPlaneWidthSubsampling(plane)
+                                     : vi.GetPlaneHeightSubsampling(plane);
+  if (subsampling == 0) {
+    return 0.5;
+  }
+  if (horizontal) {
+    return placement == AVS_CHROMA_LEFT || placement == AVS_CHROMA_TOP_LEFT ? 0.25 : 0.5;
+  }
+  return placement == AVS_CHROMA_TOP_LEFT ? 0.25 : 0.5;
+}
+
+template <typename Pixel>
+void fill_planar_resize_pattern(PVideoFrame& frame, const VideoInfo& vi) {
+  for (const int plane : video_frame_planes(vi)) {
+    fill_plane_full_pitch(frame, static_cast<std::uint8_t>(0x80 + plane), plane);
+    write_frame_plane<Pixel>(frame, plane, [plane](int x, int y) {
+      return static_cast<Pixel>(17 + plane * 3 + x * 37 + y * 53);
+    });
+  }
+}
+
+enum class ResizeDirection { Horizontal, Vertical };
+
+struct PlanarResizeCase {
+  int pixel_type;
+  ResizeDirection direction;
+  int placement;
+  const char* name;
+};
+
+template <typename Pixel>
+void run_planar_triangle_case(const PlanarResizeCase& test_case) {
+  AviSynthEnvironment environment;
+  const bool horizontal = test_case.direction == ResizeDirection::Horizontal;
+  const bool planar_rgb = test_case.pixel_type == VideoInfo::CS_RGBP16;
+  const int source_width = planar_rgb ? 7 : 10;
+  const int source_height = planar_rgb || test_case.pixel_type == VideoInfo::CS_YV16 ? 5 : 6;
+  const int target_width = horizontal ? (planar_rgb ? 4 : 6) : source_width;
+  const int target_height = horizontal ? source_height : (planar_rgb ||
+                                                           test_case.pixel_type == VideoInfo::CS_YV16
+                                                               ? 3
+                                                               : 4);
+  const int bits_per_pixel = sizeof(Pixel) == sizeof(std::uint8_t) ? 8 : 16;
+  const auto vi = make_video_info(
+      VideoInfoSpec{source_width, source_height, test_case.pixel_type, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_planar_resize_pattern<Pixel>(source, vi);
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+  TriangleFilter triangle_filter;
+
+  PVideoFrame output;
+  if (horizontal) {
+    FilteredResizeH filter(clip, 0.0, static_cast<double>(source_width), target_width,
+                           &triangle_filter, true, test_case.placement, environment.get());
+    EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+    output = filter.GetFrame(0, environment.get());
+  } else {
+    FilteredResizeV filter(clip, 0.0, static_cast<double>(source_height), target_height,
+                           &triangle_filter, true, test_case.placement, environment.get());
+    EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+    output = filter.GetFrame(0, environment.get());
+  }
+
+  for (const int plane : video_frame_planes(vi)) {
+    const bool chroma = !planar_rgb && (plane == PLANAR_U || plane == PLANAR_V);
+    const int subsampling = chroma
+                                ? (horizontal ? vi.GetPlaneWidthSubsampling(plane)
+                                              : vi.GetPlaneHeightSubsampling(plane))
+                                : 0;
+    const double crop_start = 0.0;
+    const double crop_size = horizontal ? static_cast<double>(source_width)
+                                        : static_cast<double>(source_height);
+    const double plane_crop_start = chroma ? crop_start / (1 << subsampling) : crop_start;
+    const double plane_crop_size = chroma ? crop_size / (1 << subsampling) : crop_size;
+    const int source_axis = horizontal
+                                ? source->GetRowSize(plane) / static_cast<int>(sizeof(Pixel))
+                                : source->GetHeight(plane);
+    const int target_axis = horizontal
+                                ? output->GetRowSize(plane) / static_cast<int>(sizeof(Pixel))
+                                : output->GetHeight(plane);
+    for (int fixed = 0; fixed < (horizontal ? output->GetHeight(plane)
+                                              : output->GetRowSize(plane) /
+                                                    static_cast<int>(sizeof(Pixel)));
+         ++fixed) {
+      for (int index = 0; index < target_axis; ++index) {
+        const auto taps = triangle_taps(
+            source_axis, plane_crop_start, plane_crop_size, target_axis, index,
+            chroma ? plane_center_for_placement(plane, test_case.placement, vi, horizontal) : 0.5,
+            bits_per_pixel);
+        const Pixel expected = triangle_integer_sample<Pixel>(
+            source, plane, horizontal, fixed, taps, bits_per_pixel);
+        const int output_x = horizontal ? index : fixed;
+        const int output_y = horizontal ? fixed : index;
+        const auto* output_row = reinterpret_cast<const Pixel*>(
+            output->GetReadPtr(plane) + output_y * output->GetPitch(plane));
+        EXPECT_EQ(output_row[output_x], expected)
+            << "case=" << test_case.name << " plane=" << plane << " x=" << output_x
+            << " y=" << output_y << " direction=" << (horizontal ? "horizontal" : "vertical");
+      }
+    }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+class PlanarTriangleResizeTest : public ::testing::TestWithParam<PlanarResizeCase> {};
+
+TEST_P(PlanarTriangleResizeTest, AppliesIndependentTriangleReferenceAcrossPlanes) {
+  const auto& test_case = GetParam();
+  if (test_case.pixel_type == VideoInfo::CS_RGBP16) {
+    run_planar_triangle_case<std::uint16_t>(test_case);
+  } else {
+    run_planar_triangle_case<std::uint8_t>(test_case);
+  }
+}
+
+void PrintTo(const PlanarResizeCase& test_case, std::ostream* stream) {
+  *stream << test_case.name;
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Formats, PlanarTriangleResizeTest,
+    ::testing::Values(
+        PlanarResizeCase{VideoInfo::CS_YV12, ResizeDirection::Horizontal, AVS_CHROMA_CENTER,
+                         "Yv12HorizontalMpeg1"},
+        PlanarResizeCase{VideoInfo::CS_YV12, ResizeDirection::Vertical, AVS_CHROMA_TOP_LEFT,
+                         "Yv12VerticalTopLeft"},
+        PlanarResizeCase{VideoInfo::CS_YV16, ResizeDirection::Horizontal, AVS_CHROMA_LEFT,
+                         "Yv16HorizontalMpeg2"},
+        PlanarResizeCase{VideoInfo::CS_YV16, ResizeDirection::Vertical, AVS_CHROMA_CENTER,
+                         "Yv16VerticalMpeg1"},
+        PlanarResizeCase{VideoInfo::CS_YUVA420, ResizeDirection::Horizontal, AVS_CHROMA_LEFT,
+                         "Yuva420HorizontalMpeg2"},
+        PlanarResizeCase{VideoInfo::CS_YUVA420, ResizeDirection::Vertical, AVS_CHROMA_CENTER,
+                         "Yuva420VerticalMpeg1"},
+        PlanarResizeCase{VideoInfo::CS_RGBP16, ResizeDirection::Horizontal, AVS_CHROMA_UNUSED,
+                         "Rgbp16Horizontal"},
+        PlanarResizeCase{VideoInfo::CS_RGBP16, ResizeDirection::Vertical, AVS_CHROMA_UNUSED,
+                         "Rgbp16Vertical"}),
+    [](const ::testing::TestParamInfo<PlanarResizeCase>& info) { return info.param.name; });
+
+template <typename Pixel>
+void fill_packed_resize_pattern(PVideoFrame& frame, int components) {
+  fill_plane_full_pitch(frame, 0x6d, DEFAULT_PLANE);
+  write_frame_plane<Pixel>(frame, DEFAULT_PLANE, [components, height = frame->GetHeight()](int index,
+                                                                                           int raw_y) {
+    const int x = index / components;
+    const int component = index % components;
+    const int logical_y = height - 1 - raw_y;
+    return static_cast<Pixel>(13 + x * 41 + logical_y * 67 + component * 101);
+  });
+}
+
+template <typename Pixel>
+Pixel packed_triangle_sample(const PVideoFrame& source, int components, bool horizontal,
+                             int logical_y, int logical_x, int component,
+                             const std::vector<TriangleTap>& taps, int bits_per_pixel) {
+  constexpr int scale_bits = sizeof(Pixel) == 1 ? FPScale8bits : FPScale16bits;
+  int result = 1 << (scale_bits - 1);
+  for (const auto& tap : taps) {
+    const int raw_y = horizontal ? source->GetHeight() - 1 - logical_y : tap.source_index;
+    const int x = horizontal ? tap.source_index : logical_x;
+    const auto* row = reinterpret_cast<const Pixel*>(source->GetReadPtr() + raw_y * source->GetPitch());
+    int value = row[x * components + component];
+    if constexpr (sizeof(Pixel) == sizeof(std::uint16_t)) {
+      if (bits_per_pixel == 16) {
+        value -= 32768;
+      }
+    }
+    result += value * tap.coefficient;
+  }
+  if constexpr (sizeof(Pixel) == sizeof(std::uint16_t)) {
+    if (bits_per_pixel == 16) {
+      result += 32768 << FPScale16bits;
+    }
+  }
+  result >>= scale_bits;
+  const int limit = (1 << bits_per_pixel) - 1;
+  return static_cast<Pixel>(std::clamp(result, 0, limit));
+}
+
+struct PackedResizeCase {
+  int pixel_type;
+  int components;
+  ResizeDirection direction;
+  const char* name;
+};
+
+template <typename Pixel>
+void run_packed_triangle_case(const PackedResizeCase& test_case) {
+  AviSynthEnvironment environment;
+  const bool horizontal = test_case.direction == ResizeDirection::Horizontal;
+  const int source_width = test_case.pixel_type == VideoInfo::CS_BGR24 ? 7 : 5;
+  const int source_height = horizontal ? 4 : 5;
+  const int target_width = horizontal ? 4 : source_width;
+  const int target_height = horizontal ? source_height : 3;
+  const int bits_per_pixel = sizeof(Pixel) == sizeof(std::uint8_t) ? 8 : 16;
+  const auto vi = make_video_info(
+      VideoInfoSpec{source_width, source_height, test_case.pixel_type, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_packed_resize_pattern<Pixel>(source, test_case.components);
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+  TriangleFilter triangle_filter;
+
+  PVideoFrame output;
+  if (horizontal) {
+    FilteredResizeH filter(clip, 0.0, static_cast<double>(source_width), target_width,
+                           &triangle_filter, true, AVS_CHROMA_UNUSED, environment.get());
+    EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+    output = filter.GetFrame(0, environment.get());
+  } else {
+    FilteredResizeV filter(clip, 0.0, static_cast<double>(source_height), target_height,
+                           &triangle_filter, true, AVS_CHROMA_UNUSED, environment.get());
+    EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+    output = filter.GetFrame(0, environment.get());
+  }
+
+  const int source_axis = horizontal ? source_width : source_height;
+  const int target_axis = horizontal ? target_width : target_height;
+  for (int y = 0; y < target_height; ++y) {
+    const int output_raw_y = target_height - 1 - y;
+    const auto* output_row = reinterpret_cast<const Pixel*>(
+        output->GetReadPtr() + output_raw_y * output->GetPitch());
+    for (int x = 0; x < target_width; ++x) {
+      for (int component = 0; component < test_case.components; ++component) {
+        const int target_index = horizontal ? x : output_raw_y;
+        const auto taps = triangle_taps(source_axis, 0.0, static_cast<double>(source_axis),
+                                        target_axis, target_index, 0.5, bits_per_pixel);
+        const Pixel expected = packed_triangle_sample<Pixel>(
+            source, test_case.components, horizontal, y, x, component, taps, bits_per_pixel);
+        EXPECT_EQ(output_row[x * test_case.components + component], expected)
+            << "case=" << test_case.name << " component=" << component << " x=" << x
+            << " y=" << y;
+      }
+    }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+class PackedTriangleResizeTest : public ::testing::TestWithParam<PackedResizeCase> {};
+
+TEST_P(PackedTriangleResizeTest, PreservesPackedComponentsAndBottomUpRows) {
+  const auto& test_case = GetParam();
+  if (test_case.pixel_type == VideoInfo::CS_BGR24) {
+    run_packed_triangle_case<std::uint8_t>(test_case);
+  } else {
+    run_packed_triangle_case<std::uint16_t>(test_case);
+  }
+}
+
+void PrintTo(const PackedResizeCase& test_case, std::ostream* stream) {
+  *stream << test_case.name;
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Formats, PackedTriangleResizeTest,
+    ::testing::Values(PackedResizeCase{VideoInfo::CS_BGR24, 3, ResizeDirection::Horizontal,
+                                       "Bgr24Horizontal"},
+                      PackedResizeCase{VideoInfo::CS_BGR24, 3, ResizeDirection::Vertical,
+                                       "Bgr24Vertical"},
+                      PackedResizeCase{VideoInfo::CS_BGR64, 4, ResizeDirection::Horizontal,
+                                       "Bgr64Horizontal"},
+                      PackedResizeCase{VideoInfo::CS_BGR64, 4, ResizeDirection::Vertical,
+                                       "Bgr64Vertical"}),
+    [](const ::testing::TestParamInfo<PackedResizeCase>& info) { return info.param.name; });
+
+TEST(FilteredResizeFilter, RejectsOddYv12HorizontalTargetWidth) {
+  AviSynthEnvironment environment;
+  constexpr int width = 8;
+  constexpr int height = 6;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_YV12, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_planar_resize_pattern<std::uint8_t>(source, vi);
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+  TriangleFilter triangle_filter;
+
+  EXPECT_THROW(
+      FilteredResizeH(clip, 0.0, static_cast<double>(width), 7, &triangle_filter, true,
+                      AVS_CHROMA_CENTER, environment.get()),
+      AvisynthError);
+  EXPECT_TRUE(source_clip->frame_requests().empty());
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+TEST(FilteredResizeFilter, RejectsOddYv12VerticalTargetHeight) {
+  AviSynthEnvironment environment;
+  constexpr int width = 8;
+  constexpr int height = 6;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_YV12, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_planar_resize_pattern<std::uint8_t>(source, vi);
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+  TriangleFilter triangle_filter;
+
+  EXPECT_THROW(
+      FilteredResizeV(clip, 0.0, static_cast<double>(height), 5, &triangle_filter, true,
+                      AVS_CHROMA_CENTER, environment.get()),
+      AvisynthError);
+  EXPECT_TRUE(source_clip->frame_requests().empty());
   EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
 }
 
