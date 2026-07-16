@@ -483,6 +483,39 @@ TEST(RGBAdjustFilter, ReadsConditionalScaleBiasAndGammaVariables) {
   EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
 }
 
+TEST(RGBAdjustFilter, LeavesConditionalVariablesUnusedWhenDisabled) {
+  AviSynthEnvironment environment;
+  constexpr int width = 5;
+  constexpr int height = 2;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_BGR24, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(source, 0xa7, DEFAULT_PLANE);
+  write_frame_plane<std::uint8_t>(source, DEFAULT_PLANE, [](int byte, int y) {
+    const int component = byte % 3;
+    const int x = byte / 3;
+    return static_cast<std::uint8_t>(20 + x * 31 + y * 11 + component * 9);
+  });
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+  ASSERT_TRUE(environment.get()->SetVar("rgbadjust_r_f23_disabled", AVSValue(0.5)));
+
+  RGBAdjust filter(clip, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0,
+                   false, false, false, "_f23_disabled", environment.get());
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  for (int y = 0; y < height; ++y) {
+    const auto* source_row = source->GetReadPtr() + y * source->GetPitch();
+    const auto* output_row = output->GetReadPtr() + y * output->GetPitch();
+    for (int byte = 0; byte < vi.width * 3; ++byte) {
+      EXPECT_EQ(output_row[byte], source_row[byte]) << "byte=" << byte << " y=" << y;
+    }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
 TEST(RGBAdjustFilter, AnalyzeOverlaysStatisticsOnPackedOutput) {
   AviSynthEnvironment environment;
   constexpr int width = 320;
