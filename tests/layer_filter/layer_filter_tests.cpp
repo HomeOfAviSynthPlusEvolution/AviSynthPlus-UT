@@ -252,8 +252,12 @@ TEST(ResetMaskFilter, UsesOpacityForPlanarYuvaAlpha) {
       EXPECT_EQ(row[x], 128) << "alpha x=" << x << " y=" << y;
     }
   }
+  const auto output_before = FrameSnapshot::capture(output, vi);
+  const PVideoFrame repeat = filter.GetFrame(0, environment.get());
+  EXPECT_EQ(FrameSnapshot::capture(repeat, vi), output_before);
   EXPECT_NE(output->CheckMemory(), 1);
-  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_NE(repeat->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>({0, 0}));
   EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
 }
 
@@ -330,8 +334,12 @@ TEST(ShowChannelFilter, ExtractsPackedRedToYuvaAndPreservesAlpha) {
       EXPECT_EQ(output_a[x], source_row[4 * x + 3]) << "A x=" << x << " y=" << y;
     }
   }
+  const auto output_before = FrameSnapshot::capture(output, filter.GetVideoInfo());
+  const PVideoFrame repeat = filter.GetFrame(0, environment.get());
+  EXPECT_EQ(FrameSnapshot::capture(repeat, filter.GetVideoInfo()), output_before);
   EXPECT_NE(output->CheckMemory(), 1);
-  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_NE(repeat->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>({0, 0}));
   EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
 }
 
@@ -412,11 +420,15 @@ TEST(MergeRgbFilter, AssemblesPlanarRgbapFromPlanarChannelSources) {
             read_frame_plane_active<std::uint8_t>(red, PLANAR_R));
   EXPECT_EQ(read_frame_plane_active<std::uint8_t>(output, PLANAR_A),
             read_frame_plane_active<std::uint8_t>(alpha, PLANAR_A));
+  const auto output_before = FrameSnapshot::capture(output, filter.GetVideoInfo());
+  const PVideoFrame repeat = filter.GetFrame(0, environment.get());
+  EXPECT_EQ(FrameSnapshot::capture(repeat, filter.GetVideoInfo()), output_before);
   EXPECT_NE(output->CheckMemory(), 1);
-  EXPECT_EQ(blue_clip_impl->frame_requests(), std::vector<int>{0});
-  EXPECT_EQ(green_clip_impl->frame_requests(), std::vector<int>{0});
-  EXPECT_EQ(red_clip_impl->frame_requests(), std::vector<int>{0});
-  EXPECT_EQ(alpha_clip_impl->frame_requests(), std::vector<int>{0});
+  EXPECT_NE(repeat->CheckMemory(), 1);
+  EXPECT_EQ(blue_clip_impl->frame_requests(), std::vector<int>({0, 0}));
+  EXPECT_EQ(green_clip_impl->frame_requests(), std::vector<int>({0, 0}));
+  EXPECT_EQ(red_clip_impl->frame_requests(), std::vector<int>({0, 0}));
+  EXPECT_EQ(alpha_clip_impl->frame_requests(), std::vector<int>({0, 0}));
   EXPECT_EQ(FrameSnapshot::capture(blue, vi), blue_before);
   EXPECT_EQ(FrameSnapshot::capture(green, vi), green_before);
   EXPECT_EQ(FrameSnapshot::capture(red, vi), red_before);

@@ -89,6 +89,7 @@ TEST(Histogram, DrawsClassicPerRowHistogramWithStableMapping) {
 
   Histogram filter(clip, Histogram::ModeClassic, AVSValue(), 8, false, false, nullptr,
                    classic_params(), environment.get());
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
   const PVideoFrame output = filter.GetFrame(0, environment.get());
 
   ASSERT_EQ(output->GetRowSize(PLANAR_Y), 256);

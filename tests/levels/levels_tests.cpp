@@ -274,8 +274,12 @@ TEST_P(MaskHsYuv444Test, SelectsWrappedHueAndSaturationWithIndependentOutputRang
           << "realcalc=" << realcalc << " x=" << x << " y=" << y;
     }
   }
+  const auto output_before = FrameSnapshot::capture(output, filter.GetVideoInfo());
+  const PVideoFrame repeat = filter.GetFrame(0, environment.get());
+  EXPECT_EQ(FrameSnapshot::capture(repeat, filter.GetVideoInfo()), output_before);
   EXPECT_NE(output->CheckMemory(), 1);
-  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_NE(repeat->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>({0, 0}));
   EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
 }
 
