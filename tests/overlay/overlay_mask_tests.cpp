@@ -13,19 +13,20 @@ namespace {
 void add_overlay_integer_variants(std::vector<OverlayIntegerCase>& cases, MaskMode mask_mode,
                                   int bits_per_pixel, std::size_t width_pixels,
                                   std::size_t height_pixels, int opacity,
-                                  const std::string& opacity_label, const char* expected_hash) {
+                                  const std::string& opacity_label, const char* expected_hash,
+                                  std::uint32_t seed = 0) {
   const auto scalar = get_overlay_blend_masked_fn_c(mask_mode != MASK444, mask_mode);
   const auto sse41 = get_overlay_blend_masked_fn_sse41(mask_mode != MASK444, mask_mode);
   const auto avx2 = get_overlay_blend_masked_fn_avx2(mask_mode != MASK444, mask_mode);
   cases.push_back(make_overlay_integer_case(
       mask_mode, bits_per_pixel, width_pixels, height_pixels, opacity, opacity_label, scalar,
-      Variant<OverlayMaskedFuncPtr>{"c", scalar, IsaRequirement::Scalar}, expected_hash));
+      Variant<OverlayMaskedFuncPtr>{"c", scalar, IsaRequirement::Scalar}, expected_hash, seed));
   cases.push_back(make_overlay_integer_case(
       mask_mode, bits_per_pixel, width_pixels, height_pixels, opacity, opacity_label, scalar,
-      Variant<OverlayMaskedFuncPtr>{"sse4.1", sse41, IsaRequirement::Sse41}, expected_hash));
+      Variant<OverlayMaskedFuncPtr>{"sse4.1", sse41, IsaRequirement::Sse41}, expected_hash, seed));
   cases.push_back(make_overlay_integer_case(
       mask_mode, bits_per_pixel, width_pixels, height_pixels, opacity, opacity_label, scalar,
-      Variant<OverlayMaskedFuncPtr>{"avx2", avx2, IsaRequirement::Avx2}, expected_hash));
+      Variant<OverlayMaskedFuncPtr>{"avx2", avx2, IsaRequirement::Avx2}, expected_hash, seed));
 }
 
 std::vector<OverlayIntegerCase> overlay_integer_cases() {
@@ -59,6 +60,10 @@ std::vector<OverlayIntegerCase> overlay_integer_cases() {
     add_overlay_integer_variants(cases, mask_mode, 16, 17, 5, 39321, "Partial39321",
                                  mask420 ? "4e75a56021d46239" : "bcf6c37afc46ac99");
   }
+  add_overlay_integer_variants(cases, MASK420, 8, 37, 5, 153, "Partial153", "fc2ec5d742c01e71",
+                               0xF30C1E01U);
+  add_overlay_integer_variants(cases, MASK422, 16, 19, 5, 39321, "Partial39321", "85f6c5f6a605d418",
+                               0xF30C1E02U);
   return cases;
 }
 

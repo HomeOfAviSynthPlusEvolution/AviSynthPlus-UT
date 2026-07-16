@@ -5,6 +5,7 @@
 #include "filters/overlay/intel/blend_common_sse.h"
 
 #include "support/comparators.h"
+#include "support/deterministic_data.h"
 #include "support/guarded_video_buffer.h"
 #include "support/stable_hash.h"
 #include "support/variant_registry.h"
@@ -44,6 +45,7 @@ struct OverlayIntegerCase {
   OverlayMaskedFuncPtr scalar_function{};
   Variant<OverlayMaskedFuncPtr> variant;
   std::string expected_hash;
+  std::uint32_t seed{};
   std::string name;
 };
 
@@ -114,7 +116,11 @@ inline std::string overlay_integer_case_name(const OverlayIntegerCase& test_case
   stream << overlay_mask_mode_name(test_case.mask_mode) << "_Bpp" << test_case.bits_per_pixel
          << "_Width" << test_case.width_pixels << "_Height" << test_case.height_pixels
          << "_DstPitch" << test_case.destination_pitch << "_MaskPitch" << test_case.mask_pitch
-         << "_Opacity" << test_case.opacity_label << "_PatternBoundaryValues_"
+         << "_Opacity" << test_case.opacity_label;
+  if (test_case.seed != 0) {
+    stream << "_Seed" << std::uppercase << std::hex << test_case.seed;
+  }
+  stream << (test_case.seed == 0 ? "_PatternBoundaryValues_" : "_PatternFixedRandom_")
          << overlay_variant_name(test_case.variant);
   return stream.str();
 }
@@ -131,7 +137,8 @@ inline std::string overlay_float_case_name(const OverlayFloatCase& test_case) {
 inline OverlayIntegerCase make_overlay_integer_case(
     MaskMode mask_mode, int bits_per_pixel, std::size_t width_pixels, std::size_t height_pixels,
     int opacity, std::string opacity_label, OverlayMaskedFuncPtr scalar_function,
-    Variant<OverlayMaskedFuncPtr> variant, std::string expected_hash = {}) {
+    Variant<OverlayMaskedFuncPtr> variant, std::string expected_hash = {},
+    std::uint32_t seed = 0) {
   const auto bytes_per_pixel = bits_per_pixel == 8 ? std::size_t{1} : std::size_t{2};
   const auto mask_width_pixels = overlay_mask_width(mask_mode, width_pixels);
   const auto mask_height_pixels = overlay_mask_height(mask_mode, height_pixels);
@@ -149,6 +156,7 @@ inline OverlayIntegerCase make_overlay_integer_case(
                             scalar_function,
                             std::move(variant),
                             std::move(expected_hash),
+                            seed,
                             {}};
   result.name = overlay_integer_case_name(result);
   return result;
@@ -290,9 +298,15 @@ void run_overlay_integer_case_typed(const OverlayIntegerCase& test_case) {
   GuardedVideoBuffer<T> scalar(test_case.width_pixels, test_case.height_pixels,
                                test_case.destination_pitch, 32);
 
-  fill_overlay_integer_plane(destination.view(), max_value, 0);
-  fill_overlay_integer_plane(overlay.view(), max_value, 3);
-  fill_overlay_integer_plane(mask.view(), max_value, 6);
+  if (test_case.seed != 0) {
+    fill_random(destination.view(), test_case.seed);
+    fill_random(overlay.view(), test_case.seed ^ 0xA5A5A5A5U);
+    fill_random(mask.view(), test_case.seed ^ 0x5A5A5A5AU);
+  } else {
+    fill_overlay_integer_plane(destination.view(), max_value, 0);
+    fill_overlay_integer_plane(overlay.view(), max_value, 3);
+    fill_overlay_integer_plane(mask.view(), max_value, 6);
+  }
   const auto overlay_snapshot = overlay.snapshot_active();
   const auto mask_snapshot = mask.snapshot_active();
   copy_overlay_active(destination.view().as_const(), expected.view());
