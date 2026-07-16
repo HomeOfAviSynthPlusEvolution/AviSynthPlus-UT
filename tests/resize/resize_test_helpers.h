@@ -18,6 +18,7 @@
 
 #include "support/comparators.h"
 #include "support/avisynth_environment.h"
+#include "support/deterministic_data.h"
 #include "support/guarded_video_buffer.h"
 #include "support/stable_hash.h"
 #include "support/variant_registry.h"
@@ -140,6 +141,7 @@ struct ResizeVertical8Case {
   std::size_t destination_pitch{};
   Variant<ResizeFunction> variant;
   std::string expected_hash;
+  std::uint32_t seed{};
   std::string name;
 };
 
@@ -163,6 +165,7 @@ struct ResizeVertical16Case {
   std::size_t destination_pitch{};
   Variant<ResizeFunction> variant;
   std::string expected_hash;
+  std::uint32_t seed{};
   std::string name;
 };
 
@@ -174,6 +177,7 @@ struct ResizeHorizontal8Case {
   std::size_t destination_pitch{};
   Variant<ResizeFunction> variant;
   std::string expected_hash;
+  std::uint32_t seed{};
   std::optional<Avx512HorizontalCoefficientLayout> avx512_coefficient_layout;
   ResizeFilter filter{ResizeFilter::Triangle};
   std::string name;
@@ -188,6 +192,7 @@ struct ResizeHorizontal16Case {
   std::size_t destination_pitch{};
   Variant<ResizeFunction> variant;
   std::string expected_hash;
+  std::uint32_t seed{};
   std::optional<Avx512HorizontalCoefficientLayout> avx512_coefficient_layout;
   ResizeFilter filter{ResizeFilter::Triangle};
   std::string name;
@@ -240,11 +245,16 @@ std::string resize_variant_name(const Variant<Function>& variant) {
 inline std::string resize_vertical8_case_name(std::size_t width_pixels, std::size_t source_height,
                                               std::size_t target_height, std::size_t source_pitch,
                                               std::size_t destination_pitch,
-                                              const Variant<ResizeFunction>& variant) {
+                                              const Variant<ResizeFunction>& variant,
+                                              std::uint32_t seed) {
   std::ostringstream stream;
   stream << "Plane8Vertical_Width" << width_pixels << "_SourceHeight" << source_height
          << "_TargetHeight" << target_height << "_SrcPitch" << source_pitch << "_DstPitch"
-         << destination_pitch << "_FilterTriangle_PatternBoundaryRamp_"
+         << destination_pitch;
+  if (seed != 0) {
+    stream << "_Seed" << std::uppercase << std::hex << seed;
+  }
+  stream << "_FilterTriangle_" << (seed == 0 ? "PatternBoundaryRamp_" : "PatternFixedRandom_")
          << resize_variant_name(variant);
   return stream.str();
 }
@@ -262,11 +272,16 @@ inline std::string resize_vertical16_case_name(int bits_per_pixel, std::size_t w
                                                std::size_t source_height, std::size_t target_height,
                                                std::size_t source_pitch,
                                                std::size_t destination_pitch,
-                                               const Variant<ResizeFunction>& variant) {
+                                               const Variant<ResizeFunction>& variant,
+                                               std::uint32_t seed) {
   std::ostringstream stream;
   stream << "Plane16Vertical_Bits" << bits_per_pixel << "_Width" << width_pixels << "_SourceHeight"
          << source_height << "_TargetHeight" << target_height << "_SrcPitch" << source_pitch
-         << "_DstPitch" << destination_pitch << "_FilterTriangle_PatternBoundaryRamp_"
+         << "_DstPitch" << destination_pitch;
+  if (seed != 0) {
+    stream << "_Seed" << std::uppercase << std::hex << seed;
+  }
+  stream << "_FilterTriangle_" << (seed == 0 ? "PatternBoundaryRamp_" : "PatternFixedRandom_")
          << resize_variant_name(variant);
   return stream.str();
 }
@@ -274,11 +289,16 @@ inline std::string resize_vertical16_case_name(int bits_per_pixel, std::size_t w
 inline std::string resize_horizontal8_case_name(std::size_t source_width, std::size_t target_width,
                                                 std::size_t height, std::size_t source_pitch,
                                                 std::size_t destination_pitch, ResizeFilter filter,
-                                                const Variant<ResizeFunction>& variant) {
+                                                const Variant<ResizeFunction>& variant,
+                                                std::uint32_t seed) {
   std::ostringstream stream;
   stream << "Plane8Horizontal_SourceWidth" << source_width << "_TargetWidth" << target_width
          << "_Height" << height << "_SrcPitch" << source_pitch << "_DstPitch" << destination_pitch
-         << "_Filter" << resize_filter_name(filter) << "_PatternBoundaryRamp_"
+         << "_Filter" << resize_filter_name(filter);
+  if (seed != 0) {
+    stream << "_Seed" << std::uppercase << std::hex << seed;
+  }
+  stream << (seed == 0 ? "_PatternBoundaryRamp_" : "_PatternFixedRandom_")
          << resize_variant_name(variant);
   return stream.str();
 }
@@ -287,12 +307,17 @@ inline std::string resize_horizontal16_case_name(int bits_per_pixel, std::size_t
                                                  std::size_t target_width, std::size_t height,
                                                  std::size_t source_pitch,
                                                  std::size_t destination_pitch, ResizeFilter filter,
-                                                 const Variant<ResizeFunction>& variant) {
+                                                 const Variant<ResizeFunction>& variant,
+                                                 std::uint32_t seed) {
   std::ostringstream stream;
   stream << "Plane16Horizontal_Bits" << bits_per_pixel << "_SourceWidth" << source_width
          << "_TargetWidth" << target_width << "_Height" << height << "_SrcPitch" << source_pitch
-         << "_DstPitch" << destination_pitch << "_Filter" << resize_filter_name(filter)
-         << "_PatternBoundaryRamp_" << resize_variant_name(variant);
+         << "_DstPitch" << destination_pitch << "_Filter" << resize_filter_name(filter);
+  if (seed != 0) {
+    stream << "_Seed" << std::uppercase << std::hex << seed;
+  }
+  stream << (seed == 0 ? "_PatternBoundaryRamp_" : "_PatternFixedRandom_")
+         << resize_variant_name(variant);
   return stream.str();
 }
 
@@ -335,7 +360,7 @@ inline std::string resize_horizontal_float_case_name(std::size_t source_width,
 inline ResizeVertical8Case make_resize_vertical8_case(
     std::size_t width_pixels, std::size_t source_height, std::size_t target_height,
     std::size_t source_pitch, std::size_t destination_pitch, Variant<ResizeFunction> variant,
-    std::string expected_hash = {}) {
+    std::string expected_hash = {}, std::uint32_t seed = 0) {
   ResizeVertical8Case result{width_pixels,
                              source_height,
                              target_height,
@@ -343,10 +368,12 @@ inline ResizeVertical8Case make_resize_vertical8_case(
                              destination_pitch,
                              std::move(variant),
                              std::move(expected_hash),
+                             seed,
                              {}};
   result.name =
       resize_vertical8_case_name(result.width_pixels, result.source_height, result.target_height,
-                                 result.source_pitch, result.destination_pitch, result.variant);
+                                 result.source_pitch, result.destination_pitch, result.variant,
+                                 result.seed);
   return result;
 }
 
@@ -369,7 +396,7 @@ inline VerticalReduceCase make_vertical_reduce_case(
 inline ResizeVertical16Case make_resize_vertical16_case(
     int bits_per_pixel, std::size_t width_pixels, std::size_t source_height,
     std::size_t target_height, std::size_t source_pitch, std::size_t destination_pitch,
-    Variant<ResizeFunction> variant, std::string expected_hash = {}) {
+    Variant<ResizeFunction> variant, std::string expected_hash = {}, std::uint32_t seed = 0) {
   ResizeVertical16Case result{bits_per_pixel,
                               width_pixels,
                               source_height,
@@ -378,10 +405,11 @@ inline ResizeVertical16Case make_resize_vertical16_case(
                               destination_pitch,
                               std::move(variant),
                               std::move(expected_hash),
+                              seed,
                               {}};
   result.name = resize_vertical16_case_name(
       result.bits_per_pixel, result.width_pixels, result.source_height, result.target_height,
-      result.source_pitch, result.destination_pitch, result.variant);
+      result.source_pitch, result.destination_pitch, result.variant, result.seed);
   return result;
 }
 
@@ -390,7 +418,7 @@ inline ResizeHorizontal8Case make_resize_horizontal8_case(
     std::size_t source_pitch, std::size_t destination_pitch, Variant<ResizeFunction> variant,
     std::string expected_hash = {},
     std::optional<Avx512HorizontalCoefficientLayout> avx512_coefficient_layout = std::nullopt,
-    ResizeFilter filter = ResizeFilter::Triangle) {
+    ResizeFilter filter = ResizeFilter::Triangle, std::uint32_t seed = 0) {
   ResizeHorizontal8Case result{source_width,
                                target_width,
                                height,
@@ -398,12 +426,13 @@ inline ResizeHorizontal8Case make_resize_horizontal8_case(
                                destination_pitch,
                                std::move(variant),
                                std::move(expected_hash),
+                               seed,
                                std::move(avx512_coefficient_layout),
                                filter,
                                {}};
   result.name = resize_horizontal8_case_name(
       result.source_width, result.target_width, result.height, result.source_pitch,
-      result.destination_pitch, result.filter, result.variant);
+      result.destination_pitch, result.filter, result.variant, result.seed);
   return result;
 }
 
@@ -412,7 +441,7 @@ inline ResizeHorizontal16Case make_resize_horizontal16_case(
     std::size_t source_pitch, std::size_t destination_pitch, Variant<ResizeFunction> variant,
     std::string expected_hash = {},
     std::optional<Avx512HorizontalCoefficientLayout> avx512_coefficient_layout = std::nullopt,
-    ResizeFilter filter = ResizeFilter::Triangle) {
+    ResizeFilter filter = ResizeFilter::Triangle, std::uint32_t seed = 0) {
   ResizeHorizontal16Case result{bits_per_pixel,
                                 source_width,
                                 target_width,
@@ -421,12 +450,13 @@ inline ResizeHorizontal16Case make_resize_horizontal16_case(
                                 destination_pitch,
                                 std::move(variant),
                                 std::move(expected_hash),
+                                seed,
                                 std::move(avx512_coefficient_layout),
                                 filter,
                                 {}};
   result.name = resize_horizontal16_case_name(
       result.bits_per_pixel, result.source_width, result.target_width, result.height,
-      result.source_pitch, result.destination_pitch, result.filter, result.variant);
+      result.source_pitch, result.destination_pitch, result.filter, result.variant, result.seed);
   return result;
 }
 
@@ -503,7 +533,7 @@ inline void PrintTo(const ResizeHorizontalFloatCase& test_case, std::ostream* st
 }
 
 template <typename T>
-void fill_resize_input(PlaneView<T> view, int bits_per_pixel) {
+void fill_resize_input(PlaneView<T> view, int bits_per_pixel, std::uint32_t seed = 0) {
   static_assert(!std::is_const_v<T>);
   using Value = std::remove_const_t<T>;
   const std::uint64_t max_value = (std::uint64_t{1} << bits_per_pixel) - 1U;
@@ -517,6 +547,16 @@ void fill_resize_input(PlaneView<T> view, int bits_per_pixel) {
                                               max_value,
                                               17U,
                                               193U};
+
+  if (seed != 0) {
+    XorShift32 generator(seed);
+    for (std::size_t y = 0; y < view.height(); ++y) {
+      for (std::size_t x = 0; x < view.width(); ++x) {
+        view.row(y)[x] = static_cast<Value>(generator.next() & max_value);
+      }
+    }
+    return;
+  }
 
   for (std::size_t y = 0; y < view.height(); ++y) {
     for (std::size_t x = 0; x < view.width(); ++x) {
@@ -662,11 +702,11 @@ void run_resize_vertical_case(std::size_t width_pixels, std::size_t source_heigh
                               std::size_t target_height, std::size_t source_pitch,
                               std::size_t destination_pitch, int bits_per_pixel,
                               const Variant<ResizeFunction>& variant,
-                              const std::string& expected_hash) {
+                              const std::string& expected_hash, std::uint32_t seed) {
   GuardedVideoBuffer<T> source(width_pixels, source_height, source_pitch, 64);
   GuardedVideoBuffer<T> expected(width_pixels, target_height, destination_pitch, 64);
   GuardedVideoBuffer<T> actual(width_pixels, target_height, destination_pitch, 64);
-  fill_resize_input(source.view(), bits_per_pixel);
+  fill_resize_input(source.view(), bits_per_pixel, seed);
   const auto source_snapshot = source.snapshot_active();
 
   ResamplingProgramOwner program(static_cast<int>(source_height), static_cast<int>(target_height),
@@ -680,8 +720,9 @@ void run_resize_vertical_case(std::size_t width_pixels, std::size_t source_heigh
       << "variant=" << variant.name << " bits=" << bits_per_pixel << " width=" << width_pixels
       << " source_height=" << source_height << " target_height=" << target_height
       << " source_pitch=" << source_pitch << " destination_pitch=" << destination_pitch;
-  EXPECT_EQ(format_hash(hash_active(actual.view().as_const())), expected_hash)
-      << "variant=" << variant.name << " stable output hash mismatch";
+  const auto actual_hash = format_hash(hash_active(actual.view().as_const()));
+  EXPECT_EQ(actual_hash, expected_hash)
+      << "variant=" << variant.name << " stable output hash mismatch; actual=" << actual_hash;
   EXPECT_TRUE(source.active_matches(source_snapshot))
       << "variant=" << variant.name << " modified source pixels";
   EXPECT_TRUE(source.memory_intact())
@@ -696,7 +737,7 @@ inline void run_resize_vertical8_case(const ResizeVertical8Case& test_case) {
   run_resize_vertical_case<std::uint8_t>(test_case.width_pixels, test_case.source_height,
                                          test_case.target_height, test_case.source_pitch,
                                          test_case.destination_pitch, 8, test_case.variant,
-                                         test_case.expected_hash);
+                                         test_case.expected_hash, test_case.seed);
 }
 
 inline void run_vertical_reduce_case(const VerticalReduceCase& test_case) {
@@ -734,7 +775,8 @@ inline void run_resize_vertical16_case(const ResizeVertical16Case& test_case) {
   run_resize_vertical_case<std::uint16_t>(test_case.width_pixels, test_case.source_height,
                                           test_case.target_height, test_case.source_pitch,
                                           test_case.destination_pitch, test_case.bits_per_pixel,
-                                          test_case.variant, test_case.expected_hash);
+                                          test_case.variant, test_case.expected_hash,
+                                          test_case.seed);
 }
 
 template <typename T>
@@ -743,11 +785,11 @@ void run_resize_horizontal_case(
     std::size_t source_pitch, std::size_t destination_pitch, int bits_per_pixel,
     const Variant<ResizeFunction>& variant, const std::string& expected_hash,
     std::optional<Avx512HorizontalCoefficientLayout> avx512_coefficient_layout,
-    ResizeFilter filter) {
+    ResizeFilter filter, std::uint32_t seed) {
   GuardedVideoBuffer<T> source(source_width, height, source_pitch, 64);
   GuardedVideoBuffer<T> expected(target_width, height, destination_pitch, 64);
   GuardedVideoBuffer<T> actual(target_width, height, destination_pitch, 64);
-  fill_resize_input(source.view(), bits_per_pixel);
+  fill_resize_input(source.view(), bits_per_pixel, seed);
   const auto source_snapshot = source.snapshot_active();
 
   ResamplingProgramOwner program(static_cast<int>(source_width), static_cast<int>(target_width),
@@ -771,8 +813,9 @@ void run_resize_horizontal_case(
       << " source_width=" << source_width << " target_width=" << target_width
       << " height=" << height << " source_pitch=" << source_pitch
       << " destination_pitch=" << destination_pitch;
-  EXPECT_EQ(format_hash(hash_active(actual.view().as_const())), expected_hash)
-      << "variant=" << variant.name << " stable output hash mismatch";
+  const auto actual_hash = format_hash(hash_active(actual.view().as_const()));
+  EXPECT_EQ(actual_hash, expected_hash)
+      << "variant=" << variant.name << " stable output hash mismatch; actual=" << actual_hash;
   EXPECT_TRUE(source.active_matches(source_snapshot))
       << "variant=" << variant.name << " modified source pixels";
   EXPECT_TRUE(source.memory_intact())
@@ -787,14 +830,15 @@ inline void run_resize_horizontal8_case(const ResizeHorizontal8Case& test_case) 
   run_resize_horizontal_case<std::uint8_t>(
       test_case.source_width, test_case.target_width, test_case.height, test_case.source_pitch,
       test_case.destination_pitch, 8, test_case.variant, test_case.expected_hash,
-      test_case.avx512_coefficient_layout, test_case.filter);
+      test_case.avx512_coefficient_layout, test_case.filter, test_case.seed);
 }
 
 inline void run_resize_horizontal16_case(const ResizeHorizontal16Case& test_case) {
   run_resize_horizontal_case<std::uint16_t>(
       test_case.source_width, test_case.target_width, test_case.height, test_case.source_pitch,
       test_case.destination_pitch, test_case.bits_per_pixel, test_case.variant,
-      test_case.expected_hash, test_case.avx512_coefficient_layout, test_case.filter);
+      test_case.expected_hash, test_case.avx512_coefficient_layout, test_case.filter,
+      test_case.seed);
 }
 
 inline std::uint64_t resize_float_ulp_distance(float lhs, float rhs) noexcept {
