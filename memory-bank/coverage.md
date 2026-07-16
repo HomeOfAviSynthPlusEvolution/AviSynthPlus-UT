@@ -170,6 +170,7 @@ submodule checkout cannot build `AvsCore` reliably.
 | `FlipHorizontal` | Public horizontal flip filter | Public `FlipHorizontal` class for 8-bit YV24, YV12, BGR24, BGR64, and 16-bit planar RGB | Direct constructors with independent per-row reversal references across full-resolution, subsampled, packed bottom-up, and planar GBR planes; source full-pitch immutability, cache hints, frame requests, and output memory checks |
 | `Crop` | Public crop filter | Public `Crop` class for 8-bit YV24, YV12, YV16, YUVA420, BGR24, and 16-bit planar RGB | Direct constructors with explicit subrectangles; independent luma/chroma and alpha coordinate references, Mod2 subsampled offsets, packed logical rows, output geometry, source full-pitch immutability, frame requests, and output memory checks |
 | `AddBorders` | Public border-padding filter | Public `AddBorders` class for 8-bit YV24, YV12, YUVA420, BGR24, BGR64, and 16-bit planar RGB with explicit colors | Direct constructors with fixed left/top/right/bottom borders; independent interior copy and per-plane color references covering subsampled geometry, alpha, packed 8/16-bit scaling, and planar GBR color mapping; source full-pitch immutability, cache hints, frame requests, and output memory checks. Transient resampling remains uncovered |
+| `Field topology` | Public field separation, weaving, and patterned selection | Public `SeparateFields`, `DoubleWeaveFields`, `DoubleWeaveFrames`, and `SelectEvery` classes for short YV12/YV24 sequences; `Weave` behavior through the public `DoubleWeaveFields` plus `SelectEvery` composition | Direct constructors with explicit TFF/BFF metadata, field-row extraction, adjacent-field and adjacent-frame interleaving, frame-rate/count updates, patterned frame selection, source request traces, source full-pitch immutability, cache hints, and output memory checks. The final advertised frame of both `DoubleWeave` implementations remains an expected red because the current upstream code requests a past-end child frame. |
 
 ## Finding Test Coverage
 
@@ -219,6 +220,12 @@ submodule checkout cannot build `AvsCore` reliably.
   file-I/O scope. Every reviewed source file is added to `AvsCore` only for
   MSVC or MinGW, and the corresponding public source factories are guarded by
   `AVS_WINDOWS`. Exercising them would require AVI/WAV file-input fixtures.
+- The current upstream `DoubleWeaveFields` and `DoubleWeaveFrames`
+  implementations advertise a final output frame but unconditionally request
+  the next child field/frame. The F24 field-topology tests retain this as an
+  expected red with a strict out-of-range source clip; the `Weave`-equivalent
+  even-frame composition remains within range because it selects only even
+  double-weave frames.
 - AVX-512 `GetAlphaRect` is Windows/GDI-only and remains outside the current
   unit-test boundary.
 - AVX-512 resize implementations that are disabled or non-production are not
