@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <ostream>
 #include <stdexcept>
@@ -301,6 +302,151 @@ void expect_rgbp16_arithmetic_reference(const OverlayArithmeticCase& test_case,
   }
 }
 
+std::vector<PVideoFrame> make_yuv_float_arithmetic_frames(AviSynthEnvironment& environment,
+                                                           const VideoInfo& vi, bool overlay) {
+  constexpr std::array<float, 7> kBaseY{0.90F, 0.75F, 0.40F, 0.05F, 0.0F, 0.20F, 1.0F};
+  constexpr std::array<float, 7> kOverlayY{0.20F, 0.40F, 0.80F, 0.20F, 0.10F, 0.90F, 0.30F};
+  constexpr std::array<float, 7> kBaseU{-0.5F, -0.25F, -0.1F, 0.0F, 0.1F, 0.25F, 0.5F};
+  constexpr std::array<float, 7> kOverlayU{0.5F, 0.25F, 0.1F, 0.0F, -0.1F, -0.25F, -0.5F};
+  constexpr std::array<float, 7> kBaseV{0.5F, 0.25F, 0.1F, 0.0F, -0.1F, -0.25F, -0.5F};
+  constexpr std::array<float, 7> kOverlayV{-0.5F, -0.1F, 0.05F, 0.15F, 0.25F, 0.35F, 0.5F};
+  if (vi.pixel_type != VideoInfo::CS_YUV444PS || vi.width != 7 || vi.height != 3) {
+    throw std::invalid_argument("unexpected float YUV arithmetic test geometry");
+  }
+
+  const auto& y_values = overlay ? kOverlayY : kBaseY;
+  const auto& u_values = overlay ? kOverlayU : kBaseU;
+  const auto& v_values = overlay ? kOverlayV : kBaseV;
+  std::vector<PVideoFrame> frames;
+  for (int frame_index = 0; frame_index < vi.num_frames; ++frame_index) {
+    PVideoFrame frame = environment.get()->NewVideoFrame(vi);
+    for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+      fill_plane_full_pitch(frame, overlay ? 0x5b : 0xa4, plane);
+      write_frame_plane<float>(frame, plane, [&](int x, int y) {
+        const auto& values = plane == PLANAR_Y ? y_values : plane == PLANAR_U ? u_values : v_values;
+        const float row_offset = static_cast<float>(y * 2 + frame_index * 3) * 0.001F;
+        return plane == PLANAR_Y ? std::clamp(values[static_cast<std::size_t>(x)] + row_offset,
+                                               0.0F, 1.0F)
+                                 : values[static_cast<std::size_t>(x)] + row_offset;
+      });
+    }
+    frames.push_back(frame);
+  }
+  return frames;
+}
+
+std::vector<PVideoFrame> make_rgbps_arithmetic_frames(AviSynthEnvironment& environment,
+                                                      const VideoInfo& vi, bool overlay) {
+  constexpr std::array<float, 5> kBase{0.0F, 0.1F, 0.45F, 0.8F, 1.0F};
+  constexpr std::array<float, 5> kOverlay{1.0F, 0.75F, 0.4F, 0.2F, 0.05F};
+  if (vi.pixel_type != VideoInfo::CS_RGBPS || vi.width != 5 || vi.height != 3) {
+    throw std::invalid_argument("unexpected float planar RGB arithmetic test geometry");
+  }
+
+  std::vector<PVideoFrame> frames;
+  for (int frame_index = 0; frame_index < vi.num_frames; ++frame_index) {
+    PVideoFrame frame = environment.get()->NewVideoFrame(vi);
+    for (const int plane : {PLANAR_G, PLANAR_B, PLANAR_R}) {
+      fill_plane_full_pitch(frame, overlay ? 0x47 : 0xb8, plane);
+      write_frame_plane<float>(frame, plane, [&](int x, int y) {
+        const auto& values = overlay ? kOverlay : kBase;
+        const float plane_offset = static_cast<float>((plane - PLANAR_G) * 3) * 0.01F;
+        const float row_offset = static_cast<float>(y * 2 + frame_index * 3) * 0.001F;
+        return std::clamp(values[static_cast<std::size_t>(x)] + plane_offset + row_offset, 0.0F,
+                          1.0F);
+      });
+    }
+    frames.push_back(frame);
+  }
+  return frames;
+}
+
+float reference_yuv_float_luma(float base, float overlay, bool add, float opacity) {
+  return add ? base + opacity * overlay : base - opacity * overlay;
+}
+
+float reference_yuv_float_chroma(float base, float overlay, bool add, float opacity,
+                                 float y_value) {
+  constexpr float kOver32 = 32.0F / 255.0F;
+  float value = add ? base + opacity * overlay : base - opacity * overlay;
+  if (add && y_value > 1.0F) {
+    const float multiplier = std::max(0.0F, 1.0F + kOver32 - y_value);
+    value = value * multiplier / kOver32;
+  } else if (!add && y_value < 0.0F) {
+    const float multiplier = std::min(-y_value, kOver32);
+    value = value * (kOver32 - multiplier) / kOver32;
+  }
+  return value;
+}
+
+void expect_yuv_float_arithmetic_reference(const OverlayArithmeticCase& test_case,
+                                            const PVideoFrame& base, const PVideoFrame& overlay,
+                                            const PVideoFrame& output) {
+  const bool add = test_case.operation == OverlayArithmeticOperation::Add;
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    const int width = base->GetRowSize(plane) / static_cast<int>(sizeof(float));
+    ASSERT_EQ(output->GetRowSize(plane), base->GetRowSize(plane)) << "plane=" << plane;
+    ASSERT_EQ(output->GetHeight(plane), base->GetHeight(plane)) << "plane=" << plane;
+    for (int y = 0; y < base->GetHeight(plane); ++y) {
+      const auto* base_row = reinterpret_cast<const float*>(base->GetReadPtr(plane) +
+                                                            y * base->GetPitch(plane));
+      const auto* overlay_row = reinterpret_cast<const float*>(overlay->GetReadPtr(plane) +
+                                                               y * overlay->GetPitch(plane));
+      const auto* base_y_row = reinterpret_cast<const float*>(base->GetReadPtr(PLANAR_Y) +
+                                                              y * base->GetPitch(PLANAR_Y));
+      const auto* overlay_y_row = reinterpret_cast<const float*>(
+          overlay->GetReadPtr(PLANAR_Y) + y * overlay->GetPitch(PLANAR_Y));
+      const auto* output_row = reinterpret_cast<const float*>(output->GetReadPtr(plane) +
+                                                              y * output->GetPitch(plane));
+      for (int x = 0; x < width; ++x) {
+        const float y_value = reference_yuv_float_luma(base_y_row[x], overlay_y_row[x], add,
+                                                       test_case.opacity);
+        const float expected = plane == PLANAR_Y
+                                   ? std::clamp(y_value, 0.0F, 1.0F)
+                                   : reference_yuv_float_chroma(base_row[x], overlay_row[x], add,
+                                                                test_case.opacity, y_value);
+        ASSERT_TRUE(std::isfinite(output_row[x])) << "case=" << test_case.name
+                                                   << " plane=" << plane << " x=" << x
+                                                   << " y=" << y;
+        EXPECT_NEAR(output_row[x], expected, 1.0e-6F)
+            << "case=" << test_case.name << " plane=" << plane << " x=" << x << " y=" << y
+            << " base_pitch=" << base->GetPitch(plane)
+            << " overlay_pitch=" << overlay->GetPitch(plane);
+      }
+    }
+  }
+}
+
+void expect_rgbps_arithmetic_reference(const OverlayArithmeticCase& test_case,
+                                       const PVideoFrame& base, const PVideoFrame& overlay,
+                                       const PVideoFrame& output) {
+  const bool add = test_case.operation == OverlayArithmeticOperation::Add;
+  for (const int plane : {PLANAR_G, PLANAR_B, PLANAR_R}) {
+    const int width = base->GetRowSize(plane) / static_cast<int>(sizeof(float));
+    ASSERT_EQ(output->GetRowSize(plane), base->GetRowSize(plane)) << "plane=" << plane;
+    ASSERT_EQ(output->GetHeight(plane), base->GetHeight(plane)) << "plane=" << plane;
+    for (int y = 0; y < base->GetHeight(plane); ++y) {
+      const auto* base_row = reinterpret_cast<const float*>(base->GetReadPtr(plane) +
+                                                            y * base->GetPitch(plane));
+      const auto* overlay_row = reinterpret_cast<const float*>(overlay->GetReadPtr(plane) +
+                                                               y * overlay->GetPitch(plane));
+      const auto* output_row = reinterpret_cast<const float*>(output->GetReadPtr(plane) +
+                                                              y * output->GetPitch(plane));
+      for (int x = 0; x < width; ++x) {
+        const float expected = add ? base_row[x] + overlay_row[x] * test_case.opacity
+                                   : base_row[x] - overlay_row[x] * test_case.opacity;
+        ASSERT_TRUE(std::isfinite(output_row[x])) << "case=" << test_case.name
+                                                   << " plane=" << plane << " x=" << x
+                                                   << " y=" << y;
+        EXPECT_NEAR(output_row[x], expected, 1.0e-6F)
+            << "case=" << test_case.name << " plane=" << plane << " x=" << x << " y=" << y
+            << " base_pitch=" << base->GetPitch(plane)
+            << " overlay_pitch=" << overlay->GetPitch(plane);
+      }
+    }
+  }
+}
+
 class OverlayFilterFormatTest : public ::testing::TestWithParam<OverlayFormatCase> {};
 
 TEST_P(OverlayFilterFormatTest, FullScaleMaskMatchesOmittedMaskAcrossYuvFormats) {
@@ -416,10 +562,21 @@ TEST_P(OverlayFilterArithmeticTest, MatchesIndependentArithmeticReference) {
       VideoInfoSpec{test_case.width, test_case.height, test_case.pixel_type, 2, 25, 1});
 
   const bool planar_rgb = vi.IsPlanarRGB();
-  auto base_frames = planar_rgb ? make_rgbp16_arithmetic_frames(environment, vi, false)
-                                : make_yuv_arithmetic_frames(environment, vi, false);
-  auto overlay_frames = planar_rgb ? make_rgbp16_arithmetic_frames(environment, vi, true)
-                                   : make_yuv_arithmetic_frames(environment, vi, true);
+  std::vector<PVideoFrame> base_frames;
+  std::vector<PVideoFrame> overlay_frames;
+  if (test_case.pixel_type == VideoInfo::CS_YV24) {
+    base_frames = make_yuv_arithmetic_frames(environment, vi, false);
+    overlay_frames = make_yuv_arithmetic_frames(environment, vi, true);
+  } else if (test_case.pixel_type == VideoInfo::CS_YUV444PS) {
+    base_frames = make_yuv_float_arithmetic_frames(environment, vi, false);
+    overlay_frames = make_yuv_float_arithmetic_frames(environment, vi, true);
+  } else if (test_case.pixel_type == VideoInfo::CS_RGBP16) {
+    base_frames = make_rgbp16_arithmetic_frames(environment, vi, false);
+    overlay_frames = make_rgbp16_arithmetic_frames(environment, vi, true);
+  } else {
+    base_frames = make_rgbps_arithmetic_frames(environment, vi, false);
+    overlay_frames = make_rgbps_arithmetic_frames(environment, vi, true);
+  }
   const auto base_before = FrameSnapshot::capture(base_frames[1], vi);
   const auto overlay_before = FrameSnapshot::capture(overlay_frames[1], vi);
   auto* base_impl = new FrameSequenceClip(vi, base_frames);
@@ -439,7 +596,13 @@ TEST_P(OverlayFilterArithmeticTest, MatchesIndependentArithmeticReference) {
   const PVideoFrame output = filter.GetFrame(1, environment.get());
 
   if (planar_rgb) {
-    expect_rgbp16_arithmetic_reference(test_case, base_frames[1], overlay_frames[1], output);
+    if (test_case.pixel_type == VideoInfo::CS_RGBP16) {
+      expect_rgbp16_arithmetic_reference(test_case, base_frames[1], overlay_frames[1], output);
+    } else {
+      expect_rgbps_arithmetic_reference(test_case, base_frames[1], overlay_frames[1], output);
+    }
+  } else if (test_case.pixel_type == VideoInfo::CS_YUV444PS) {
+    expect_yuv_float_arithmetic_reference(test_case, base_frames[1], overlay_frames[1], output);
   } else {
     expect_yuv_arithmetic_reference(test_case, base_frames[1], overlay_frames[1], output);
   }
@@ -468,7 +631,25 @@ INSTANTIATE_TEST_SUITE_P(
         OverlayArithmeticCase{VideoInfo::CS_RGBP16, 5, 3, OverlayArithmeticOperation::Subtract,
                               1.0F, 256, "Rgbp16_Width5_Height3_Subtract_OpacityFull"},
         OverlayArithmeticCase{VideoInfo::CS_RGBP16, 5, 3, OverlayArithmeticOperation::Subtract,
-                              0.5F, 128, "Rgbp16_Width5_Height3_Subtract_OpacityHalf"}),
+                              0.5F, 128, "Rgbp16_Width5_Height3_Subtract_OpacityHalf"},
+        OverlayArithmeticCase{VideoInfo::CS_YUV444PS, 7, 3, OverlayArithmeticOperation::Add, 1.0F,
+                              256, "Yuv444ps_Width7_Height3_Add_OpacityFull"},
+        OverlayArithmeticCase{VideoInfo::CS_YUV444PS, 7, 3, OverlayArithmeticOperation::Add, 0.5F,
+                              128, "Yuv444ps_Width7_Height3_Add_OpacityHalf"},
+        OverlayArithmeticCase{VideoInfo::CS_YUV444PS, 7, 3,
+                              OverlayArithmeticOperation::Subtract, 1.0F, 256,
+                              "Yuv444ps_Width7_Height3_Subtract_OpacityFull"},
+        OverlayArithmeticCase{VideoInfo::CS_YUV444PS, 7, 3,
+                              OverlayArithmeticOperation::Subtract, 0.5F, 128,
+                              "Yuv444ps_Width7_Height3_Subtract_OpacityHalf"},
+        OverlayArithmeticCase{VideoInfo::CS_RGBPS, 5, 3, OverlayArithmeticOperation::Add, 1.0F, 256,
+                              "Rgbps_Width5_Height3_Add_OpacityFull"},
+        OverlayArithmeticCase{VideoInfo::CS_RGBPS, 5, 3, OverlayArithmeticOperation::Add, 0.5F, 128,
+                              "Rgbps_Width5_Height3_Add_OpacityHalf"},
+        OverlayArithmeticCase{VideoInfo::CS_RGBPS, 5, 3, OverlayArithmeticOperation::Subtract, 1.0F,
+                              256, "Rgbps_Width5_Height3_Subtract_OpacityFull"},
+        OverlayArithmeticCase{VideoInfo::CS_RGBPS, 5, 3, OverlayArithmeticOperation::Subtract, 0.5F,
+                              128, "Rgbps_Width5_Height3_Subtract_OpacityHalf"}),
     [](const ::testing::TestParamInfo<OverlayArithmeticCase>& info) { return info.param.name; });
 
 }  // namespace
