@@ -76,6 +76,30 @@ std::array<std::uint8_t, 2> expected_conditional_chroma(std::uint8_t source_u,
           static_cast<std::uint8_t>(std::clamp(mapped_v + middle_chroma, 0, 255))};
 }
 
+float expected_float_luma_dither(float source, int x, int y, bool coring) {
+  constexpr std::array<std::uint8_t, 10> dither_map{
+      0x00, 0xb0, 0x60, 0xd0, 0x0b, 0xc0, 0x70, 0x90, 0x20, 0xcb};
+  constexpr float dither_scale = 1.0F / 65536.0F;
+  const float ordered_dither =
+      (static_cast<float>(dither_map[static_cast<std::size_t>(y * 5 + x)]) - 127.5F) / 256.0F *
+      dither_scale;
+  const float min_y = coring ? 16.0F / 256.0F : 0.0F;
+  const float max_y = coring ? 235.0F / 256.0F : 1.0F;
+  return std::clamp(min_y + (source - min_y + ordered_dither), min_y, max_y);
+}
+
+float expected_float_chroma_dither(float source, int x, int y, bool coring) {
+  constexpr std::array<std::uint8_t, 16> dither_map4{
+      0x0, 0xb, 0x6, 0xd, 0xc, 0x7, 0x9, 0x2, 0x3, 0x8, 0x5, 0xe, 0xf, 0x4, 0xa, 0x1};
+  constexpr float dither_scale = 1.0F / 65536.0F;
+  const auto index = static_cast<std::size_t>(((y << 2) & 0xc) | (x & 0x3));
+  const float ordered_dither =
+      (static_cast<float>(dither_map4[index]) - 7.5F) / 16.0F * dither_scale;
+  const float min_uv = coring ? (16.0F - 128.0F) / 255.0F : -0.5F;
+  const float max_uv = coring ? (240.0F - 128.0F) / 255.0F : 0.5F;
+  return std::clamp(source + ordered_dither, min_uv, max_uv);
+}
+
 TEST(TweakFilter, AppliesEightBitLumaBrightnessWithoutTouchingSource) {
   AviSynthEnvironment environment;
   const auto vi = make_video_info(VideoInfoSpec{8, 2, VideoInfo::CS_Y8, 1, 25, 1});
@@ -252,6 +276,70 @@ TEST(TweakFilter, KeepsSixteenBitDitherWithinOneEightBitStep) {
   EXPECT_EQ(FrameSnapshot::capture(plain_source, vi), plain_before);
   EXPECT_EQ(FrameSnapshot::capture(dither_source, vi), dither_before);
 }
+
+class FloatDitherTweakTest : public ::testing::TestWithParam<bool> {};
+
+TEST_P(FloatDitherTweakTest, AppliesOrderedDitherWithRangeClipping) {
+  const bool coring = GetParam();
+  AviSynthEnvironment environment;
+  constexpr int width = 5;
+  constexpr int height = 2;
+  const auto vi = make_video_info(
+      VideoInfoSpec{width, height, VideoInfo::CS_YUV444PS, 1, 25, 1});
+  const std::array<float, width> luma{-0.1F, 0.0F, 0.25F, 0.75F, 1.1F};
+  const std::array<float, width> u{-0.6F, -0.25F, 0.0F, 0.25F, 0.6F};
+  const std::array<float, width> v{0.6F, 0.25F, 0.0F, -0.25F, -0.6F};
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(source, 0x4d, PLANAR_Y);
+  fill_plane_full_pitch(source, 0x5e, PLANAR_U);
+  fill_plane_full_pitch(source, 0x6f, PLANAR_V);
+  write_frame_plane<float>(source, PLANAR_Y,
+                           [&luma](int x, int) { return luma[static_cast<std::size_t>(x)]; });
+  write_frame_plane<float>(source, PLANAR_U,
+                           [&u](int x, int) { return u[static_cast<std::size_t>(x)]; });
+  write_frame_plane<float>(source, PLANAR_V,
+                           [&v](int x, int) { return v[static_cast<std::size_t>(x)]; });
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  Tweak filter(clip, 0.0, 1.0, 0.0, 1.0, coring, 0.0, 360.0, 150.0, 0.0, 0.0, true,
+               false, 1.0, environment.get());
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  for (int y = 0; y < height; ++y) {
+    const auto* output_y = reinterpret_cast<const float*>(
+        output->GetReadPtr(PLANAR_Y) + y * output->GetPitch(PLANAR_Y));
+    const auto* output_u = reinterpret_cast<const float*>(
+        output->GetReadPtr(PLANAR_U) + y * output->GetPitch(PLANAR_U));
+    const auto* output_v = reinterpret_cast<const float*>(
+        output->GetReadPtr(PLANAR_V) + y * output->GetPitch(PLANAR_V));
+    for (int x = 0; x < width; ++x) {
+      EXPECT_NEAR(output_y[x], expected_float_luma_dither(luma[static_cast<std::size_t>(x)], x,
+                                                           y, coring),
+                  2.0e-6F)
+          << "coring=" << coring << " plane=Y x=" << x << " y=" << y;
+      EXPECT_NEAR(output_u[x], expected_float_chroma_dither(u[static_cast<std::size_t>(x)], x,
+                                                             y, coring),
+                  2.0e-6F)
+          << "coring=" << coring << " plane=U x=" << x << " y=" << y;
+      EXPECT_NEAR(output_v[x], expected_float_chroma_dither(v[static_cast<std::size_t>(x)], x,
+                                                             y, coring),
+                  2.0e-6F)
+          << "coring=" << coring << " plane=V x=" << x << " y=" << y;
+    }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Range, FloatDitherTweakTest, ::testing::Values(false, true),
+    [](const ::testing::TestParamInfo<bool>& info) {
+      return info.param ? "Coring" : "FullRange";
+    });
 
 TEST(TweakFilter, AppliesFloatHueSaturationAndBrightnessWithRealCalc) {
   AviSynthEnvironment environment;
