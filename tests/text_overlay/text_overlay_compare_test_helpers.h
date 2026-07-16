@@ -4,6 +4,7 @@
 
 #include "support/guarded_video_buffer.h"
 #include "support/variant_registry.h"
+#include "support/deterministic_data.h"
 
 #include <gtest/gtest.h>
 
@@ -41,6 +42,7 @@ struct TextOverlayCompareCase {
   int initial_neg{};
   double initial_ssd{};
   Variant<TextOverlayCompareFunction> variant;
+  std::uint32_t seed{};
   std::string name;
 };
 
@@ -67,7 +69,11 @@ inline std::string text_overlay_compare_case_name(const TextOverlayCompareCase& 
          << test_case.increment << "_RowBytes" << test_case.rowsize_bytes << "_Height"
          << test_case.height << "_SrcPitch" << test_case.source_pitch << "_OtherPitch"
          << test_case.other_pitch << "_SrcOffset" << test_case.source_alignment_offset
-         << "_OtherOffset" << test_case.other_alignment_offset << "_PatternBoundaryAnchors_"
+         << "_OtherOffset" << test_case.other_alignment_offset;
+  if (test_case.seed != 0) {
+    stream << "_Seed" << std::uppercase << std::hex << test_case.seed;
+  }
+  stream << (test_case.seed == 0 ? "_PatternBoundaryAnchors_" : "_PatternFixedRandom_")
          << text_overlay_compare_variant_name(test_case.variant);
   return stream.str();
 }
@@ -77,7 +83,8 @@ inline TextOverlayCompareCase make_text_overlay_compare_case(
     std::size_t rowsize_bytes, std::size_t height, std::size_t source_pitch,
     std::size_t other_pitch, std::size_t source_alignment_offset,
     std::size_t other_alignment_offset, int initial_sad, int initial_sd, int initial_pos,
-    int initial_neg, double initial_ssd, Variant<TextOverlayCompareFunction> variant) {
+    int initial_neg, double initial_ssd, Variant<TextOverlayCompareFunction> variant,
+    std::uint32_t seed = 0) {
   if (format.empty() || mask_name.empty() || (increment != 3 && increment != 4) ||
       rowsize_bytes == 0 || height == 0 || rowsize_bytes % (increment * 4) != 0 ||
       source_pitch < rowsize_bytes || other_pitch < rowsize_bytes ||
@@ -101,6 +108,7 @@ inline TextOverlayCompareCase make_text_overlay_compare_case(
                                 initial_neg,
                                 initial_ssd,
                                 std::move(variant),
+                                seed,
                                 {}};
   result.name = text_overlay_compare_case_name(result);
   return result;
@@ -113,6 +121,17 @@ inline void PrintTo(const TextOverlayCompareCase& test_case, std::ostream* strea
 inline void fill_text_overlay_compare_inputs(const TextOverlayCompareCase& test_case,
                                              PlaneView<std::uint8_t> source,
                                              PlaneView<std::uint8_t> other) {
+  if (test_case.seed != 0) {
+    XorShift32 generator(test_case.seed);
+    for (std::size_t y = 0; y < test_case.height; ++y) {
+      for (std::size_t x = 0; x < test_case.rowsize_bytes; ++x) {
+        source.row(y)[x] = static_cast<std::uint8_t>(generator.next());
+        other.row(y)[x] = static_cast<std::uint8_t>(generator.next());
+      }
+    }
+    return;
+  }
+
   constexpr std::array<std::uint8_t, 16> anchors{0U,   1U,   2U,   17U,  31U,  63U,  64U,  95U,
                                                  127U, 128U, 159U, 191U, 223U, 254U, 255U, 42U};
   for (std::size_t y = 0; y < test_case.height; ++y) {

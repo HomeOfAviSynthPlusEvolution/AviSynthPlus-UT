@@ -16,6 +16,11 @@ std::vector<TextOverlayCompareCase> text_overlay_compare_cases() {
           "Rgb32", "AllChannels", 0xffffffffU, 4, 32, 3, 52, 68, 3, 9, 5, -7, 11, -13, 17.0,
           Variant<TextOverlayCompareFunction>{"sse2", compare_sse2, IsaRequirement::Sse2}),
       make_text_overlay_compare_case(
+          "Rgb32", "AllChannels", 0xffffffffU, 4, 64, 7, 80, 96, 5, 13, 23, -11, 17, -19,
+          31.0,
+          Variant<TextOverlayCompareFunction>{"sse2", compare_sse2, IsaRequirement::Sse2},
+          0xF30F6401U),
+      make_text_overlay_compare_case(
           "Rgb32", "BlueAndRed", 0x00ff00ffU, 4, 48, 4, 64, 80, 5, 12, 0, 0, 0, 0, 0.0,
           Variant<TextOverlayCompareFunction>{"sse2", compare_sse2, IsaRequirement::Sse2}),
       make_text_overlay_compare_case(
@@ -24,6 +29,15 @@ std::vector<TextOverlayCompareCase> text_overlay_compare_cases() {
       make_text_overlay_compare_case(
           "Rgb24", "AllChannels", 0x00ffffffU, 3, 36, 3, 52, 68, 3, 9, 0, 0, 0, 0, 0.0,
           Variant<TextOverlayCompareFunction>{"sse2", compare_sse2, IsaRequirement::Sse2}),
+      make_text_overlay_compare_case(
+          "Rgb24", "AllChannels", 0x00ffffffU, 3, 60, 7, 76, 92, 7, 21, 13, -9, 7, -8, 5.5,
+          Variant<TextOverlayCompareFunction>{"sse2", compare_sse2, IsaRequirement::Sse2},
+          0xF30F6402U),
+      make_text_overlay_compare_case(
+          "Yuy2", "LumaAndChroma", 0xffffffffU, 4, 48, 7, 64, 80, 9, 17, 29, -15, 19, -21,
+          7.0,
+          Variant<TextOverlayCompareFunction>{"sse2", compare_sse2, IsaRequirement::Sse2},
+          0xF30F6403U),
   };
 }
 
