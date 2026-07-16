@@ -188,6 +188,7 @@ struct AveragePlaneCase {
   std::size_t alignment_offset{};
   Variant<AveragePlaneFunc> variant;
   std::string expected_hash;
+  std::uint32_t seed{};
   std::string name;
 };
 
@@ -212,7 +213,8 @@ inline AveragePlaneCase make_average_plane_case(AverageSample sample, std::size_
                                                 std::size_t other_pitch,
                                                 std::size_t alignment_offset,
                                                 Variant<AveragePlaneFunc> variant,
-                                                std::string expected_hash = {}) {
+                                                std::string expected_hash = {},
+                                                std::uint32_t seed = 0) {
   AveragePlaneCase result{sample,
                           width,
                           height,
@@ -221,12 +223,17 @@ inline AveragePlaneCase make_average_plane_case(AverageSample sample, std::size_
                           alignment_offset,
                           std::move(variant),
                           std::move(expected_hash),
+                          seed,
                           {}};
   std::ostringstream stream;
   stream << average_sample_name(sample) << "_Width" << width << "_Height" << height << "_DstPitch"
-         << destination_pitch << "_OtherPitch" << other_pitch << "_AlignOffset" << alignment_offset
-         << (sample == AverageSample::Float ? "_PatternFiniteAnchors" : "_PatternBoundaryValues")
-         << "_Variant";
+         << destination_pitch << "_OtherPitch" << other_pitch << "_AlignOffset" << alignment_offset;
+  if (seed != 0) {
+    stream << "_Seed" << std::uppercase << std::hex << seed << "_PatternFixedRandom";
+  } else {
+    stream << (sample == AverageSample::Float ? "_PatternFiniteAnchors" : "_PatternBoundaryValues");
+  }
+  stream << "_Variant";
   bool capitalize = true;
   for (const char character : result.variant.name) {
     stream << static_cast<char>(
@@ -249,6 +256,13 @@ void fill_average_inputs(PlaneView<T> destination, PlaneView<T> other) {
   }
 }
 
+template <typename T>
+void fill_average_inputs(PlaneView<T> destination, PlaneView<T> other, std::uint32_t seed) {
+  static_assert(std::is_integral_v<T>);
+  fill_random(destination, seed);
+  fill_random(other, seed ^ 0xA5A5A5A5U);
+}
+
 inline void fill_average_float_inputs(PlaneView<float> destination, PlaneView<float> other) {
   constexpr float anchors[] = {-1000.5F, -17.25F, -0.125F, 0.0F, 0.125F, 31.75F, 255.5F, 4096.0F};
   for (std::size_t y = 0; y < destination.height(); ++y) {
@@ -259,6 +273,12 @@ inline void fill_average_float_inputs(PlaneView<float> destination, PlaneView<fl
   }
 }
 
+inline void fill_average_float_inputs(PlaneView<float> destination, PlaneView<float> other,
+                                      std::uint32_t seed) {
+  fill_random(destination, seed);
+  fill_random(other, seed ^ 0xA5A5A5A5U);
+}
+
 template <typename T>
 void run_average_integer_case(const AveragePlaneCase& test_case) {
   GuardedVideoBuffer<T> destination(test_case.width, test_case.height, test_case.destination_pitch,
@@ -267,7 +287,11 @@ void run_average_integer_case(const AveragePlaneCase& test_case) {
                               test_case.alignment_offset);
   GuardedVideoBuffer<T> expected(test_case.width, test_case.height, test_case.destination_pitch, 64,
                                  test_case.alignment_offset);
-  fill_average_inputs(destination.view(), other.view());
+  if (test_case.seed == 0) {
+    fill_average_inputs(destination.view(), other.view());
+  } else {
+    fill_average_inputs(destination.view(), other.view(), test_case.seed);
+  }
   copy_active(destination.view().as_const(), expected.view());
   const auto other_snapshot = other.snapshot_active();
   for (std::size_t y = 0; y < test_case.height; ++y) {
@@ -285,8 +309,9 @@ void run_average_integer_case(const AveragePlaneCase& test_case) {
       static_cast<int>(test_case.width * sizeof(T)), static_cast<int>(test_case.height));
   EXPECT_TRUE(compare_exact(expected.view().as_const(), destination.view().as_const()))
       << test_case.name;
-  EXPECT_EQ(format_hash(hash_active(destination.view().as_const())), test_case.expected_hash)
-      << test_case.name;
+  const auto actual_hash = format_hash(hash_active(destination.view().as_const()));
+  EXPECT_EQ(actual_hash, test_case.expected_hash)
+      << test_case.name << " stable output hash mismatch; actual=" << actual_hash;
   EXPECT_TRUE(other.active_matches(other_snapshot)) << test_case.name;
   EXPECT_TRUE(destination.memory_intact()) << test_case.name;
   EXPECT_TRUE(other.memory_intact()) << test_case.name;
@@ -301,7 +326,11 @@ inline void run_average_float_case(const AveragePlaneCase& test_case) {
                                   test_case.alignment_offset);
   GuardedVideoBuffer<float> expected(test_case.width, test_case.height, test_case.destination_pitch,
                                      64, test_case.alignment_offset);
-  fill_average_float_inputs(destination.view(), other.view());
+  if (test_case.seed == 0) {
+    fill_average_float_inputs(destination.view(), other.view());
+  } else {
+    fill_average_float_inputs(destination.view(), other.view(), test_case.seed);
+  }
   copy_active(destination.view().as_const(), expected.view());
   const auto other_snapshot = other.snapshot_active();
   for (std::size_t y = 0; y < test_case.height; ++y) {

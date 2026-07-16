@@ -87,6 +87,30 @@ std::vector<AveragePlaneCase> average_plane_cases() {
       make_average_plane_case(
           AverageSample::Float, 16, 3, 64, 96, 4,
           Variant<AveragePlaneFunc>{"avx2", average_plane_avx2_float, IsaRequirement::Avx2}),
+      make_average_plane_case(
+          AverageSample::UInt8, 53, 7, 80, 112, 5,
+          Variant<AveragePlaneFunc>{"sse2", average_plane_sse2<std::uint8_t>, IsaRequirement::Sse2},
+          "1d1bad9bea2f878d", 0xF30F2402U),
+      make_average_plane_case(
+          AverageSample::UInt8, 53, 7, 80, 112, 5,
+          Variant<AveragePlaneFunc>{"avx2", average_plane_avx2<std::uint8_t>, IsaRequirement::Avx2},
+          "1d1bad9bea2f878d", 0xF30F2402U),
+      make_average_plane_case(
+          AverageSample::UInt16, 27, 7, 80, 96, 6,
+          Variant<AveragePlaneFunc>{"sse2", average_plane_sse2<std::uint16_t>, IsaRequirement::Sse2},
+          "2f7fdcfcf841734e", 0xF30F2403U),
+      make_average_plane_case(
+          AverageSample::UInt16, 27, 7, 80, 96, 6,
+          Variant<AveragePlaneFunc>{"avx2", average_plane_avx2<std::uint16_t>, IsaRequirement::Avx2},
+          "2f7fdcfcf841734e", 0xF30F2403U),
+      make_average_plane_case(
+          AverageSample::Float, 21, 7, 96, 112, 8,
+          Variant<AveragePlaneFunc>{"sse2", average_plane_sse2_float, IsaRequirement::Sse2}, {},
+          0xF30F2404U),
+      make_average_plane_case(
+          AverageSample::Float, 21, 7, 96, 112, 8,
+          Variant<AveragePlaneFunc>{"avx2", average_plane_avx2_float, IsaRequirement::Avx2}, {},
+          0xF30F2404U),
   };
 }
 
