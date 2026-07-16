@@ -3,6 +3,7 @@
 #include "filters/overlay/intel/blend_common_sse.h"
 
 #include "support/comparators.h"
+#include "support/deterministic_data.h"
 #include "support/guarded_video_buffer.h"
 #include "support/stable_hash.h"
 #include "support/variant_registry.h"
@@ -36,6 +37,7 @@ struct OverlayDarkLightenCase {
   std::size_t overlay_alignment_offset{};
   Variant<OverlayDarkLightenFunction> variant;
   std::array<std::string, 3> expected_hashes;
+  std::uint32_t seed{};
   std::string name;
 };
 
@@ -66,7 +68,11 @@ inline std::string overlay_darklighten_case_name(const OverlayDarkLightenCase& t
          << test_case.width_pixels << "_Height" << test_case.height_pixels << "_DstPitch"
          << test_case.destination_pitch << "_OverlayPitch" << test_case.overlay_pitch
          << "_DstOffset" << test_case.destination_alignment_offset << "_OverlayOffset"
-         << test_case.overlay_alignment_offset << "_PatternBoundaryAnchors_"
+         << test_case.overlay_alignment_offset;
+  if (test_case.seed != 0) {
+    stream << "_Seed" << std::uppercase << std::hex << test_case.seed;
+  }
+  stream << (test_case.seed == 0 ? "_PatternBoundaryAnchors_" : "_PatternFixedRandom_")
          << overlay_darklighten_variant_name(test_case.variant);
   return stream.str();
 }
@@ -75,7 +81,8 @@ inline OverlayDarkLightenCase make_overlay_darklighten_case(
     OverlayDarkLightenOperation operation, std::size_t width_pixels, std::size_t height_pixels,
     std::size_t destination_pitch, std::size_t overlay_pitch,
     std::size_t destination_alignment_offset, std::size_t overlay_alignment_offset,
-    Variant<OverlayDarkLightenFunction> variant, std::array<std::string, 3> expected_hashes = {}) {
+    Variant<OverlayDarkLightenFunction> variant, std::array<std::string, 3> expected_hashes = {},
+    std::uint32_t seed = 0) {
   if (width_pixels == 0 || height_pixels == 0 || destination_pitch < width_pixels ||
       overlay_pitch < width_pixels || destination_alignment_offset >= 32 ||
       overlay_alignment_offset >= 32) {
@@ -90,6 +97,7 @@ inline OverlayDarkLightenCase make_overlay_darklighten_case(
                                 overlay_alignment_offset,
                                 std::move(variant),
                                 std::move(expected_hashes),
+                                seed,
                                 {}};
   result.name = overlay_darklighten_case_name(result);
   return result;
@@ -182,8 +190,17 @@ inline void run_overlay_darklighten_case(const OverlayDarkLightenCase& test_case
                                               test_case.destination_pitch, 32,
                                               test_case.destination_alignment_offset);
 
-  fill_overlay_darklighten_inputs(destination_y.view(), destination_u.view(), destination_v.view(),
-                                  overlay_y.view(), overlay_u.view(), overlay_v.view());
+  if (test_case.seed != 0) {
+    fill_random(destination_y.view(), test_case.seed ^ 0x01010101U);
+    fill_random(destination_u.view(), test_case.seed ^ 0x02020202U);
+    fill_random(destination_v.view(), test_case.seed ^ 0x03030303U);
+    fill_random(overlay_y.view(), test_case.seed ^ 0xA5A5A5A5U);
+    fill_random(overlay_u.view(), test_case.seed ^ 0xB6B6B6B6U);
+    fill_random(overlay_v.view(), test_case.seed ^ 0xC7C7C7C7U);
+  } else {
+    fill_overlay_darklighten_inputs(destination_y.view(), destination_u.view(), destination_v.view(),
+                                    overlay_y.view(), overlay_u.view(), overlay_v.view());
+  }
   copy_overlay_darklighten_active(destination_y.view().as_const(), expected_y.view());
   copy_overlay_darklighten_active(destination_u.view().as_const(), expected_u.view());
   copy_overlay_darklighten_active(destination_v.view().as_const(), expected_v.view());

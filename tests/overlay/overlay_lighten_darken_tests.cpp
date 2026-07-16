@@ -45,6 +45,32 @@ std::vector<OverlayDarkLightenCase> overlay_darklighten_cases() {
                                             IsaRequirement::Sse41},
         expected_hashes));
   }
+  for (const auto operation :
+       {OverlayDarkLightenOperation::Darken, OverlayDarkLightenOperation::Lighten}) {
+    const auto sse2_function = operation == OverlayDarkLightenOperation::Darken
+                                   ? overlay_darken_sse2
+                                   : overlay_lighten_sse2;
+    const auto sse41_function = operation == OverlayDarkLightenOperation::Darken
+                                    ? overlay_darken_sse41
+                                    : overlay_lighten_sse41;
+    const auto seed = operation == OverlayDarkLightenOperation::Darken ? 0xF30C1D01U
+                                                                         : 0xF30C1D02U;
+    const auto expected_hashes = operation == OverlayDarkLightenOperation::Darken
+                                     ? std::array<std::string, 3>{"7a9f88720e3281cd",
+                                                                  "3df8112f38df7bf7",
+                                                                  "33b9e40c4fc00ae5"}
+                                     : std::array<std::string, 3>{"95d1c1df4d4b489f",
+                                                                  "60dbfcebc8bbee2c",
+                                                                  "20c54a78b0e97db6"};
+    cases.push_back(make_overlay_darklighten_case(
+        operation, 29, 5, 48, 64, 3, 7,
+        Variant<OverlayDarkLightenFunction>{"sse2", sse2_function, IsaRequirement::Sse2},
+        expected_hashes, seed));
+    cases.push_back(make_overlay_darklighten_case(
+        operation, 29, 5, 48, 64, 3, 7,
+        Variant<OverlayDarkLightenFunction>{"sse4.1", sse41_function, IsaRequirement::Sse41},
+        expected_hashes, seed));
+  }
   return cases;
 }
 
