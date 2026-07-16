@@ -38,6 +38,7 @@ struct OverlayFormatCase {
   int height;
   const char* mode;
   const char* name;
+  bool use444 = true;
 };
 
 void PrintTo(const OverlayFormatCase& test_case, std::ostream* stream) { *stream << test_case.name; }
@@ -127,7 +128,8 @@ std::array<AVSValue, 14> make_overlay_args(const PClip& base, const PClip& overl
 PVideoFrame render_overlay(const OverlayFormatCase& test_case, AviSynthEnvironment& environment,
                            const VideoInfo& vi, const PClip& base, const PClip& overlay,
                            const PClip& mask) {
-  const auto args = make_overlay_args(base, overlay, mask, test_case.mode);
+  auto args = make_overlay_args(base, overlay, mask, test_case.mode);
+  args[11] = test_case.use444;
   Overlay filter(base, AVSValue(args.data(), static_cast<int>(args.size())), environment.get());
   EXPECT_EQ(filter.GetVideoInfo().pixel_type, vi.pixel_type);
   EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
@@ -367,7 +369,13 @@ INSTANTIATE_TEST_SUITE_P(
                       OverlayFormatCase{VideoInfo::CS_YV16, 8, 5, "Blend",
                                         "Yv16_Width8_Height5_Blend_Use444"},
                       OverlayFormatCase{VideoInfo::CS_YUVA420, 8, 4, "Blend",
-                                        "Yuva420_Width8_Height4_Blend_Use444"}),
+                                        "Yuva420_Width8_Height4_Blend_Use444"},
+                      OverlayFormatCase{VideoInfo::CS_YV12, 8, 4, "Blend",
+                                        "Yv12_Width8_Height4_Blend_UseNative", false},
+                      OverlayFormatCase{VideoInfo::CS_YV16, 8, 5, "Blend",
+                                        "Yv16_Width8_Height5_Blend_UseNative", false},
+                      OverlayFormatCase{VideoInfo::CS_YUVA420, 8, 4, "Blend",
+                                        "Yuva420_Width8_Height4_Blend_UseNative", false}),
     [](const ::testing::TestParamInfo<OverlayFormatCase>& info) { return info.param.name; });
 
 TEST(OverlayFilter, FullOpacityBlendReturnsOverlayFrame) {
