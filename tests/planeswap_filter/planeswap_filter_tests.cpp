@@ -191,6 +191,88 @@ TEST(PlaneSwap, SwapsYuva420PlanesAndPreservesAlphaPlane) {
   EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
 }
 
+TEST(CombinePlanesFilter, CombinesGreyClipsIntoYuv444Planes) {
+  AviSynthEnvironment environment;
+  constexpr int width = 5;
+  constexpr int height = 3;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_Y8, 1, 25, 1});
+  std::array<PVideoFrame, 3> frames;
+  std::array<std::uint8_t, 3> bases{13, 71, 149};
+  std::array<StaticFrameClip*, 3> clip_impls{};
+  std::array<PClip, 3> clips;
+  std::array<FrameSnapshot, 3> snapshots;
+  for (std::size_t i = 0; i < frames.size(); ++i) {
+    frames[i] = environment.get()->NewVideoFrame(vi);
+    fill_plane_full_pitch(frames[i], static_cast<std::uint8_t>(0x91 + i), PLANAR_Y);
+    write_frame_plane<std::uint8_t>(frames[i], PLANAR_Y,
+                                    [base = bases[i]](int x, int y) {
+                                      return base + x * 9 + y * 17;
+                                    });
+    snapshots[i] = FrameSnapshot::capture(frames[i], vi);
+    auto* impl = new StaticFrameClip(vi, frames[i]);
+    clips[i] = PClip(impl);
+    clip_impls[i] = impl;
+  }
+
+  CombinePlanes filter(clips[0], clips[1], clips[2], PClip(), PClip(), "YUV", "", "",
+                       environment.get());
+  EXPECT_EQ(filter.GetVideoInfo().pixel_type, VideoInfo::CS_YV24);
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  for (int plane_index = 0; plane_index < 3; ++plane_index) {
+    EXPECT_EQ(read_frame_plane_active<std::uint8_t>(output, plane_index == 0 ? PLANAR_Y
+                                                                            : plane_index == 1 ? PLANAR_U
+                                                                                              : PLANAR_V),
+              read_frame_plane_active<std::uint8_t>(frames[static_cast<std::size_t>(plane_index)],
+                                                    PLANAR_Y))
+        << "plane=" << plane_index;
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  for (const auto& clip_impl : clip_impls) {
+    EXPECT_EQ(clip_impl->frame_requests(), std::vector<int>{0});
+  }
+  for (std::size_t i = 0; i < frames.size(); ++i) {
+    EXPECT_EQ(FrameSnapshot::capture(frames[i], vi), snapshots[i]) << "source=" << i;
+  }
+}
+
+TEST(CombinePlanesFilter, ReordersPlanesThroughSingleClipSubframePath) {
+  AviSynthEnvironment environment;
+  constexpr int width = 7;
+  constexpr int height = 3;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_YV24, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(source, 0xa1, PLANAR_Y);
+  fill_plane_full_pitch(source, 0xb2, PLANAR_U);
+  fill_plane_full_pitch(source, 0xc3, PLANAR_V);
+  write_frame_plane<std::uint8_t>(source, PLANAR_Y,
+                                  [](int x, int y) { return 11 + x * 7 + y * 19; });
+  write_frame_plane<std::uint8_t>(source, PLANAR_U,
+                                  [](int x, int y) { return 61 + x * 9 + y * 13; });
+  write_frame_plane<std::uint8_t>(source, PLANAR_V,
+                                  [](int x, int y) { return 191 - x * 5 - y * 11; });
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip_impl = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip_impl);
+
+  CombinePlanes filter(clip, PClip(), PClip(), PClip(), PClip(), "YVU", "YUV", "YV24",
+                       environment.get());
+  EXPECT_EQ(filter.GetVideoInfo().pixel_type, VideoInfo::CS_YV24);
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  EXPECT_EQ(read_frame_plane_active<std::uint8_t>(output, PLANAR_Y),
+            read_frame_plane_active<std::uint8_t>(source, PLANAR_Y));
+  EXPECT_EQ(read_frame_plane_active<std::uint8_t>(output, PLANAR_U),
+            read_frame_plane_active<std::uint8_t>(source, PLANAR_V));
+  EXPECT_EQ(read_frame_plane_active<std::uint8_t>(output, PLANAR_V),
+            read_frame_plane_active<std::uint8_t>(source, PLANAR_U));
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip_impl->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
 class SwapUvToYTest : public ::testing::TestWithParam<int> {};
 
 TEST_P(SwapUvToYTest, ExtractsSubsampledPlanarChannel) {

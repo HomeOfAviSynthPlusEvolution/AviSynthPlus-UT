@@ -175,6 +175,199 @@ TEST(ColorKeyMaskFilter, ClearsAlphaOnlyForInclusiveRgbToleranceMatches) {
   EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
 }
 
+TEST(ResetMaskFilter, WritesPackedAlphaFromMaskValue) {
+  AviSynthEnvironment environment;
+  constexpr int width = 5;
+  constexpr int height = 2;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_BGR32, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(source, 0xc9, DEFAULT_PLANE);
+  for (int y = 0; y < height; ++y) {
+    auto* row = source->GetWritePtr() + y * source->GetPitch();
+    for (int x = 0; x < width; ++x) {
+      row[4 * x + 0] = static_cast<std::uint8_t>(11 + x * 13 + y * 7);
+      row[4 * x + 1] = static_cast<std::uint8_t>(23 + x * 17 + y * 5);
+      row[4 * x + 2] = static_cast<std::uint8_t>(37 + x * 19 + y * 3);
+      row[4 * x + 3] = static_cast<std::uint8_t>(191 - x * 11 - y * 9);
+    }
+  }
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  ResetMask filter(clip, AVSValue(37), AVSValue(), environment.get());
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  for (int y = 0; y < height; ++y) {
+    const auto* source_row = source->GetReadPtr() + y * source->GetPitch();
+    const auto* output_row = output->GetReadPtr() + y * output->GetPitch();
+    for (int x = 0; x < width; ++x) {
+      for (int component = 0; component < 3; ++component) {
+        EXPECT_EQ(output_row[4 * x + component], source_row[4 * x + component])
+            << "component=" << component << " x=" << x << " y=" << y;
+      }
+      EXPECT_EQ(output_row[4 * x + 3], 37) << "alpha x=" << x << " y=" << y;
+    }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+TEST(ResetMaskFilter, UsesOpacityForPlanarYuvaAlpha) {
+  AviSynthEnvironment environment;
+  constexpr int width = 6;
+  constexpr int height = 4;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_YUVA420, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(source, 0xa1, PLANAR_Y);
+  fill_plane_full_pitch(source, 0xb2, PLANAR_U);
+  fill_plane_full_pitch(source, 0xc3, PLANAR_V);
+  fill_plane_full_pitch(source, 0xd4, PLANAR_A);
+  write_frame_plane<std::uint8_t>(source, PLANAR_Y,
+                                  [](int x, int y) { return 17 + x * 9 + y * 13; });
+  write_frame_plane<std::uint8_t>(source, PLANAR_U,
+                                  [](int x, int y) { return 61 + x * 7 + y * 11; });
+  write_frame_plane<std::uint8_t>(source, PLANAR_V,
+                                  [](int x, int y) { return 193 - x * 5 - y * 17; });
+  write_frame_plane<std::uint8_t>(source, PLANAR_A,
+                                  [](int x, int y) { return 23 + x * 3 + y * 19; });
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  ResetMask filter(clip, AVSValue(17), AVSValue(0.5F), environment.get());
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    EXPECT_EQ(read_frame_plane_active<std::uint8_t>(output, plane),
+              read_frame_plane_active<std::uint8_t>(source, plane))
+        << "plane=" << plane;
+  }
+  for (int y = 0; y < output->GetHeight(PLANAR_A); ++y) {
+    const auto* row = output->GetReadPtr(PLANAR_A) + y * output->GetPitch(PLANAR_A);
+    for (int x = 0; x < output->GetRowSize(PLANAR_A); ++x) {
+      EXPECT_EQ(row[x], 128) << "alpha x=" << x << " y=" << y;
+    }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+TEST(ShowChannelFilter, ExtractsPackedRedToYuvaAndPreservesAlpha) {
+  AviSynthEnvironment environment;
+  constexpr int width = 5;
+  constexpr int height = 3;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_BGR32, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(source, 0xe5, DEFAULT_PLANE);
+  for (int raw_y = 0; raw_y < height; ++raw_y) {
+    auto* row = source->GetWritePtr() + raw_y * source->GetPitch();
+    for (int x = 0; x < width; ++x) {
+      row[4 * x + 0] = static_cast<std::uint8_t>(7 + x * 11 + raw_y * 17);
+      row[4 * x + 1] = static_cast<std::uint8_t>(29 + x * 13 + raw_y * 19);
+      row[4 * x + 2] = static_cast<std::uint8_t>(53 + x * 17 + raw_y * 23);
+      row[4 * x + 3] = static_cast<std::uint8_t>(101 + x * 7 + raw_y * 5);
+    }
+  }
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  ShowChannel filter(clip, "yuva444", 2, environment.get());
+  EXPECT_EQ(filter.GetVideoInfo().pixel_type, VideoInfo::CS_YUVA444);
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  for (int y = 0; y < height; ++y) {
+    const int source_y = height - 1 - y;
+    const auto* source_row = source->GetReadPtr() + source_y * source->GetPitch();
+    const auto* output_y = output->GetReadPtr(PLANAR_Y) + y * output->GetPitch(PLANAR_Y);
+    const auto* output_u = output->GetReadPtr(PLANAR_U) + y * output->GetPitch(PLANAR_U);
+    const auto* output_v = output->GetReadPtr(PLANAR_V) + y * output->GetPitch(PLANAR_V);
+    const auto* output_a = output->GetReadPtr(PLANAR_A) + y * output->GetPitch(PLANAR_A);
+    for (int x = 0; x < width; ++x) {
+      EXPECT_EQ(output_y[x], source_row[4 * x + 2]) << "Y x=" << x << " y=" << y;
+      EXPECT_EQ(output_u[x], 128) << "U x=" << x << " y=" << y;
+      EXPECT_EQ(output_v[x], 128) << "V x=" << x << " y=" << y;
+      EXPECT_EQ(output_a[x], source_row[4 * x + 3]) << "A x=" << x << " y=" << y;
+    }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+TEST(MergeRgbFilter, AssemblesPlanarRgbapFromPlanarChannelSources) {
+  AviSynthEnvironment environment;
+  constexpr int width = 5;
+  constexpr int height = 3;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_RGBP8, 1, 25, 1});
+  const auto alpha_vi = make_video_info(
+      VideoInfoSpec{width, height, VideoInfo::CS_RGBAP8, 1, 25, 1});
+
+  PVideoFrame blue = environment.get()->NewVideoFrame(vi);
+  PVideoFrame green = environment.get()->NewVideoFrame(vi);
+  PVideoFrame red = environment.get()->NewVideoFrame(vi);
+  PVideoFrame alpha = environment.get()->NewVideoFrame(alpha_vi);
+  for (const int plane : {PLANAR_G, PLANAR_B, PLANAR_R}) {
+    fill_plane_full_pitch(blue, static_cast<std::uint8_t>(0x11 + plane), plane);
+    fill_plane_full_pitch(green, static_cast<std::uint8_t>(0x21 + plane), plane);
+    fill_plane_full_pitch(red, static_cast<std::uint8_t>(0x31 + plane), plane);
+  }
+  for (const int plane : {PLANAR_G, PLANAR_B, PLANAR_R, PLANAR_A}) {
+    fill_plane_full_pitch(alpha, static_cast<std::uint8_t>(0x41 + plane), plane);
+  }
+  write_frame_plane<std::uint8_t>(blue, PLANAR_B,
+                                  [](int x, int y) { return 11 + x * 7 + y * 13; });
+  write_frame_plane<std::uint8_t>(green, PLANAR_G,
+                                  [](int x, int y) { return 37 + x * 11 + y * 17; });
+  write_frame_plane<std::uint8_t>(red, PLANAR_R,
+                                  [](int x, int y) { return 71 + x * 13 + y * 19; });
+  write_frame_plane<std::uint8_t>(alpha, PLANAR_A,
+                                  [](int x, int y) { return 101 + x * 5 + y * 23; });
+
+  const auto blue_before = FrameSnapshot::capture(blue, vi);
+  const auto green_before = FrameSnapshot::capture(green, vi);
+  const auto red_before = FrameSnapshot::capture(red, vi);
+  const auto alpha_before = FrameSnapshot::capture(alpha, alpha_vi);
+  auto* blue_clip_impl = new StaticFrameClip(vi, blue);
+  auto* green_clip_impl = new StaticFrameClip(vi, green);
+  auto* red_clip_impl = new StaticFrameClip(vi, red);
+  auto* alpha_clip_impl = new StaticFrameClip(alpha_vi, alpha);
+  const PClip blue_clip(blue_clip_impl);
+  const PClip green_clip(green_clip_impl);
+  const PClip red_clip(red_clip_impl);
+  const PClip alpha_clip(alpha_clip_impl);
+
+  MergeRGB filter(red_clip, blue_clip, green_clip, red_clip, alpha_clip, "rgbap",
+                  environment.get());
+  EXPECT_EQ(filter.GetVideoInfo().pixel_type, VideoInfo::CS_RGBAP8);
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  EXPECT_EQ(read_frame_plane_active<std::uint8_t>(output, PLANAR_G),
+            read_frame_plane_active<std::uint8_t>(green, PLANAR_G));
+  EXPECT_EQ(read_frame_plane_active<std::uint8_t>(output, PLANAR_B),
+            read_frame_plane_active<std::uint8_t>(blue, PLANAR_B));
+  EXPECT_EQ(read_frame_plane_active<std::uint8_t>(output, PLANAR_R),
+            read_frame_plane_active<std::uint8_t>(red, PLANAR_R));
+  EXPECT_EQ(read_frame_plane_active<std::uint8_t>(output, PLANAR_A),
+            read_frame_plane_active<std::uint8_t>(alpha, PLANAR_A));
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(blue_clip_impl->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(green_clip_impl->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(red_clip_impl->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(alpha_clip_impl->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(blue, vi), blue_before);
+  EXPECT_EQ(FrameSnapshot::capture(green, vi), green_before);
+  EXPECT_EQ(FrameSnapshot::capture(red, vi), red_before);
+  EXPECT_EQ(FrameSnapshot::capture(alpha, alpha_vi), alpha_before);
+}
+
 template <std::size_t N>
 void write_plane_values(PVideoFrame& frame, int plane, const std::array<std::uint8_t, N>& values) {
   const int pitch = frame->GetPitch(plane);
