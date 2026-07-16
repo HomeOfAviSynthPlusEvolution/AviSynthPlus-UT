@@ -292,6 +292,88 @@ TEST(Histogram, PlotsSubsampledChromaInColorMode) {
   EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
 }
 
+TEST(Histogram, PlotsSamplesInColor2VectorscopeWithGraticule) {
+  AviSynthEnvironment environment;
+  constexpr int width = 4;
+  constexpr int height = 4;
+  const auto vi = make_video_info(
+      VideoInfoSpec{width, height, VideoInfo::CS_YV12, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(source, 0x41, PLANAR_Y);
+  fill_plane_full_pitch(source, 0x52, PLANAR_U);
+  fill_plane_full_pitch(source, 0x63, PLANAR_V);
+  const std::array<std::array<std::uint8_t, 4>, 4> y_values{{
+      {{11, 12, 21, 22}},
+      {{13, 14, 23, 24}},
+      {{31, 32, 41, 42}},
+      {{33, 34, 43, 44}},
+  }};
+  for (int y = 0; y < height; ++y) {
+    auto* row = source->GetWritePtr(PLANAR_Y) + y * source->GetPitch(PLANAR_Y);
+    std::copy(y_values[static_cast<std::size_t>(y)].begin(),
+              y_values[static_cast<std::size_t>(y)].end(), row);
+  }
+  const std::array<std::array<std::uint8_t, 2>, 2> u_values{{
+      {{20, 40}},
+      {{60, 80}},
+  }};
+  const std::array<std::array<std::uint8_t, 2>, 2> v_values{{
+      {{30, 50}},
+      {{70, 90}},
+  }};
+  for (int y = 0; y < 2; ++y) {
+    auto* u_row = source->GetWritePtr(PLANAR_U) + y * source->GetPitch(PLANAR_U);
+    auto* v_row = source->GetWritePtr(PLANAR_V) + y * source->GetPitch(PLANAR_V);
+    for (int x = 0; x < 2; ++x) {
+      u_row[x] = u_values[static_cast<std::size_t>(y)][static_cast<std::size_t>(x)];
+      v_row[x] = v_values[static_cast<std::size_t>(y)][static_cast<std::size_t>(x)];
+    }
+  }
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+  auto params = no_color_overlays();
+  params.graticule_type = histogram_color2_params::GRATICULE_ON;
+
+  Histogram filter(clip, Histogram::ModeColor2, AVSValue(), 8, false, false, nullptr,
+                   params, environment.get());
+  const auto& output_vi = filter.GetVideoInfo();
+  EXPECT_EQ(output_vi.width, 256);
+  EXPECT_EQ(output_vi.height, 256);
+  EXPECT_EQ(output_vi.pixel_type, VideoInfo::CS_YV12);
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  const int y_pitch = output->GetPitch(PLANAR_Y);
+  const auto* output_y = output->GetReadPtr(PLANAR_Y);
+  const std::array<std::array<std::uint8_t, 2>, 2> expected_luma{{
+      {{11, 21}},
+      {{31, 41}},
+  }};
+  for (int y = 0; y < 2; ++y) {
+    for (int x = 0; x < 2; ++x) {
+      const int u = u_values[static_cast<std::size_t>(y)][static_cast<std::size_t>(x)];
+      const int v = v_values[static_cast<std::size_t>(y)][static_cast<std::size_t>(x)];
+      EXPECT_EQ(output_y[v * y_pitch + u],
+                expected_luma[static_cast<std::size_t>(y)][static_cast<std::size_t>(x)])
+          << "u=" << u << " v=" << v;
+      EXPECT_EQ(output->GetReadPtr(PLANAR_U)[(v >> 1) * output->GetPitch(PLANAR_U) + (u >> 1)],
+                static_cast<std::uint8_t>(u))
+          << "U u=" << u << " v=" << v;
+      EXPECT_EQ(output->GetReadPtr(PLANAR_V)[(v >> 1) * output->GetPitch(PLANAR_V) + (u >> 1)],
+                static_cast<std::uint8_t>(v))
+          << "V u=" << u << " v=" << v;
+    }
+  }
+  EXPECT_EQ(output_y[1 * y_pitch + 1], 16);
+  EXPECT_EQ(output_y[16 * y_pitch + 16], 128);
+  EXPECT_EQ(output->GetReadPtr(PLANAR_U)[0], 128);
+  EXPECT_EQ(output->GetReadPtr(PLANAR_V)[0], 128);
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>({0, 0}));
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
 std::uint8_t amplified_luma(std::uint8_t value) {
   const int pixel = static_cast<int>(value) << 4;
   return static_cast<std::uint8_t>((pixel & 256) ? (255 - (pixel & 0xff)) : (pixel & 0xff));
