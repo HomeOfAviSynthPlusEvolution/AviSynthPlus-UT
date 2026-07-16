@@ -7,6 +7,7 @@
 
 #include "support/comparators.h"
 #include "support/cpu_features.h"
+#include "support/deterministic_data.h"
 #include "support/guarded_video_buffer.h"
 #include "support/stable_hash.h"
 #include "support/variant_registry.h"
@@ -43,6 +44,7 @@ struct Yuy2MergeCase {
   Yuy2MergeFunc weighted_function{};
   Yuy2ReplaceFunc replace_function{};
   std::string expected_hash;
+  std::uint32_t seed{};
   std::string name;
 };
 
@@ -67,7 +69,7 @@ inline Yuy2MergeCase make_yuy2_merge_case(Yuy2MergeOperation operation, std::siz
                                           std::size_t other_pitch, int weight,
                                           Yuy2MergeFunc weighted_function,
                                           Yuy2ReplaceFunc replace_function,
-                                          std::string expected_hash) {
+                                          std::string expected_hash, std::uint32_t seed = 0) {
   if (width_bytes == 0 || (width_bytes % 2) != 0) {
     throw std::invalid_argument("YUY2 row size must be a positive even value");
   }
@@ -81,6 +83,7 @@ inline Yuy2MergeCase make_yuy2_merge_case(Yuy2MergeOperation operation, std::siz
                        weighted_function,
                        replace_function,
                        std::move(expected_hash),
+                       seed,
                        {}};
   std::ostringstream stream;
   stream << yuy2_operation_name(operation) << "_WidthBytes" << width_bytes << "_Height" << height
@@ -88,12 +91,22 @@ inline Yuy2MergeCase make_yuy2_merge_case(Yuy2MergeOperation operation, std::siz
   if (operation != Yuy2MergeOperation::ReplaceLuma) {
     stream << "_Weight" << weight;
   }
-  stream << "_PatternBoundaryValues_VariantSse2";
+  if (seed != 0) {
+    stream << "_Seed" << std::uppercase << std::hex << seed;
+  }
+  stream << (seed == 0 ? "_PatternBoundaryValues_" : "_PatternFixedRandom_")
+         << "VariantSse2";
   result.name = stream.str();
   return result;
 }
 
-inline void fill_yuy2_inputs(PlaneView<std::uint8_t> destination, PlaneView<std::uint8_t> other) {
+inline void fill_yuy2_inputs(PlaneView<std::uint8_t> destination, PlaneView<std::uint8_t> other,
+                             std::uint32_t seed = 0) {
+  if (seed != 0) {
+    fill_random(destination, seed);
+    fill_random(other, seed ^ 0xA5A5A5A5U);
+    return;
+  }
   constexpr std::uint8_t anchors[] = {0, 1, 15, 16, 127, 128, 254, 255};
   for (std::size_t y = 0; y < destination.height(); ++y) {
     for (std::size_t x = 0; x < destination.width(); ++x) {
@@ -132,7 +145,7 @@ inline void run_yuy2_merge_case(const Yuy2MergeCase& test_case) {
   GuardedVideoBuffer<std::uint8_t> expected(test_case.width_bytes, test_case.height,
                                             test_case.destination_pitch, 64);
 
-  fill_yuy2_inputs(destination.view(), other.view());
+  fill_yuy2_inputs(destination.view(), other.view(), test_case.seed);
   copy_active(destination.view().as_const(), expected.view());
   const auto other_snapshot = other.snapshot_active();
   apply_yuy2_merge_reference(test_case, expected.view(), other.view().as_const());
@@ -154,8 +167,9 @@ inline void run_yuy2_merge_case(const Yuy2MergeCase& test_case) {
 
   EXPECT_TRUE(compare_exact(expected.view().as_const(), destination.view().as_const()))
       << test_case.name;
-  EXPECT_EQ(format_hash(hash_active(destination.view().as_const())), test_case.expected_hash)
-      << test_case.name;
+  const auto actual_hash = format_hash(hash_active(destination.view().as_const()));
+  EXPECT_EQ(actual_hash, test_case.expected_hash)
+      << test_case.name << " stable output hash mismatch; actual=" << actual_hash;
   EXPECT_TRUE(other.active_matches(other_snapshot))
       << test_case.name << " modified the second input";
   EXPECT_TRUE(destination.memory_intact()) << test_case.name;

@@ -16,6 +16,14 @@ std::vector<Yuy2MergeCase> yuy2_merge_cases() {
                            weighted_merge_luma_yuy2_sse2, nullptr, "cbeda666b7e96b07"),
       make_yuy2_merge_case(Yuy2MergeOperation::ReplaceLuma, 38, 7, 64, 80, 0, nullptr,
                            replace_luma_yuy2_sse2, "8e6b9cb2c59b8b31"),
+      make_yuy2_merge_case(Yuy2MergeOperation::WeightedChroma, 62, 11, 80, 112, 9362,
+                           weighted_merge_chroma_yuy2_sse2, nullptr, "4e05986fb408e05c",
+                           0xF30F2401U),
+      make_yuy2_merge_case(Yuy2MergeOperation::WeightedLuma, 62, 11, 80, 112, 24576,
+                           weighted_merge_luma_yuy2_sse2, nullptr, "45e640f53da49d18",
+                           0xF30F2401U),
+      make_yuy2_merge_case(Yuy2MergeOperation::ReplaceLuma, 62, 11, 80, 112, 0, nullptr,
+                           replace_luma_yuy2_sse2, "abf4a7ec690ce784", 0xF30F2401U),
   };
 }
 
