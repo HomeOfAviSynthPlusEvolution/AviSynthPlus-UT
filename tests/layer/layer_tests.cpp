@@ -489,6 +489,19 @@ std::vector<LayerRgb32MulCase> layer_rgb32_mul_cases() {
                      : (level.first == full_level ? "13bd888dabfc7d28" : "3bf166e71030c1a2")));
     }
   }
+  for (const bool use_chroma : {false, true}) {
+    for (const auto& variant : {
+             Variant<LayerRgb32MulFunction>{
+                 "sse2", use_chroma ? layer_rgb32_mul_sse2<true> : layer_rgb32_mul_sse2<false>,
+                 IsaRequirement::Sse2},
+             Variant<LayerRgb32MulFunction>{
+                 "avx2", use_chroma ? layer_rgb32_mul_avx2<true> : layer_rgb32_mul_avx2<false>,
+                 IsaRequirement::Avx2}}) {
+      cases.push_back(make_layer_rgb32_mul_case(
+          use_chroma, 13, 5, 64, 80, partial_level, "Partial173", variant,
+          use_chroma ? "9cb7c4a09565d6a5" : "4a6100a54c6da70d", 0xF30F2001U));
+    }
+  }
   return cases;
 }
 
