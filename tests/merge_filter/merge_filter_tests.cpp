@@ -9,14 +9,17 @@
 #undef AVS_UNUSED
 #undef AVSUT_MERGE_UNDEF_AVS_UNUSED
 #endif
+#include "convert/convert_helper.h"
 
 #include "support/video_filter_test_support.h"
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cstdint>
 #include <ostream>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -25,7 +28,9 @@ using avsut::test::AviSynthEnvironment;
 using avsut::test::fill_plane_full_pitch;
 using avsut::test::FrameSequenceClip;
 using avsut::test::FrameSnapshot;
+using avsut::test::get_frame_property_int;
 using avsut::test::make_video_info;
+using avsut::test::set_frame_property_int;
 using avsut::test::video_frame_planes;
 using avsut::test::VideoInfoSpec;
 using avsut::test::write_frame_plane;
@@ -238,6 +243,43 @@ TEST(MergeFilter, ZeroWeightDoesNotRequestSecondClip) {
   expect_plane(first_frames[1], second_frames[1], output, PLANAR_V, false, test_case.weight);
   EXPECT_EQ(first_clip->frame_requests(), std::vector<int>{1});
   EXPECT_TRUE(second_clip->frame_requests().empty());
+  EXPECT_EQ(snapshot_frames(first_frames, vi), first_snapshots);
+  EXPECT_EQ(snapshot_frames(second_frames, vi), second_snapshots);
+}
+
+TEST(MergeFilter, UsesBaseFramePropertiesForWeightedOutput) {
+  AviSynthEnvironment environment;
+  const auto vi = make_video_info(VideoInfoSpec{8, 4, VideoInfo::CS_YV12, 2, 25, 1});
+  auto first_frames = make_frames(environment, vi, 13);
+  auto second_frames = make_frames(environment, vi, 157);
+  set_frame_property_int(environment.get(), first_frames[1], "_ChromaLocation", AVS_CHROMA_LEFT);
+  set_frame_property_int(environment.get(), first_frames[1], "_ColorRange", AVS_COLORRANGE_FULL);
+  set_frame_property_int(environment.get(), first_frames[1], "_FieldBased", 1);
+  set_frame_property_int(environment.get(), second_frames[1], "_ChromaLocation", AVS_CHROMA_CENTER);
+  set_frame_property_int(environment.get(), second_frames[1], "_ColorRange",
+                         AVS_COLORRANGE_LIMITED);
+  set_frame_property_int(environment.get(), second_frames[1], "_FieldBased", 0);
+  const auto first_snapshots = snapshot_frames(first_frames, vi);
+  const auto second_snapshots = snapshot_frames(second_frames, vi);
+  auto* first_clip = new FrameSequenceClip(vi, first_frames);
+  auto* second_clip = new FrameSequenceClip(vi, second_frames);
+  const PClip child(first_clip);
+  const PClip other(second_clip);
+
+  MergeAll filter(child, other, 0.25f, environment.get());
+  const PVideoFrame output = filter.GetFrame(1, environment.get());
+
+  for (const auto& property : std::array<std::pair<const char*, int>, 3>{
+           std::pair{"_ChromaLocation", AVS_CHROMA_LEFT},
+           std::pair{"_ColorRange", AVS_COLORRANGE_FULL},
+           std::pair{"_FieldBased", 1}}) {
+    const auto actual = get_frame_property_int(environment.get(), output, property.first);
+    ASSERT_TRUE(actual.has_value()) << property.first;
+    EXPECT_EQ(*actual, property.second) << property.first;
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(first_clip->frame_requests(), std::vector<int>{1});
+  EXPECT_EQ(second_clip->frame_requests(), std::vector<int>{1});
   EXPECT_EQ(snapshot_frames(first_frames, vi), first_snapshots);
   EXPECT_EQ(snapshot_frames(second_frames, vi), second_snapshots);
 }

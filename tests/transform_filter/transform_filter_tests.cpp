@@ -9,6 +9,7 @@
 #undef AVS_UNUSED
 #undef AVSUT_TRANSFORM_FILTER_UNDEF_AVS_UNUSED
 #endif
+#include "convert/convert_helper.h"
 
 #include "support/video_filter_test_support.h"
 
@@ -24,8 +25,10 @@ namespace {
 using avsut::test::AviSynthEnvironment;
 using avsut::test::fill_plane_full_pitch;
 using avsut::test::FrameSnapshot;
+using avsut::test::get_frame_property_int;
 using avsut::test::make_video_info;
 using avsut::test::read_frame_plane_active;
+using avsut::test::set_frame_property_int;
 using avsut::test::StaticFrameClip;
 using avsut::test::VideoInfoSpec;
 using avsut::test::write_frame_plane;
@@ -307,6 +310,46 @@ TEST(CropFilter, ReturnsRequestedYv24Subrectangle) {
         EXPECT_EQ(output_row[x], source_row[x]) << "plane=" << plane << " x=" << x << " y=" << y;
       }
     }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+TEST(CropFilter, PreservesChromaRangeAndFieldPropertiesOnSubframe) {
+  AviSynthEnvironment environment;
+  constexpr int source_width = 8;
+  constexpr int source_height = 6;
+  constexpr int left = 2;
+  constexpr int top = 2;
+  constexpr int width = 4;
+  constexpr int height = 4;
+  const auto vi =
+      make_video_info(VideoInfoSpec{source_width, source_height, VideoInfo::CS_YV12, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    fill_plane_full_pitch(source, static_cast<std::uint8_t>(0x40 + plane * 17), plane);
+  }
+  set_frame_property_int(environment.get(), source, "_ChromaLocation", AVS_CHROMA_LEFT);
+  set_frame_property_int(environment.get(), source, "_ColorRange", AVS_COLORRANGE_FULL);
+  set_frame_property_int(environment.get(), source, "_FieldBased", 1);
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  Crop filter(left, top, width, height, true, clip, environment.get());
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  for (const auto& property : std::array<std::pair<const char*, int>, 3>{
+           std::pair{"_ChromaLocation", AVS_CHROMA_LEFT},
+           std::pair{"_ColorRange", AVS_COLORRANGE_FULL},
+           std::pair{"_FieldBased", 1}}) {
+    const auto actual = get_frame_property_int(environment.get(), output, property.first);
+    ASSERT_TRUE(actual.has_value()) << property.first;
+    EXPECT_EQ(*actual, property.second) << property.first;
+    const auto source_value = get_frame_property_int(environment.get(), source, property.first);
+    ASSERT_TRUE(source_value.has_value()) << property.first;
+    EXPECT_EQ(*source_value, property.second) << property.first;
   }
   EXPECT_NE(output->CheckMemory(), 1);
   EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});

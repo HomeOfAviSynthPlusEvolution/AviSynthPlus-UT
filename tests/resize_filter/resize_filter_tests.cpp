@@ -21,6 +21,7 @@
 #include <cmath>
 #include <cstdint>
 #include <ostream>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -28,7 +29,9 @@ namespace {
 using avsut::test::AviSynthEnvironment;
 using avsut::test::fill_plane_full_pitch;
 using avsut::test::FrameSnapshot;
+using avsut::test::get_frame_property_int;
 using avsut::test::make_video_info;
+using avsut::test::set_frame_property_int;
 using avsut::test::StaticFrameClip;
 using avsut::test::VideoInfoSpec;
 using avsut::test::video_frame_planes;
@@ -793,6 +796,55 @@ INSTANTIATE_TEST_SUITE_P(
                       PackedResizeCase{VideoInfo::CS_BGR64, 4, ResizeDirection::Vertical,
                                        "Bgr64Vertical"}),
     [](const ::testing::TestParamInfo<PackedResizeCase>& info) { return info.param.name; });
+
+class ResizeFramePropertiesTest : public ::testing::TestWithParam<bool> {};
+
+TEST_P(ResizeFramePropertiesTest, PreservesChromaRangeAndFieldProperties) {
+  const bool horizontal = GetParam();
+  AviSynthEnvironment environment;
+  constexpr int source_width = 8;
+  constexpr int source_height = 6;
+  const auto vi =
+      make_video_info(VideoInfoSpec{source_width, source_height, VideoInfo::CS_YV12, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    fill_plane_full_pitch(source, static_cast<std::uint8_t>(0x70 + plane * 23), plane);
+  }
+  set_frame_property_int(environment.get(), source, "_ChromaLocation", AVS_CHROMA_LEFT);
+  set_frame_property_int(environment.get(), source, "_ColorRange", AVS_COLORRANGE_FULL);
+  set_frame_property_int(environment.get(), source, "_FieldBased", 1);
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+  PointFilter point_filter;
+
+  PVideoFrame output;
+  if (horizontal) {
+    FilteredResizeH filter(clip, 0.0, static_cast<double>(source_width), 6, &point_filter, true,
+                           AVS_CHROMA_CENTER, environment.get());
+    output = filter.GetFrame(0, environment.get());
+  } else {
+    FilteredResizeV filter(clip, 0.0, static_cast<double>(source_height), 4, &point_filter, true,
+                           AVS_CHROMA_CENTER, environment.get());
+    output = filter.GetFrame(0, environment.get());
+  }
+
+  for (const auto& property : std::array<std::pair<const char*, int>, 3>{
+           std::pair{"_ChromaLocation", AVS_CHROMA_LEFT},
+           std::pair{"_ColorRange", AVS_COLORRANGE_FULL},
+           std::pair{"_FieldBased", 1}}) {
+    const auto actual = get_frame_property_int(environment.get(), output, property.first);
+    ASSERT_TRUE(actual.has_value()) << property.first;
+    EXPECT_EQ(*actual, property.second) << property.first;
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Directions, ResizeFramePropertiesTest, ::testing::Values(true, false),
+    [](const ::testing::TestParamInfo<bool>& info) { return info.param ? "Horizontal" : "Vertical"; });
 
 TEST(FilteredResizeFilter, RejectsOddYv12HorizontalTargetWidth) {
   AviSynthEnvironment environment;

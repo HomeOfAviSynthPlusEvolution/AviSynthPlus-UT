@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -97,6 +98,35 @@ std::vector<Pixel> read_frame_plane_active(const PVideoFrame& frame, int plane) 
     values.insert(values.end(), row, row + geometry.width);
   }
   return values;
+}
+
+inline void set_frame_property_int(IScriptEnvironment* environment, PVideoFrame& frame,
+                                   const char* key, int value) {
+  if (environment == nullptr || frame == nullptr) {
+    throw std::invalid_argument("frame property requires an environment and frame");
+  }
+  AVSMap* properties = environment->getFramePropsRW(frame);
+  if (properties == nullptr ||
+      environment->propSetInt(properties, key, value, PROPAPPENDMODE_REPLACE) != 0) {
+    throw std::runtime_error("failed to set frame property");
+  }
+}
+
+inline std::optional<int> get_frame_property_int(IScriptEnvironment* environment,
+                                                 const PVideoFrame& frame, const char* key) {
+  if (environment == nullptr || frame == nullptr) {
+    throw std::invalid_argument("frame property requires an environment and frame");
+  }
+  const AVSMap* properties = environment->getFramePropsRO(frame);
+  if (properties == nullptr || environment->propNumElements(properties, key) <= 0) {
+    return std::nullopt;
+  }
+  int error = 0;
+  const int64_t value = environment->propGetInt(properties, key, 0, &error);
+  if (error != 0) {
+    throw std::runtime_error("failed to read frame property");
+  }
+  return static_cast<int>(value);
 }
 
 inline std::vector<int> video_frame_planes(const VideoInfo& video_info) {

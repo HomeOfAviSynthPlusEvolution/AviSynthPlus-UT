@@ -9,6 +9,7 @@
 #undef AVS_UNUSED
 #undef AVSUT_OVERLAY_FILTER_UNDEF_AVS_UNUSED
 #endif
+#include "convert/convert_helper.h"
 
 #include "support/video_filter_test_support.h"
 
@@ -20,6 +21,7 @@
 #include <cstdint>
 #include <ostream>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -28,7 +30,9 @@ using avsut::test::AviSynthEnvironment;
 using avsut::test::fill_plane_full_pitch;
 using avsut::test::FrameSequenceClip;
 using avsut::test::FrameSnapshot;
+using avsut::test::get_frame_property_int;
 using avsut::test::make_video_info;
+using avsut::test::set_frame_property_int;
 using avsut::test::video_frame_planes;
 using avsut::test::VideoInfoSpec;
 using avsut::test::write_frame_plane;
@@ -546,6 +550,44 @@ TEST(OverlayFilter, FullOpacityBlendReturnsOverlayFrame) {
   const PVideoFrame output = filter.GetFrame(1, environment.get());
 
   expect_active_planes_equal(overlay_frames[1], output, vi, "FullOpacityBlend");
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(base_impl->frame_requests(), std::vector<int>{1});
+  EXPECT_EQ(overlay_impl->frame_requests(), std::vector<int>{1});
+  EXPECT_EQ(snapshot_frames(base_frames, vi), base_before);
+  EXPECT_EQ(snapshot_frames(overlay_frames, vi), overlay_before);
+}
+
+TEST(OverlayFilter, UsesBaseFramePropertiesForBlendOutput) {
+  AviSynthEnvironment environment;
+  const auto vi = make_video_info(VideoInfoSpec{7, 3, VideoInfo::CS_YV24, 2, 25, 1});
+  auto base_frames = make_yuv_frames(environment, vi, 23);
+  auto overlay_frames = make_yuv_frames(environment, vi, 149);
+  set_frame_property_int(environment.get(), base_frames[1], "_ChromaLocation", AVS_CHROMA_LEFT);
+  set_frame_property_int(environment.get(), base_frames[1], "_ColorRange", AVS_COLORRANGE_FULL);
+  set_frame_property_int(environment.get(), base_frames[1], "_FieldBased", 1);
+  set_frame_property_int(environment.get(), overlay_frames[1], "_ChromaLocation", AVS_CHROMA_CENTER);
+  set_frame_property_int(environment.get(), overlay_frames[1], "_ColorRange",
+                         AVS_COLORRANGE_LIMITED);
+  set_frame_property_int(environment.get(), overlay_frames[1], "_FieldBased", 0);
+  const auto base_before = snapshot_frames(base_frames, vi);
+  const auto overlay_before = snapshot_frames(overlay_frames, vi);
+  auto* base_impl = new FrameSequenceClip(vi, base_frames);
+  auto* overlay_impl = new FrameSequenceClip(vi, overlay_frames);
+  const PClip base(base_impl);
+  const PClip overlay(overlay_impl);
+  auto args = make_overlay_args(base, overlay, PClip(), "Blend");
+
+  Overlay filter(base, AVSValue(args.data(), static_cast<int>(args.size())), environment.get());
+  const PVideoFrame output = filter.GetFrame(1, environment.get());
+
+  for (const auto& property : std::array<std::pair<const char*, int>, 3>{
+           std::pair{"_ChromaLocation", AVS_CHROMA_LEFT},
+           std::pair{"_ColorRange", AVS_COLORRANGE_FULL},
+           std::pair{"_FieldBased", 1}}) {
+    const auto actual = get_frame_property_int(environment.get(), output, property.first);
+    ASSERT_TRUE(actual.has_value()) << property.first;
+    EXPECT_EQ(*actual, property.second) << property.first;
+  }
   EXPECT_NE(output->CheckMemory(), 1);
   EXPECT_EQ(base_impl->frame_requests(), std::vector<int>{1});
   EXPECT_EQ(overlay_impl->frame_requests(), std::vector<int>{1});

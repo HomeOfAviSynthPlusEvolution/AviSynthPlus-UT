@@ -9,6 +9,7 @@
 #undef AVS_UNUSED
 #undef AVSUT_LAYER_FILTER_UNDEF_AVS_UNUSED
 #endif
+#include "convert/convert_helper.h"
 
 #include "support/video_filter_test_support.h"
 
@@ -26,8 +27,10 @@ using avsut::test::AviSynthEnvironment;
 using avsut::test::fill_plane_full_pitch;
 using avsut::test::FrameSequenceClip;
 using avsut::test::FrameSnapshot;
+using avsut::test::get_frame_property_int;
 using avsut::test::make_video_info;
 using avsut::test::read_frame_plane_active;
+using avsut::test::set_frame_property_int;
 using avsut::test::StaticFrameClip;
 using avsut::test::VideoInfoSpec;
 using avsut::test::video_frame_planes;
@@ -756,6 +759,44 @@ INSTANTIATE_TEST_SUITE_P(
                       LayerYuvFormatCase{VideoInfo::CS_YUVA420, 8, 4,
                                          "Yuva420_Width8_Height4_AddAlphaMask"}),
     [](const ::testing::TestParamInfo<LayerYuvFormatCase>& info) { return info.param.name; });
+
+TEST(LayerFilter, UsesBaseFramePropertiesForWeightedYuvOutput) {
+  AviSynthEnvironment environment;
+  const auto vi = make_video_info(VideoInfoSpec{8, 4, VideoInfo::CS_YV12, 2, 25, 1});
+  auto base_frames = make_layer_yuv_frames(environment, vi, 19);
+  auto overlay_frames = make_layer_yuv_frames(environment, vi, 137);
+  set_frame_property_int(environment.get(), base_frames[1], "_ChromaLocation", AVS_CHROMA_LEFT);
+  set_frame_property_int(environment.get(), base_frames[1], "_ColorRange", AVS_COLORRANGE_FULL);
+  set_frame_property_int(environment.get(), base_frames[1], "_FieldBased", 1);
+  set_frame_property_int(environment.get(), overlay_frames[1], "_ChromaLocation", AVS_CHROMA_CENTER);
+  set_frame_property_int(environment.get(), overlay_frames[1], "_ColorRange",
+                         AVS_COLORRANGE_LIMITED);
+  set_frame_property_int(environment.get(), overlay_frames[1], "_FieldBased", 0);
+  const auto base_before = FrameSnapshot::capture(base_frames[1], vi);
+  const auto overlay_before = FrameSnapshot::capture(overlay_frames[1], vi);
+  auto* base_clip = new FrameSequenceClip(vi, base_frames);
+  auto* overlay_clip = new FrameSequenceClip(vi, overlay_frames);
+  const PClip base(base_clip);
+  const PClip overlay(overlay_clip);
+
+  Layer filter(base, overlay, nullptr, "Add", -1, 0, 0, 0, true, 0.5f, PLACEMENT_MPEG1,
+               environment.get());
+  const PVideoFrame output = filter.GetFrame(1, environment.get());
+
+  for (const auto& property : std::array<std::pair<const char*, int>, 3>{
+           std::pair{"_ChromaLocation", AVS_CHROMA_LEFT},
+           std::pair{"_ColorRange", AVS_COLORRANGE_FULL},
+           std::pair{"_FieldBased", 1}}) {
+    const auto actual = get_frame_property_int(environment.get(), output, property.first);
+    ASSERT_TRUE(actual.has_value()) << property.first;
+    EXPECT_EQ(*actual, property.second) << property.first;
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(base_clip->frame_requests(), std::vector<int>{1});
+  EXPECT_EQ(overlay_clip->frame_requests(), std::vector<int>{1});
+  EXPECT_EQ(FrameSnapshot::capture(base_frames[1], vi), base_before);
+  EXPECT_EQ(FrameSnapshot::capture(overlay_frames[1], vi), overlay_before);
+}
 
 TEST(LayerFilter, AveragesYuvPlanesThroughFastMode) {
   AviSynthEnvironment environment;

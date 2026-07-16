@@ -9,14 +9,17 @@
 #undef AVS_UNUSED
 #undef AVSUT_TURN_UNDEF_AVS_UNUSED
 #endif
+#include "convert/convert_helper.h"
 
 #include "support/video_filter_test_support.h"
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cstdint>
 #include <ostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -24,8 +27,10 @@ namespace {
 using avsut::test::AviSynthEnvironment;
 using avsut::test::fill_plane_full_pitch;
 using avsut::test::FrameSnapshot;
+using avsut::test::get_frame_property_int;
 using avsut::test::make_video_info;
 using avsut::test::read_frame_plane_active;
+using avsut::test::set_frame_property_int;
 using avsut::test::StaticFrameClip;
 using avsut::test::VideoInfoSpec;
 using avsut::test::write_frame_plane;
@@ -242,6 +247,39 @@ TEST(TurnFilter, LeftThenRightRestoresYv24ActivePlanes) {
   }
   EXPECT_NE(output->CheckMemory(), 1);
   EXPECT_EQ(source_clip_impl->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+TEST(TurnFilter, PreservesChromaRangeAndFieldPropertiesOnRotatedFrame) {
+  AviSynthEnvironment environment;
+  constexpr int width = 8;
+  constexpr int height = 6;
+  const auto vi =
+      make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_YV12, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    fill_plane_full_pitch(source, static_cast<std::uint8_t>(0x50 + plane * 19), plane);
+  }
+  set_frame_property_int(environment.get(), source, "_ChromaLocation", AVS_CHROMA_CENTER);
+  set_frame_property_int(environment.get(), source, "_ColorRange", AVS_COLORRANGE_LIMITED);
+  set_frame_property_int(environment.get(), source, "_FieldBased", 0);
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  Turn filter(clip, kTurnRight, environment.get());
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  for (const auto& property : std::array<std::pair<const char*, int>, 3>{
+           std::pair{"_ChromaLocation", AVS_CHROMA_CENTER},
+           std::pair{"_ColorRange", AVS_COLORRANGE_LIMITED},
+           std::pair{"_FieldBased", 0}}) {
+    const auto actual = get_frame_property_int(environment.get(), output, property.first);
+    ASSERT_TRUE(actual.has_value()) << property.first;
+    EXPECT_EQ(*actual, property.second) << property.first;
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
   EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
 }
 
