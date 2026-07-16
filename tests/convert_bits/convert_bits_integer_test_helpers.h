@@ -5,6 +5,7 @@
 
 #include "support/comparators.h"
 #include "support/cpu_features.h"
+#include "support/deterministic_data.h"
 #include "support/guarded_video_buffer.h"
 #include "support/stable_hash.h"
 #include "support/variant_registry.h"
@@ -100,7 +101,9 @@ inline ConvertBitsIntegerCase make_convert_bits_integer_case(
   if (result.seed != 0) {
     stream << "_Seed" << std::uppercase << std::hex << result.seed;
   }
-  stream << "_DitherNone_PatternBoundaryValues_" << integer_variant_name(result.variant.name);
+  stream << "_DitherNone_"
+         << (result.seed == 0 ? "PatternBoundaryValues_" : "PatternFixedRandom_")
+         << integer_variant_name(result.variant.name);
   result.name = stream.str();
   return result;
 }
@@ -132,6 +135,15 @@ void fill_convert_bits_integer_source(PlaneView<T> source,
                                       const ConvertBitsIntegerCase& test_case) {
   static_assert(std::is_integral_v<T>);
   const auto maximum = bit_depth_max(test_case.source_bit_depth);
+  if (test_case.seed != 0) {
+    XorShift32 generator(test_case.seed);
+    for (std::size_t y = 0; y < source.height(); ++y) {
+      for (std::size_t x = 0; x < source.width(); ++x) {
+        source.row(y)[x] = static_cast<T>(generator.next() & maximum);
+      }
+    }
+    return;
+  }
   const auto range =
       integer_range(test_case.chroma, test_case.source_full, test_case.source_bit_depth);
   const auto lower =
@@ -212,8 +224,9 @@ void run_convert_bits_integer_case_typed(const ConvertBitsIntegerCase& test_case
 
   EXPECT_TRUE(compare_exact(expected.view().as_const(), actual.view().as_const()))
       << test_case.name;
-  EXPECT_EQ(format_hash(hash_active(actual.view().as_const())), test_case.expected_hash)
-      << test_case.name;
+  const auto actual_hash = format_hash(hash_active(actual.view().as_const()));
+  EXPECT_EQ(actual_hash, test_case.expected_hash)
+      << test_case.name << " stable output hash mismatch; actual=" << actual_hash;
   EXPECT_TRUE(source.active_matches(source_snapshot)) << test_case.name << " modified the source";
   EXPECT_TRUE(source.memory_intact()) << test_case.name;
   EXPECT_TRUE(expected.memory_intact()) << test_case.name;
@@ -241,7 +254,8 @@ template <typename Source, typename Target, bool Chroma, bool SourceFull, bool T
 void add_convert_bits_integer_variants(std::vector<ConvertBitsIntegerCase>& cases,
                                        IntegerStorage storage, int source_bit_depth,
                                        int target_bit_depth, std::size_t source_pitch,
-                                       std::size_t target_pitch, const char* expected_hash) {
+                                       std::size_t target_pitch, const char* expected_hash,
+                                       std::uint32_t seed = 0) {
   constexpr std::size_t width = 32;
   constexpr std::size_t height = 5;
   cases.push_back(make_convert_bits_integer_case(
@@ -250,14 +264,14 @@ void add_convert_bits_integer_variants(std::vector<ConvertBitsIntegerCase>& case
       Variant<ConvertBitsIntegerFunc>{
           "sse41", convert_uint_sse41<Source, Target, Chroma, SourceFull, TargetFull>,
           IsaRequirement::Sse41},
-      expected_hash));
+      expected_hash, seed));
   cases.push_back(make_convert_bits_integer_case(
       storage, Chroma, SourceFull, TargetFull, source_bit_depth, target_bit_depth, width, height,
       source_pitch, target_pitch,
       Variant<ConvertBitsIntegerFunc>{
           "avx2", convert_uint_avx2<Source, Target, Chroma, SourceFull, TargetFull>,
           IsaRequirement::Avx2},
-      expected_hash));
+      expected_hash, seed));
 }
 
 }  // namespace avsut::test
