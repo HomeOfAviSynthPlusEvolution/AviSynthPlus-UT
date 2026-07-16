@@ -83,6 +83,11 @@ std::vector<OverlayChromaCase> overlay_chroma_cases() {
           Variant<OverlayChromaFunction>{"sse2", convert_yv24_chroma_to_yv12_float_sse2,
                                          IsaRequirement::Sse2},
           ""),
+      make_overlay_chroma_case(
+          OverlayChromaOperation::Yv24ToYv12, OverlayChromaSampleKind::Float, 30, 12, 128, 80,
+          Variant<OverlayChromaFunction>{"sse2", convert_yv24_chroma_to_yv12_float_sse2,
+                                         IsaRequirement::Sse2},
+          "", 0xF30C1201U),
       make_overlay_chroma_case(OverlayChromaOperation::Yv24ToYv16, OverlayChromaSampleKind::U8, 38,
                                5, 64, 64,
                                Variant<OverlayChromaFunction>{
@@ -108,6 +113,11 @@ std::vector<OverlayChromaCase> overlay_chroma_cases() {
           Variant<OverlayChromaFunction>{"sse2", convert_yv24_chroma_to_yv16_float_sse2,
                                          IsaRequirement::Sse2},
           ""),
+      make_overlay_chroma_case(
+          OverlayChromaOperation::Yv24ToYv16, OverlayChromaSampleKind::Float, 30, 7, 128, 80,
+          Variant<OverlayChromaFunction>{"sse2", convert_yv24_chroma_to_yv16_float_sse2,
+                                         IsaRequirement::Sse2},
+          "", 0xF30C1602U),
   };
 }
 

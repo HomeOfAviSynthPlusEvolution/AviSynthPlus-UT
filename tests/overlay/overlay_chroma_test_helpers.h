@@ -47,6 +47,7 @@ struct OverlayChromaCase {
   std::size_t destination_pitch{};
   Variant<OverlayChromaFunction> variant;
   std::string expected_hash;
+  std::uint32_t seed{};
   std::string name;
 };
 
@@ -126,8 +127,11 @@ inline std::string overlay_chroma_case_name(const OverlayChromaCase& test_case) 
          << test_case.source_width_pixels << "_SrcHeight" << test_case.source_height << "_SrcPitch"
          << test_case.source_pitch << "_DstWidth" << overlay_chroma_destination_width(test_case)
          << "_DstHeight" << overlay_chroma_destination_height(test_case) << "_DstPitch"
-         << test_case.destination_pitch << "_Alignment0"
-         << "_PatternChromaAnchors_" << overlay_chroma_variant_name(test_case.variant);
+         << test_case.destination_pitch << "_Alignment0";
+  if (test_case.seed != 0) {
+    stream << "_Seed" << std::uppercase << std::hex << test_case.seed;
+  }
+  stream << "_PatternChromaAnchors_" << overlay_chroma_variant_name(test_case.variant);
   return stream.str();
 }
 
@@ -135,7 +139,7 @@ inline OverlayChromaCase make_overlay_chroma_case(
     OverlayChromaOperation operation, OverlayChromaSampleKind sample_kind,
     std::size_t source_width_pixels, std::size_t source_height, std::size_t source_pitch,
     std::size_t destination_pitch, Variant<OverlayChromaFunction> variant,
-    std::string expected_hash) {
+    std::string expected_hash, std::uint32_t seed = 0) {
   OverlayChromaCase result{operation,
                            sample_kind,
                            source_width_pixels,
@@ -144,6 +148,7 @@ inline OverlayChromaCase make_overlay_chroma_case(
                            destination_pitch,
                            std::move(variant),
                            std::move(expected_hash),
+                           seed,
                            {}};
   result.name = overlay_chroma_case_name(result);
   return result;
@@ -154,7 +159,8 @@ inline void PrintTo(const OverlayChromaCase& test_case, std::ostream* stream) {
 }
 
 template <typename T>
-void fill_overlay_chroma_input(PlaneView<T> source, OverlayChromaSampleKind sample_kind) {
+void fill_overlay_chroma_input(PlaneView<T> source, OverlayChromaSampleKind sample_kind,
+                               std::uint32_t seed = 0) {
   if constexpr (std::is_integral_v<T>) {
     constexpr std::array<std::uint32_t, 16> kAnchors{
         0U,   1U,    2U,     15U,    16U,    127U,   128U,   255U,
@@ -163,10 +169,13 @@ void fill_overlay_chroma_input(PlaneView<T> source, OverlayChromaSampleKind samp
     const auto mask = sample_kind == OverlayChromaSampleKind::U16LessThan16Bit
                           ? 0x3fffU
                           : static_cast<std::uint32_t>(std::numeric_limits<T>::max());
+    const auto anchor_offset = static_cast<std::size_t>(seed % kAnchors.size());
+    const auto seed_perturbation = (seed >> 8U) & 0xffU;
     for (std::size_t y = 0; y < source.height(); ++y) {
       for (std::size_t x = 0; x < source.width(); ++x) {
-        const auto anchor = kAnchors[(x * 5U + y * 7U) % kAnchors.size()];
-        const auto perturbation = static_cast<std::uint32_t>(x * 277U + y * 4099U + (x ^ y) * 17U);
+        const auto anchor = kAnchors[(x * 5U + y * 7U + anchor_offset) % kAnchors.size()];
+        const auto perturbation = static_cast<std::uint32_t>(x * 277U + y * 4099U +
+                                                             (x ^ y) * 17U + seed_perturbation);
         source.row(y)[x] = static_cast<T>((anchor + perturbation) & mask);
       }
     }
@@ -175,11 +184,15 @@ void fill_overlay_chroma_input(PlaneView<T> source, OverlayChromaSampleKind samp
     constexpr std::array<float, 12> kAnchors{
         -2.0F, -1.0F, -0.125F, 0.0F, 0.03125F, 0.125F, 0.5F, 1.0F, 3.5F, 16.0F, 63.75F, 255.5F,
     };
+    const auto anchor_offset = static_cast<std::size_t>(seed % kAnchors.size());
+    const auto seed_perturbation = static_cast<int>((seed >> 8U) % 19U);
     for (std::size_t y = 0; y < source.height(); ++y) {
       for (std::size_t x = 0; x < source.width(); ++x) {
-        const auto anchor = kAnchors[(x * 3U + y * 5U) % kAnchors.size()];
+        const auto anchor = kAnchors[(x * 3U + y * 5U + anchor_offset) % kAnchors.size()];
         const auto perturbation =
-            static_cast<float>(static_cast<int>((x * 11U + y * 13U) % 19U) - 9) * 0.015625F;
+            static_cast<float>(static_cast<int>((x * 11U + y * 13U + seed_perturbation) % 19U) -
+                               9) *
+            0.015625F;
         source.row(y)[x] = anchor + perturbation;
       }
     }
@@ -307,7 +320,7 @@ void run_overlay_chroma_case(const OverlayChromaCase& test_case) {
   GuardedVideoBuffer<T> actual(destination_width, destination_height, test_case.destination_pitch,
                                64);
 
-  fill_overlay_chroma_input(source.view(), test_case.sample_kind);
+  fill_overlay_chroma_input(source.view(), test_case.sample_kind, test_case.seed);
   const auto source_snapshot = source.snapshot_active();
   make_overlay_chroma_reference(source.view().as_const(), expected.view(), test_case);
 
