@@ -268,9 +268,53 @@ TEST(CombinePlanesFilter, ReordersPlanesThroughSingleClipSubframePath) {
             read_frame_plane_active<std::uint8_t>(source, PLANAR_V));
   EXPECT_EQ(read_frame_plane_active<std::uint8_t>(output, PLANAR_V),
             read_frame_plane_active<std::uint8_t>(source, PLANAR_U));
+  const PVideoFrame repeat = filter.GetFrame(0, environment.get());
+  EXPECT_EQ(read_frame_plane_active<std::uint8_t>(repeat, PLANAR_Y),
+            read_frame_plane_active<std::uint8_t>(source, PLANAR_Y));
+  EXPECT_EQ(read_frame_plane_active<std::uint8_t>(repeat, PLANAR_U),
+            read_frame_plane_active<std::uint8_t>(source, PLANAR_V));
+  EXPECT_EQ(read_frame_plane_active<std::uint8_t>(repeat, PLANAR_V),
+            read_frame_plane_active<std::uint8_t>(source, PLANAR_U));
   EXPECT_NE(output->CheckMemory(), 1);
-  EXPECT_EQ(source_clip_impl->frame_requests(), std::vector<int>{0});
+  EXPECT_NE(repeat->CheckMemory(), 1);
+  EXPECT_EQ(source_clip_impl->frame_requests(), std::vector<int>({0, 0}));
   EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+TEST(CombinePlanesFilter, RejectsInvalidTargetPlaneCountAndDimensionsBeforeFrameRequest) {
+  AviSynthEnvironment environment;
+  constexpr int width = 5;
+  constexpr int height = 3;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_Y8, 1, 25, 1});
+  const auto short_vi = make_video_info(
+      VideoInfoSpec{width - 1, height, VideoInfo::CS_Y8, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  PVideoFrame short_source = environment.get()->NewVideoFrame(short_vi);
+  fill_plane_full_pitch(source, 0x91, PLANAR_Y);
+  fill_plane_full_pitch(short_source, 0xa2, PLANAR_Y);
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  const auto short_source_before = FrameSnapshot::capture(short_source, short_vi);
+  auto* source_clip_impl = new StaticFrameClip(vi, source);
+  auto* short_clip_impl = new StaticFrameClip(short_vi, short_source);
+  const PClip source_clip(source_clip_impl);
+  const PClip short_clip(short_clip_impl);
+
+  EXPECT_THROW(
+      {
+        CombinePlanes filter(source_clip, source_clip, source_clip, PClip(), PClip(), "YU", "", "",
+                             environment.get());
+      },
+      AvisynthError);
+  EXPECT_THROW(
+      {
+        CombinePlanes filter(source_clip, short_clip, PClip(), PClip(), PClip(), "YUV", "", "",
+                             environment.get());
+      },
+      AvisynthError);
+  EXPECT_TRUE(source_clip_impl->frame_requests().empty());
+  EXPECT_TRUE(short_clip_impl->frame_requests().empty());
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+  EXPECT_EQ(FrameSnapshot::capture(short_source, short_vi), short_source_before);
 }
 
 class SwapUvToYTest : public ::testing::TestWithParam<int> {};

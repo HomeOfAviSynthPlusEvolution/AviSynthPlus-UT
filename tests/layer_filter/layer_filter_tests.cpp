@@ -301,6 +301,27 @@ TEST(ShowChannelFilter, ExtractsPackedRedToYuvaAndPreservesAlpha) {
   EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
 }
 
+TEST(ShowChannelFilter, RejectsInvalidChannelAndSubsampledOutputBeforeFrameRequest) {
+  AviSynthEnvironment environment;
+  constexpr int width = 5;
+  constexpr int height = 3;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_YV24, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(source, 0x61, PLANAR_Y);
+  fill_plane_full_pitch(source, 0x72, PLANAR_U);
+  fill_plane_full_pitch(source, 0x83, PLANAR_V);
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  EXPECT_THROW(
+      { ShowChannel filter(clip, "rgb", 0, environment.get()); }, AvisynthError);
+  EXPECT_THROW(
+      { ShowChannel filter(clip, "yuv420", 4, environment.get()); }, AvisynthError);
+  EXPECT_TRUE(source_clip->frame_requests().empty());
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
 TEST(MergeRgbFilter, AssemblesPlanarRgbapFromPlanarChannelSources) {
   AviSynthEnvironment environment;
   constexpr int width = 5;
@@ -366,6 +387,66 @@ TEST(MergeRgbFilter, AssemblesPlanarRgbapFromPlanarChannelSources) {
   EXPECT_EQ(FrameSnapshot::capture(green, vi), green_before);
   EXPECT_EQ(FrameSnapshot::capture(red, vi), red_before);
   EXPECT_EQ(FrameSnapshot::capture(alpha, alpha_vi), alpha_before);
+}
+
+TEST(MergeRgbFilter, RejectsMismatchedChannelsBeforeFrameRequest) {
+  AviSynthEnvironment environment;
+  constexpr int width = 5;
+  constexpr int height = 3;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_RGBP8, 1, 25, 1});
+  const auto wide_vi = make_video_info(
+      VideoInfoSpec{width + 1, height, VideoInfo::CS_RGBP8, 1, 25, 1});
+
+  auto make_source = [&](const VideoInfo& source_vi, std::uint8_t value) {
+    PVideoFrame frame = environment.get()->NewVideoFrame(source_vi);
+    for (const int plane : {PLANAR_G, PLANAR_B, PLANAR_R}) {
+      fill_plane_full_pitch(frame, static_cast<std::uint8_t>(value + plane), plane);
+    }
+    return frame;
+  };
+  PVideoFrame blue = make_source(vi, 0x21);
+  PVideoFrame green = make_source(vi, 0x31);
+  PVideoFrame wide_green = make_source(wide_vi, 0x39);
+  PVideoFrame red = make_source(vi, 0x41);
+  PVideoFrame alpha = make_source(vi, 0x51);
+  const auto blue_before = FrameSnapshot::capture(blue, vi);
+  const auto green_before = FrameSnapshot::capture(green, vi);
+  const auto wide_green_before = FrameSnapshot::capture(wide_green, wide_vi);
+  const auto red_before = FrameSnapshot::capture(red, vi);
+  const auto alpha_before = FrameSnapshot::capture(alpha, vi);
+  auto* blue_clip_impl = new StaticFrameClip(vi, blue);
+  auto* green_clip_impl = new StaticFrameClip(vi, green);
+  auto* wide_green_clip_impl = new StaticFrameClip(wide_vi, wide_green);
+  auto* red_clip_impl = new StaticFrameClip(vi, red);
+  auto* alpha_clip_impl = new StaticFrameClip(vi, alpha);
+  const PClip blue_clip(blue_clip_impl);
+  const PClip green_clip(green_clip_impl);
+  const PClip wide_green_clip(wide_green_clip_impl);
+  const PClip red_clip(red_clip_impl);
+  const PClip alpha_clip(alpha_clip_impl);
+
+  EXPECT_THROW(
+      {
+        MergeRGB filter(red_clip, blue_clip, wide_green_clip, red_clip, PClip(), "rgb",
+                        environment.get());
+      },
+      AvisynthError);
+  EXPECT_THROW(
+      {
+        MergeRGB filter(red_clip, blue_clip, green_clip, red_clip, alpha_clip, "rgbap",
+                        environment.get());
+      },
+      AvisynthError);
+  EXPECT_TRUE(blue_clip_impl->frame_requests().empty());
+  EXPECT_TRUE(green_clip_impl->frame_requests().empty());
+  EXPECT_TRUE(wide_green_clip_impl->frame_requests().empty());
+  EXPECT_TRUE(red_clip_impl->frame_requests().empty());
+  EXPECT_TRUE(alpha_clip_impl->frame_requests().empty());
+  EXPECT_EQ(FrameSnapshot::capture(blue, vi), blue_before);
+  EXPECT_EQ(FrameSnapshot::capture(green, vi), green_before);
+  EXPECT_EQ(FrameSnapshot::capture(wide_green, wide_vi), wide_green_before);
+  EXPECT_EQ(FrameSnapshot::capture(red, vi), red_before);
+  EXPECT_EQ(FrameSnapshot::capture(alpha, vi), alpha_before);
 }
 
 template <std::size_t N>
