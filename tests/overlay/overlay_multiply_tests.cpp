@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace avsut::test {
@@ -64,22 +65,26 @@ std::array<std::string, 3> overlay_multiply_expected_hashes(int bits_per_pixel, 
 
 template <typename T, bool OpacityIsFull, bool HasMask>
 void add_overlay_multiply_variants(std::vector<OverlayMultiplyCase>& cases, int bits_per_pixel,
-                                   float opacity_f, int opacity, const char* opacity_label) {
+                                   float opacity_f, int opacity, const char* opacity_label,
+                                   std::uint32_t seed = 0,
+                                   std::array<std::string, 3> random_expected_hashes = {}) {
   const std::size_t base_pitch = sizeof(T) == 1 ? 48 : 64;
   const std::size_t overlay_pitch = sizeof(T) == 1 ? 64 : 80;
   const std::size_t mask_pitch = sizeof(T) == 1 ? 48 : 64;
   constexpr std::size_t width = 11;
   constexpr std::size_t height = 3;
-  const auto expected_hashes =
-      overlay_multiply_expected_hashes(bits_per_pixel, HasMask, OpacityIsFull);
+  const auto expected_hashes = seed == 0
+                                   ? overlay_multiply_expected_hashes(bits_per_pixel, HasMask,
+                                                                       OpacityIsFull)
+                                   : std::move(random_expected_hashes);
   cases.push_back(make_overlay_multiply_case(
       bits_per_pixel, HasMask, OpacityIsFull, width, height, base_pitch, overlay_pitch, mask_pitch,
       4, 8, 12, opacity_f, opacity, opacity_label, make_sse_variant<T, OpacityIsFull, HasMask>(),
-      expected_hashes));
+      expected_hashes, seed));
   cases.push_back(make_overlay_multiply_case(
       bits_per_pixel, HasMask, OpacityIsFull, width, height, base_pitch, overlay_pitch, mask_pitch,
       4, 8, 12, opacity_f, opacity, opacity_label, make_avx2_variant<T, OpacityIsFull, HasMask>(),
-      expected_hashes));
+      expected_hashes, seed));
 }
 
 std::vector<OverlayMultiplyCase> overlay_multiply_cases() {
@@ -102,8 +107,14 @@ std::vector<OverlayMultiplyCase> overlay_multiply_cases() {
     add_overlay_multiply_variants<std::uint16_t, true, true>(cases, bits_per_pixel, 1.0F, 256,
                                                              "Full");
     add_overlay_multiply_variants<std::uint16_t, false, true>(cases, bits_per_pixel, 0.63F, 161,
-                                                              "Partial63");
+                                                             "Partial63");
   }
+  add_overlay_multiply_variants<std::uint8_t, false, true>(
+      cases, 8, 0.63F, 161, "Partial63", 0xF30C1F01U,
+      {"40257713ccdd951a", "53b006e9852db3b1", "1c6a084578b5cd88"});
+  add_overlay_multiply_variants<std::uint16_t, false, false>(
+      cases, 16, 0.63F, 161, "Partial63", 0xF30C1F02U,
+      {"f091ab24414129c2", "74c6928bf299d49a", "a316091024093a41"});
   return cases;
 }
 

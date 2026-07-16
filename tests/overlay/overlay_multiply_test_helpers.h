@@ -4,6 +4,7 @@
 #include "filters/overlay/intel/OF_multiply_sse.h"
 
 #include "support/comparators.h"
+#include "support/deterministic_data.h"
 #include "support/guarded_video_buffer.h"
 #include "support/stable_hash.h"
 #include "support/variant_registry.h"
@@ -68,6 +69,7 @@ struct OverlayMultiplyCase {
   std::string opacity_label;
   Variant<OverlayMultiplyFunction> variant;
   std::array<std::string, 3> expected_hashes;
+  std::uint32_t seed{};
   std::string name;
 };
 
@@ -101,7 +103,11 @@ inline std::string overlay_multiply_case_name(const OverlayMultiplyCase& test_ca
   if (test_case.has_mask) {
     stream << "_MaskOffset" << test_case.mask_alignment_offset;
   }
-  stream << "_Opacity" << test_case.opacity_label << "_PatternBoundaryAnchors_"
+  stream << "_Opacity" << test_case.opacity_label;
+  if (test_case.seed != 0) {
+    stream << "_Seed" << std::uppercase << std::hex << test_case.seed;
+  }
+  stream << (test_case.seed == 0 ? "_PatternBoundaryAnchors_" : "_PatternFixedRandom_")
          << overlay_multiply_variant_name(test_case.variant);
   return stream.str();
 }
@@ -112,7 +118,7 @@ inline OverlayMultiplyCase make_overlay_multiply_case(
     std::size_t mask_pitch_bytes, std::size_t base_alignment_offset,
     std::size_t overlay_alignment_offset, std::size_t mask_alignment_offset, float opacity_f,
     int opacity, std::string opacity_label, Variant<OverlayMultiplyFunction> variant,
-    std::array<std::string, 3> expected_hashes = {}) {
+    std::array<std::string, 3> expected_hashes = {}, std::uint32_t seed = 0) {
   const auto bytes_per_pixel = bits_per_pixel == 8 ? std::size_t{1} : std::size_t{2};
   const auto active_row_bytes = width_pixels * bytes_per_pixel;
   if ((bits_per_pixel != 8 && bits_per_pixel != 10 && bits_per_pixel != 16) || width_pixels == 0 ||
@@ -138,6 +144,7 @@ inline OverlayMultiplyCase make_overlay_multiply_case(
                              std::move(opacity_label),
                              std::move(variant),
                              std::move(expected_hashes),
+                             seed,
                              {}};
   result.name = overlay_multiply_case_name(result);
   return result;
@@ -239,13 +246,23 @@ void run_overlay_multiply_case_typed(const OverlayMultiplyCase& test_case) {
 
   const auto max_value =
       sizeof(T) == 1 ? 255U : ((std::uint32_t{1} << test_case.bits_per_pixel) - 1U);
-  fill_overlay_multiply_plane(base_y.view(), max_value, 0);
-  fill_overlay_multiply_plane(base_u.view(), max_value, 3);
-  fill_overlay_multiply_plane(base_v.view(), max_value, 6);
-  fill_overlay_multiply_plane(overlay.view(), max_value, 2);
-  fill_overlay_multiply_plane(mask_y.view(), max_value, 1);
-  fill_overlay_multiply_plane(mask_u.view(), max_value, 4);
-  fill_overlay_multiply_plane(mask_v.view(), max_value, 7);
+  if (test_case.seed != 0) {
+    fill_random(base_y.view(), test_case.seed ^ 0x01010101U);
+    fill_random(base_u.view(), test_case.seed ^ 0x02020202U);
+    fill_random(base_v.view(), test_case.seed ^ 0x03030303U);
+    fill_random(overlay.view(), test_case.seed ^ 0xA5A5A5A5U);
+    fill_random(mask_y.view(), test_case.seed ^ 0x11111111U);
+    fill_random(mask_u.view(), test_case.seed ^ 0x22222222U);
+    fill_random(mask_v.view(), test_case.seed ^ 0x33333333U);
+  } else {
+    fill_overlay_multiply_plane(base_y.view(), max_value, 0);
+    fill_overlay_multiply_plane(base_u.view(), max_value, 3);
+    fill_overlay_multiply_plane(base_v.view(), max_value, 6);
+    fill_overlay_multiply_plane(overlay.view(), max_value, 2);
+    fill_overlay_multiply_plane(mask_y.view(), max_value, 1);
+    fill_overlay_multiply_plane(mask_u.view(), max_value, 4);
+    fill_overlay_multiply_plane(mask_v.view(), max_value, 7);
+  }
   copy_overlay_multiply_active(base_y.view().as_const(), expected_y.view());
   copy_overlay_multiply_active(base_u.view().as_const(), expected_u.view());
   copy_overlay_multiply_active(base_v.view().as_const(), expected_v.view());
