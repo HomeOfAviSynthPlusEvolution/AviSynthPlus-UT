@@ -21,7 +21,8 @@ ctest --preset gcc-debug
 ```
 
 Use `clang19-debug` or `clang22-debug` for Clang, or `gcc-sanitize` for ASan
-plus UBSan.
+plus UBSan. Use `gcc-coverage` to build the GCC gcov instrumentation profile
+used by the hosted source-coverage report.
 
 The upstream `AvsCore` static library is built in a separate ExternalProject
 build tree and linked as a normal imported target. The sanitizer preset applies
@@ -41,8 +42,17 @@ ctest --preset msvc-debug
 The Visual Studio 2026 generator requires a CMake version that supports it
 (CMake 4.2 or newer).
 
-Windows/MSVC is part of the supported test matrix. Continuous integration is
-not configured in this repository yet.
+Windows/MSVC is part of the supported test matrix. On pushes to `master` and
+manual dispatches, GitHub Actions builds the `gcc-coverage` profile, runs
+CTest, and publishes the latest test result plus full Linux/GCC-compiled
+`AvsCore` coverage report to GitHub Pages. Enable GitHub Pages with the
+`GitHub Actions` source in repository settings before the first deployment.
+
+The coverage profile links a reporting-only inventory executable against every
+object in the upstream static library. This records zero-count files as well
+as executed files, so the report represents the full set of Linux/GCC-compiled
+`AvsCore` sources. It does not include platform-specific sources that the
+Linux upstream build does not compile.
 
 ## Layout
 

@@ -10,9 +10,30 @@ sources and test vectors.
 
 | Environment | Presets | Coverage role |
 | --- | --- | --- |
-| Linux x86_64, GCC | `gcc-debug`, `gcc-sanitize` | Supported test matrix; SIMD cases run only when their runtime ISA requirements are available |
+| Linux x86_64, GCC | `gcc-debug`, `gcc-sanitize`, `gcc-coverage` | Supported test matrix; SIMD cases run only when their runtime ISA requirements are available. `gcc-coverage` measures the complete Linux/GCC-compiled `AvsCore` source set. |
 | Linux x86_64, Clang | `clang19-debug`, `clang22-debug` | Supported test matrix; SIMD cases run only when their runtime ISA requirements are available |
-| Windows x64, native MSVC | `msvc-debug` | Supported test matrix with the same CPU-gated SIMD behavior as GCC; continuous integration is outside the current scope |
+| Windows x64, native MSVC | `msvc-debug` | Supported test matrix with the same CPU-gated SIMD behavior as GCC |
+
+## Hosted Coverage Reporting
+
+The `gcc-coverage` preset is a GCC gcov reporting profile, separate from the
+sanitizer profile. It instruments both the test targets and the external
+`AvsCore` static-library build with `-O0 -g --coverage`. A reporting-only
+whole-archive inventory executable runs before CTest so every Linux/GCC-
+compiled `AvsCore` object produces zero-count data even when no test references
+it. gcovr filters the report to `avs_core/` using the AviSynthPlus submodule as
+the report root, so published source paths begin with `avs_core/`.
+
+GitHub Actions runs this profile only for `master` pushes and manual dispatches.
+It publishes the latest CTest status plus line, branch, and function coverage
+to GitHub Pages without a coverage threshold or retained report history. A
+failing CTest run is published as `FAIL`, but does not fail the workflow; its
+coverage result can therefore be partial. Configuration, build, and report-
+generation failures still fail the workflow.
+
+The recursive checkout uses complete history and tags. Upstream `VersionGen`
+calls `git describe --tags` and counts commits since that tag, so a shallow
+submodule checkout cannot build `AvsCore` reliably.
 
 ## Support Coverage
 

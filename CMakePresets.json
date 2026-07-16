@@ -43,6 +43,14 @@
       }
     },
     {
+      "name": "gcc-coverage",
+      "inherits": "gcc-debug",
+      "binaryDir": "${sourceDir}/build/gcc-coverage",
+      "cacheVariables": {
+        "AVSUT_ENABLE_COVERAGE": "ON"
+      }
+    },
+    {
       "name": "msvc-debug",
       "generator": "Visual Studio 18 2026",
       "architecture": "x64",
@@ -58,6 +66,7 @@
     { "name": "clang19-debug", "configurePreset": "clang19-debug" },
     { "name": "clang22-debug", "configurePreset": "clang22-debug" },
     { "name": "gcc-sanitize", "configurePreset": "gcc-sanitize" },
+    { "name": "gcc-coverage", "configurePreset": "gcc-coverage" },
     {
       "name": "msvc-debug",
       "configurePreset": "msvc-debug",
@@ -92,6 +101,14 @@
     {
       "name": "gcc-sanitize",
       "configurePreset": "gcc-sanitize",
+      "output": {
+        "shortProgress": true,
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "gcc-coverage",
+      "configurePreset": "gcc-coverage",
       "output": {
         "shortProgress": true,
         "outputOnFailure": true

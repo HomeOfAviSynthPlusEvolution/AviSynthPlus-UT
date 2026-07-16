@@ -24,6 +24,8 @@ pointer or retaining a minimal production fix is an explicit, reviewed change.
 - Differential checks between scalar C and available SIMD implementations.
 - Memory-integrity checks for active pixels, row padding, and allocation guards.
 - Linux GCC/Clang and native Windows x64 MSVC builds, with C++17 throughout.
+- A master-branch GitHub Actions GCC coverage profile with a latest-result
+  GitHub Pages report for test status and compiled `AvsCore` source coverage.
 
 The test project owns its support layer and converts RAII views to the exact
 raw-pointer and pitch arguments expected by upstream functions at the call
@@ -32,6 +34,12 @@ boundary.
 ## Architecture
 
 - CMake and CMake Presets define configure, build, and test entry points.
+- The `gcc-coverage` preset instruments both the test project and the external
+  upstream `AvsCore` build. A reporting-only whole-archive inventory executable
+  creates zero-count data for every Linux/GCC-compiled upstream object before
+  CTest runs.
+- GitHub Actions runs `gcc-coverage` on `master` pushes and manual dispatches,
+  then publishes only the latest CTest and gcovr report through GitHub Pages.
 - GoogleTest `v1.17.0` is acquired with `FetchContent`.
 - xxHash `v0.8.3` provides explicit `XXH3_64bits`-based stable hashes.
 - CTest discovers individual GoogleTest cases using module prefixes.
@@ -110,7 +118,9 @@ disassembly.
 - `.avs` script execution, filter `Create` entry points, `Invoke` conversion
   orchestration, or black-box filter-graph tests.
 - Filter registration, full distribution, or plugin-loading tests.
-- Continuous-integration configuration and hosted execution.
+- Pull-request-triggered, scheduled, or historical hosted reporting. Hosted
+  reporting runs only on `master` pushes and manual dispatches, and Pages keeps
+  the latest generated report rather than a result history.
 - Performance benchmarks and unbounded fuzzing.
 - ISA-dispatch contract testing, illegal-instruction testing, or FMA-specific
   environment simulation.

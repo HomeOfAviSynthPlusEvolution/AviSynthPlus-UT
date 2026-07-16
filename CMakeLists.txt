@@ -6,9 +6,24 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(AVSUT_ENABLE_SANITIZERS "Enable AddressSanitizer and UBSan" OFF)
+option(AVSUT_ENABLE_COVERAGE "Enable GCC gcov coverage instrumentation" OFF)
+
+if(AVSUT_ENABLE_SANITIZERS AND AVSUT_ENABLE_COVERAGE)
+  message(FATAL_ERROR
+    "AVSUT_ENABLE_SANITIZERS and AVSUT_ENABLE_COVERAGE require separate builds")
+endif()
+
 if(AVSUT_ENABLE_SANITIZERS)
   add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
   add_link_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+endif()
+
+if(AVSUT_ENABLE_COVERAGE)
+  if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    message(FATAL_ERROR "AVSUT_ENABLE_COVERAGE requires GCC")
+  endif()
+  add_compile_options(-O0 -g --coverage)
+  add_link_options(--coverage)
 endif()
 
 include(FetchContent)
@@ -31,4 +46,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(googletest xxhash)
 
 include(cmake/UpstreamTargets.cmake)
+if(AVSUT_ENABLE_COVERAGE)
+  add_subdirectory(tests/coverage)
+endif()
 add_subdirectory(tests)

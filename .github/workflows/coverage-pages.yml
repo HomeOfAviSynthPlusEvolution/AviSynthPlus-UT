@@ -1,0 +1,111 @@
+name: Verification Coverage
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  report:
+    name: Build, test, and render report
+    runs-on: ubuntu-26.04
+    outputs:
+      ctest_status: ${{ steps.tests.outputs.status }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install gcovr
+        run: python -m pip install --disable-pip-version-check --no-cache-dir gcovr==8.6
+
+      - name: Configure GCC coverage build
+        run: cmake --preset gcc-coverage
+
+      - name: Build test suite
+        run: cmake --build --preset gcc-coverage --parallel 2
+
+      - name: Clear old coverage counters
+        run: find "$GITHUB_WORKSPACE/build/gcc-coverage" -name '*.gcda' -delete
+
+      - name: Seed zero-count AvsCore coverage data
+        run: "$GITHUB_WORKSPACE/build/gcc-coverage/tests/coverage/avs_coverage_inventory"
+
+      - name: Run CTest
+        id: tests
+        shell: bash
+        run: |
+          set +e
+          ctest --preset gcc-coverage --output-junit "$GITHUB_WORKSPACE/build/gcc-coverage/test-results.xml"
+          exit_code=$?
+          set -e
+          if [ "$exit_code" -eq 0 ]; then
+            status=PASS
+          else
+            status=FAIL
+          fi
+          printf 'status=%s\n' "$status" >> "$GITHUB_OUTPUT"
+
+      - name: Generate full AvsCore coverage report
+        run: |
+          mkdir -p site/coverage site/data
+          gcovr \
+            --root "$GITHUB_WORKSPACE/third_party/AviSynthPlus" \
+            --filter "$GITHUB_WORKSPACE/third_party/AviSynthPlus/avs_core/" \
+            --html-details "$GITHUB_WORKSPACE/site/coverage/index.html" \
+            --json-summary "$GITHUB_WORKSPACE/site/data/coverage-summary.json" \
+            --print-summary \
+            --gcov-ignore-parse-errors=negative_hits.warn_once_per_file \
+            "$GITHUB_WORKSPACE/build/gcc-coverage"
+
+      - name: Render latest-result dashboard
+        env:
+          TEST_STATUS: ${{ steps.tests.outputs.status }}
+        run: |
+          upstream_sha="$(git -C third_party/AviSynthPlus rev-parse HEAD)"
+          python tools/render_coverage_dashboard.py \
+            --junit "$GITHUB_WORKSPACE/build/gcc-coverage/test-results.xml" \
+            --coverage-summary "$GITHUB_WORKSPACE/site/data/coverage-summary.json" \
+            --output-dir "$GITHUB_WORKSPACE/site" \
+            --source-root "$GITHUB_WORKSPACE/third_party/AviSynthPlus" \
+            --test-status "$TEST_STATUS" \
+            --repository-sha "$GITHUB_SHA" \
+            --upstream-sha "$upstream_sha" \
+            --run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v6
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+
+  deploy:
+    name: Deploy latest report
+    needs: report
+    runs-on: ubuntu-26.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
