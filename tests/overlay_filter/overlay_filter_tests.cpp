@@ -199,4 +199,33 @@ INSTANTIATE_TEST_SUITE_P(
                                         "Yuva420_Width8_Height4_Blend_Use444"}),
     [](const ::testing::TestParamInfo<OverlayFormatCase>& info) { return info.param.name; });
 
+TEST(OverlayFilter, FullOpacityBlendReturnsOverlayFrame) {
+  AviSynthEnvironment environment;
+  constexpr int width = 7;
+  constexpr int height = 3;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_YV24, 2, 25, 1});
+  auto base_frames = make_yuv_frames(environment, vi, 23);
+  auto overlay_frames = make_yuv_frames(environment, vi, 149);
+  const auto base_before = snapshot_frames(base_frames, vi);
+  const auto overlay_before = snapshot_frames(overlay_frames, vi);
+  auto* base_impl = new FrameSequenceClip(vi, base_frames);
+  auto* overlay_impl = new FrameSequenceClip(vi, overlay_frames);
+  const PClip base(base_impl);
+  const PClip overlay(overlay_impl);
+  auto args = make_overlay_args(base, overlay, PClip(), "Blend");
+  args[5] = 1.0f;
+
+  Overlay filter(base, AVSValue(args.data(), static_cast<int>(args.size())), environment.get());
+  EXPECT_EQ(filter.GetVideoInfo().pixel_type, vi.pixel_type);
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(1, environment.get());
+
+  expect_active_planes_equal(overlay_frames[1], output, vi, "FullOpacityBlend");
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(base_impl->frame_requests(), std::vector<int>{1});
+  EXPECT_EQ(overlay_impl->frame_requests(), std::vector<int>{1});
+  EXPECT_EQ(snapshot_frames(base_frames, vi), base_before);
+  EXPECT_EQ(snapshot_frames(overlay_frames, vi), overlay_before);
+}
+
 }  // namespace
