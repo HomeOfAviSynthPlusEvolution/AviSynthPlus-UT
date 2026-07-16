@@ -36,6 +36,9 @@ std::vector<MergeFloatCase> merge_float_cases() {
   add_merge_float_case(cases, FloatInputPattern::RandomBounded, 17, 3, 80, 76, 0.5F, "50Pct",
                        0xF50A00C2U, weighted_merge_float_c, weighted_merge_float_sse2,
                        weighted_merge_float_avx2);
+  add_merge_float_case(cases, FloatInputPattern::RandomBounded, 29, 4, 128, 136, 0.19F,
+                       "19Pct", 0xF30F00D1U, weighted_merge_float_c, weighted_merge_float_sse2,
+                       weighted_merge_float_avx2);
   add_merge_float_case(cases, FloatInputPattern::MixedMagnitudeCancellation, 13, 7, 64, 72, 0.73F,
                        "73Pct", 0xF73A00C3U, weighted_merge_float_c, weighted_merge_float_sse2,
                        weighted_merge_float_avx2);
