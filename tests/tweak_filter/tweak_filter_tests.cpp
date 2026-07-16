@@ -130,6 +130,35 @@ std::array<float, 2> expected_float_conditional_chroma(float source_u, float sou
   return {std::clamp(mapped_u, -0.5F, 0.5F), std::clamp(mapped_v, -0.5F, 0.5F)};
 }
 
+std::uint16_t expected_ten_bit_luma(std::uint16_t source, bool realcalc) {
+  constexpr int min_y = 64;
+  constexpr int max_y = 940;
+  if (realcalc) {
+    const float mapped = static_cast<float>(min_y) +
+                         (static_cast<float>(source) - static_cast<float>(min_y)) * 1.25F +
+                         12.0F;
+    return static_cast<std::uint16_t>(std::clamp(static_cast<int>(mapped), min_y, max_y));
+  }
+  const int mapped = static_cast<int>((static_cast<double>(source) - min_y) * 1.25 + 12.0 +
+                                      min_y + 0.5);
+  return static_cast<std::uint16_t>(std::clamp(mapped, min_y, max_y));
+}
+
+std::uint16_t expected_ten_bit_chroma(std::uint16_t source, bool realcalc) {
+  constexpr int middle = 512;
+  constexpr int min_uv = 64;
+  constexpr int max_uv = 960;
+  if (realcalc) {
+    const float centered = (static_cast<float>(source) - static_cast<float>(middle)) / 1024.0F;
+    const float mapped = (centered * 1.25F + 0.5F) * 1024.0F;
+    return static_cast<std::uint16_t>(
+        std::clamp(static_cast<int>(mapped), min_uv, max_uv));
+  }
+  const int centered = static_cast<int>(source) - middle;
+  const int delta = static_cast<int>(static_cast<double>(centered) * 640.0) >> 9;
+  return static_cast<std::uint16_t>(std::clamp(delta + middle, min_uv, max_uv));
+}
+
 TEST(TweakFilter, AppliesEightBitLumaBrightnessWithoutTouchingSource) {
   AviSynthEnvironment environment;
   const auto vi = make_video_info(VideoInfoSpec{8, 2, VideoInfo::CS_Y8, 1, 25, 1});
@@ -252,6 +281,71 @@ TEST(TweakFilter, AppliesRealCalcToSixteenBitYuv420LumaAndChroma) {
   EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
   EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
 }
+
+class TenBitTweakVariantTest : public ::testing::TestWithParam<bool> {};
+
+TEST_P(TenBitTweakVariantTest, MapsCoringLumaAndChromaAcrossImplementationVariants) {
+  const bool realcalc = GetParam();
+  AviSynthEnvironment environment;
+  constexpr int width = 7;
+  constexpr int height = 2;
+  const auto vi = make_video_info(
+      VideoInfoSpec{width, height, VideoInfo::CS_YUV444P10, 1, 25, 1});
+  constexpr std::array<std::uint16_t, width> luma_values{0, 64, 256, 512, 768, 940, 1023};
+  constexpr std::array<std::uint16_t, width> u_values{0, 64, 256, 512, 768, 960, 1023};
+  constexpr std::array<std::uint16_t, width> v_values{1023, 960, 768, 512, 256, 64, 0};
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(source, 0x3a, PLANAR_Y);
+  fill_plane_full_pitch(source, 0x4b, PLANAR_U);
+  fill_plane_full_pitch(source, 0x5c, PLANAR_V);
+  write_frame_plane<std::uint16_t>(source, PLANAR_Y,
+                                   [&luma_values](int x, int) {
+                                     return luma_values[static_cast<std::size_t>(x)];
+                                   });
+  write_frame_plane<std::uint16_t>(source, PLANAR_U,
+                                   [&u_values](int x, int) {
+                                     return u_values[static_cast<std::size_t>(x)];
+                                   });
+  write_frame_plane<std::uint16_t>(source, PLANAR_V,
+                                   [&v_values](int x, int) {
+                                     return v_values[static_cast<std::size_t>(x)];
+                                   });
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  Tweak filter(clip, 0.0, 1.25, 3.0, 1.25, true, 0.0, 360.0, 150.0, 0.0, 0.0, false,
+               realcalc, 1.0, environment.get());
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  for (int y = 0; y < height; ++y) {
+    const auto* output_y = reinterpret_cast<const std::uint16_t*>(
+        output->GetReadPtr(PLANAR_Y) + y * output->GetPitch(PLANAR_Y));
+    const auto* output_u = reinterpret_cast<const std::uint16_t*>(
+        output->GetReadPtr(PLANAR_U) + y * output->GetPitch(PLANAR_U));
+    const auto* output_v = reinterpret_cast<const std::uint16_t*>(
+        output->GetReadPtr(PLANAR_V) + y * output->GetPitch(PLANAR_V));
+    for (int x = 0; x < width; ++x) {
+      const auto index = static_cast<std::size_t>(x);
+      EXPECT_EQ(output_y[x], expected_ten_bit_luma(luma_values[index], realcalc))
+          << "realcalc=" << realcalc << " plane=Y x=" << x << " y=" << y;
+      EXPECT_EQ(output_u[x], expected_ten_bit_chroma(u_values[index], realcalc))
+          << "realcalc=" << realcalc << " plane=U x=" << x << " y=" << y;
+      EXPECT_EQ(output_v[x], expected_ten_bit_chroma(v_values[index], realcalc))
+          << "realcalc=" << realcalc << " plane=V x=" << x << " y=" << y;
+    }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Implementation, TenBitTweakVariantTest, ::testing::Values(false, true),
+    [](const ::testing::TestParamInfo<bool>& info) {
+      return info.param ? "VariantRealcalc" : "VariantLut";
+    });
 
 TEST(TweakFilter, KeepsSixteenBitDitherWithinOneEightBitStep) {
   AviSynthEnvironment environment;
