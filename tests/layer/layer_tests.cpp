@@ -680,7 +680,7 @@ std::vector<LayerFrameInvert8Case> layer_frame_invert_8_cases() {
   constexpr std::size_t row_bytes = 96;
   constexpr std::size_t height = 3;
   constexpr std::uint32_t mask = 0xa5c33c5aU;
-  return {
+  std::vector<LayerFrameInvert8Case> cases{
       make_layer_frame_invert_8_case(row_bytes, height, row_bytes, mask,
                                      Variant<LayerFrameInvert8Function>{
                                          "sse2", invert_frame_inplace_sse2, IsaRequirement::Sse2},
@@ -690,6 +690,13 @@ std::vector<LayerFrameInvert8Case> layer_frame_invert_8_cases() {
                                          "avx2", invert_frame_inplace_avx2, IsaRequirement::Avx2},
                                      "4f10696e78a99b2e"),
   };
+  for (const auto& variant : {
+           Variant<LayerFrameInvert8Function>{"sse2", invert_frame_inplace_sse2, IsaRequirement::Sse2},
+           Variant<LayerFrameInvert8Function>{"avx2", invert_frame_inplace_avx2, IsaRequirement::Avx2}}) {
+    cases.push_back(make_layer_frame_invert_8_case(
+        128, 5, 128, 0x6d3a91c7U, variant, "e3e4e26f74e919b2", 0xF30F2201U));
+  }
+  return cases;
 }
 
 class LayerFrameInvert8Kernels : public ::testing::TestWithParam<LayerFrameInvert8Case> {};
@@ -712,7 +719,7 @@ std::vector<LayerFrameInvert16Case> layer_frame_invert_16_cases() {
   constexpr std::size_t row_bytes = 96;
   constexpr std::size_t height = 3;
   constexpr std::uint64_t mask = 0x1234fedcba987654ULL;
-  return {
+  std::vector<LayerFrameInvert16Case> cases{
       make_layer_frame_invert_16_case(
           row_bytes, height, row_bytes, mask,
           Variant<LayerFrameInvert16Function>{"sse2", invert_frame_uint16_inplace_sse2,
@@ -724,6 +731,15 @@ std::vector<LayerFrameInvert16Case> layer_frame_invert_16_cases() {
                                               IsaRequirement::Avx2},
           "7bdc59443981516a"),
   };
+  for (const auto& variant : {
+           Variant<LayerFrameInvert16Function>{"sse2", invert_frame_uint16_inplace_sse2,
+                                                IsaRequirement::Sse2},
+           Variant<LayerFrameInvert16Function>{"avx2", invert_frame_uint16_inplace_avx2,
+                                                IsaRequirement::Avx2}}) {
+    cases.push_back(make_layer_frame_invert_16_case(
+        128, 5, 128, 0x0f1e2d3c4b5a6978ULL, variant, "d345be7dbcf36a8d", 0xF30F2202U));
+  }
+  return cases;
 }
 
 class LayerFrameInvert16Kernels : public ::testing::TestWithParam<LayerFrameInvert16Case> {};
