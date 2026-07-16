@@ -20,6 +20,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <memory>
 #include <ostream>
 #include <utility>
 #include <vector>
@@ -42,7 +43,7 @@ struct TriangleTap {
   int coefficient;
 };
 
-enum class ExtraResizeKernel { MitchellNetravali, Lanczos3 };
+enum class ExtraResizeKernel { MitchellNetravali, Lanczos3, Spline36 };
 
 double mitchell_netravali_value(double value) {
   constexpr double b = 1.0 / 3.0;
@@ -73,9 +74,32 @@ double lanczos3_value(double value) {
   return value < taps ? sinc(value) * sinc(value / taps) : 0.0;
 }
 
+double spline36_value(double value) {
+  value = std::abs(value);
+  if (value < 1.0) {
+    return ((13.0 / 11.0 * value - 453.0 / 209.0) * value - 3.0 / 209.0) * value + 1.0;
+  }
+  if (value < 2.0) {
+    const double offset = value - 1.0;
+    return ((-6.0 / 11.0 * offset + 270.0 / 209.0) * offset - 156.0 / 209.0) * offset;
+  }
+  if (value < 3.0) {
+    const double offset = value - 2.0;
+    return ((1.0 / 11.0 * offset - 45.0 / 209.0) * offset + 26.0 / 209.0) * offset;
+  }
+  return 0.0;
+}
+
 double extra_resize_kernel_value(ExtraResizeKernel kernel, double value) {
-  return kernel == ExtraResizeKernel::MitchellNetravali ? mitchell_netravali_value(value)
-                                                        : lanczos3_value(value);
+  switch (kernel) {
+    case ExtraResizeKernel::MitchellNetravali:
+      return mitchell_netravali_value(value);
+    case ExtraResizeKernel::Lanczos3:
+      return lanczos3_value(value);
+    case ExtraResizeKernel::Spline36:
+      return spline36_value(value);
+  }
+  return 0.0;
 }
 
 double extra_resize_kernel_support(ExtraResizeKernel kernel) {
@@ -598,32 +622,28 @@ void run_extra_resize_case(const ExtraResizeCase& test_case) {
   const PClip clip(source_clip);
 
   PVideoFrame output;
-  if (test_case.kernel == ExtraResizeKernel::MitchellNetravali) {
-    MitchellNetravaliFilter filter_function;
-    if (horizontal) {
-      FilteredResizeH filter(clip, 0.0, static_cast<double>(source_width), target_width,
-                             &filter_function, true, AVS_CHROMA_UNUSED, environment.get());
-      EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
-      output = filter.GetFrame(0, environment.get());
-    } else {
-      FilteredResizeV filter(clip, 0.0, static_cast<double>(source_height), target_height,
-                             &filter_function, true, AVS_CHROMA_UNUSED, environment.get());
-      EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
-      output = filter.GetFrame(0, environment.get());
-    }
+  std::unique_ptr<ResamplingFunction> filter_function;
+  switch (test_case.kernel) {
+    case ExtraResizeKernel::MitchellNetravali:
+      filter_function = std::make_unique<MitchellNetravaliFilter>();
+      break;
+    case ExtraResizeKernel::Lanczos3:
+      filter_function = std::make_unique<LanczosFilter>(3);
+      break;
+    case ExtraResizeKernel::Spline36:
+      filter_function = std::make_unique<Spline36Filter>();
+      break;
+  }
+  if (horizontal) {
+    FilteredResizeH filter(clip, 0.0, static_cast<double>(source_width), target_width,
+                           filter_function.get(), true, AVS_CHROMA_UNUSED, environment.get());
+    EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+    output = filter.GetFrame(0, environment.get());
   } else {
-    LanczosFilter filter_function(3);
-    if (horizontal) {
-      FilteredResizeH filter(clip, 0.0, static_cast<double>(source_width), target_width,
-                             &filter_function, true, AVS_CHROMA_UNUSED, environment.get());
-      EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
-      output = filter.GetFrame(0, environment.get());
-    } else {
-      FilteredResizeV filter(clip, 0.0, static_cast<double>(source_height), target_height,
-                             &filter_function, true, AVS_CHROMA_UNUSED, environment.get());
-      EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
-      output = filter.GetFrame(0, environment.get());
-    }
+    FilteredResizeV filter(clip, 0.0, static_cast<double>(source_height), target_height,
+                           filter_function.get(), true, AVS_CHROMA_UNUSED, environment.get());
+    EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+    output = filter.GetFrame(0, environment.get());
   }
 
   for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
@@ -665,7 +685,11 @@ INSTANTIATE_TEST_SUITE_P(
         ExtraResizeCase{ExtraResizeKernel::Lanczos3, ResizeDirection::Horizontal,
                         "Lanczos3Horizontal"},
         ExtraResizeCase{ExtraResizeKernel::Lanczos3, ResizeDirection::Vertical,
-                        "Lanczos3Vertical"}),
+                        "Lanczos3Vertical"},
+        ExtraResizeCase{ExtraResizeKernel::Spline36, ResizeDirection::Horizontal,
+                        "Spline36Horizontal"},
+        ExtraResizeCase{ExtraResizeKernel::Spline36, ResizeDirection::Vertical,
+                        "Spline36Vertical"}),
     [](const ::testing::TestParamInfo<ExtraResizeCase>& info) { return info.param.name; });
 
 template <typename Pixel>
