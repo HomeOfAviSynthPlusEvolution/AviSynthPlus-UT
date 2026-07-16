@@ -214,6 +214,37 @@ INSTANTIATE_TEST_SUITE_P(Directions, TurnFilterTest,
                            return direction_name(info.param);
                          });
 
+TEST(TurnFilter, LeftThenRightRestoresYv24ActivePlanes) {
+  AviSynthEnvironment environment;
+  constexpr int width = 5;
+  constexpr int height = 3;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_YV24, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(source, 0xa1, PLANAR_Y);
+  fill_plane_full_pitch(source, 0xb2, PLANAR_U);
+  fill_plane_full_pitch(source, 0xc3, PLANAR_V);
+  fill_pattern(source, PLANAR_Y, width, height, 3);
+  fill_pattern(source, PLANAR_U, width, height, 67);
+  fill_pattern(source, PLANAR_V, width, height, 131);
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip_impl = new StaticFrameClip(vi, source);
+  const PClip source_clip(source_clip_impl);
+  const PClip left(new Turn(source_clip, kTurnLeft, environment.get()));
+  const PClip restored(new Turn(left, kTurnRight, environment.get()));
+
+  EXPECT_EQ(restored->SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = restored->GetFrame(0, environment.get());
+
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    EXPECT_EQ(read_frame_plane_active<std::uint8_t>(output, plane),
+              read_frame_plane_active<std::uint8_t>(source, plane))
+        << "plane=" << plane;
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip_impl->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
 class TurnYuv420P16Test : public ::testing::TestWithParam<int> {};
 
 TEST_P(TurnYuv420P16Test, RotatesSixteenBitSubsampledPlanes) {
