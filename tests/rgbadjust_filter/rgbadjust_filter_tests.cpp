@@ -287,6 +287,108 @@ TEST(RGBAdjustFilter, AppliesFloatScaleBiasGammaToPlanarRgbAlpha) {
   EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
 }
 
+TEST(RGBAdjustFilter, AppliesConditionalScaleBiasAndGammaToFloatPlanarRgbAlpha) {
+  AviSynthEnvironment environment;
+  constexpr int width = 5;
+  constexpr int height = 3;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_RGBAPS, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  for (const int plane : {PLANAR_G, PLANAR_B, PLANAR_R, PLANAR_A}) {
+    fill_plane_full_pitch(source, static_cast<std::uint8_t>(0x46 + plane * 0x13), plane);
+  }
+  write_frame_plane<float>(source, PLANAR_B,
+                           [](int x, int y) { return 0.08F + x * 0.06F + y * 0.025F; });
+  write_frame_plane<float>(source, PLANAR_G,
+                           [](int x, int y) { return 0.18F + x * 0.045F + y * 0.035F; });
+  write_frame_plane<float>(source, PLANAR_R,
+                           [](int x, int y) { return 0.28F + x * 0.035F + y * 0.02F; });
+  write_frame_plane<float>(source, PLANAR_A,
+                           [](int x, int y) { return 0.38F + x * 0.025F + y * 0.03F; });
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  ASSERT_TRUE(environment.get()->SetVar("rgbadjust_r_f23_float", AVSValue(0.55)));
+  ASSERT_TRUE(environment.get()->SetVar("rgbadjust_gb_f23_float", AVSValue(0.08)));
+  ASSERT_TRUE(environment.get()->SetVar("rgbadjust_bg_f23_float", AVSValue(1.8)));
+  ASSERT_TRUE(environment.get()->SetVar("rgbadjust_a_f23_float", AVSValue(0.65)));
+  ASSERT_TRUE(environment.get()->SetVar("rgbadjust_ab_f23_float", AVSValue(0.1)));
+  ASSERT_TRUE(environment.get()->SetVar("rgbadjust_ag_f23_float", AVSValue(0.75)));
+
+  RGBAdjust filter(clip, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0,
+                   false, false, true, "_f23_float", environment.get());
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  const auto check_plane = [&](int plane, double scale, double bias, double gamma) {
+    const auto source_values = read_frame_plane_active<float>(source, plane);
+    const auto output_values = read_frame_plane_active<float>(output, plane);
+    ASSERT_EQ(output_values.size(), source_values.size());
+    for (std::size_t index = 0; index < source_values.size(); ++index) {
+      EXPECT_NEAR(output_values[index], adjust_float(source_values[index], scale, bias, gamma),
+                  1.0e-6F)
+          << "plane=" << plane << " active_index=" << index;
+    }
+  };
+  check_plane(PLANAR_B, 1.0, 0.0, 1.8);
+  check_plane(PLANAR_G, 1.0, 0.08, 1.0);
+  check_plane(PLANAR_R, 0.55, 0.0, 1.0);
+  check_plane(PLANAR_A, 0.65, 0.1, 0.75);
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+TEST(RGBAdjustFilter, IgnoresOrderedDitherForFloatPlanarRgbAlpha) {
+  AviSynthEnvironment environment;
+  constexpr int width = 5;
+  constexpr int height = 3;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_RGBAPS, 1, 25, 1});
+  PVideoFrame plain_source = environment.get()->NewVideoFrame(vi);
+  PVideoFrame dither_source = environment.get()->NewVideoFrame(vi);
+  for (const int plane : {PLANAR_G, PLANAR_B, PLANAR_R, PLANAR_A}) {
+    fill_plane_full_pitch(plain_source, static_cast<std::uint8_t>(0x57 + plane * 0x11), plane);
+    fill_plane_full_pitch(dither_source, static_cast<std::uint8_t>(0x57 + plane * 0x11), plane);
+  }
+  const auto write_values = [](PVideoFrame& frame) {
+    write_frame_plane<float>(frame, PLANAR_B,
+                             [](int x, int y) { return 0.04F + x * 0.08F + y * 0.02F; });
+    write_frame_plane<float>(frame, PLANAR_G,
+                             [](int x, int y) { return 0.14F + x * 0.06F + y * 0.03F; });
+    write_frame_plane<float>(frame, PLANAR_R,
+                             [](int x, int y) { return 0.24F + x * 0.05F + y * 0.025F; });
+    write_frame_plane<float>(frame, PLANAR_A,
+                             [](int x, int y) { return 0.34F + x * 0.04F + y * 0.035F; });
+  };
+  write_values(plain_source);
+  write_values(dither_source);
+  const auto plain_before = FrameSnapshot::capture(plain_source, vi);
+  const auto dither_before = FrameSnapshot::capture(dither_source, vi);
+  auto* plain_clip_impl = new StaticFrameClip(vi, plain_source);
+  auto* dither_clip_impl = new StaticFrameClip(vi, dither_source);
+  const PClip plain_clip(plain_clip_impl);
+  const PClip dither_clip(dither_clip_impl);
+
+  RGBAdjust plain_filter(plain_clip, 1.1, 0.8, 0.7, 0.6, -0.05, 0.1, 0.03, 0.2, 1.3, 0.9,
+                         1.7, 0.75, false, false, false, "", environment.get());
+  RGBAdjust dither_filter(dither_clip, 1.1, 0.8, 0.7, 0.6, -0.05, 0.1, 0.03, 0.2, 1.3, 0.9,
+                          1.7, 0.75, false, true, false, "", environment.get());
+  const PVideoFrame plain_output = plain_filter.GetFrame(0, environment.get());
+  const PVideoFrame dither_output = dither_filter.GetFrame(0, environment.get());
+
+  for (const int plane : {PLANAR_G, PLANAR_B, PLANAR_R, PLANAR_A}) {
+    EXPECT_EQ(read_frame_plane_active<float>(dither_output, plane),
+              read_frame_plane_active<float>(plain_output, plane))
+        << "plane=" << plane;
+  }
+  EXPECT_NE(plain_output->CheckMemory(), 1);
+  EXPECT_NE(dither_output->CheckMemory(), 1);
+  EXPECT_EQ(plain_clip_impl->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(dither_clip_impl->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(plain_source, vi), plain_before);
+  EXPECT_EQ(FrameSnapshot::capture(dither_source, vi), dither_before);
+}
+
 TEST(RGBAdjustFilter, AppliesOrderedDitherToEightBitPackedChannels) {
   AviSynthEnvironment environment;
   constexpr int width = 7;
@@ -410,6 +512,49 @@ TEST(RGBAdjustFilter, AnalyzeOverlaysStatisticsOnPackedOutput) {
     }
   }
   EXPECT_GT(changed_components, 0U);
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+TEST(RGBAdjustFilter, AnalyzeOverlaysStatisticsOnFloatPlanarOutput) {
+  AviSynthEnvironment environment;
+  constexpr int width = 320;
+  constexpr int height = 120;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_RGBPS, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  for (const int plane : {PLANAR_G, PLANAR_B, PLANAR_R}) {
+    fill_plane_full_pitch(source, static_cast<std::uint8_t>(0x6e + plane * 0x0d), plane);
+  }
+  write_frame_plane<float>(source, PLANAR_B, [](int x, int y) {
+    return static_cast<float>((x * 17 + y * 13 + 5) % 257) / 256.0F;
+  });
+  write_frame_plane<float>(source, PLANAR_G, [](int x, int y) {
+    return static_cast<float>((x * 7 + y * 19 + 31) % 257) / 256.0F;
+  });
+  write_frame_plane<float>(source, PLANAR_R, [](int x, int y) {
+    return static_cast<float>((x * 23 + y * 3 + 47) % 257) / 256.0F;
+  });
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  RGBAdjust filter(clip, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0,
+                   true, false, false, "", environment.get());
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  std::size_t changed_samples = 0;
+  for (const int plane : {PLANAR_G, PLANAR_B, PLANAR_R}) {
+    const auto source_values = read_frame_plane_active<float>(source, plane);
+    const auto output_values = read_frame_plane_active<float>(output, plane);
+    ASSERT_EQ(output_values.size(), source_values.size());
+    for (std::size_t index = 0; index < source_values.size(); ++index) {
+      ASSERT_TRUE(std::isfinite(output_values[index]))
+          << "plane=" << plane << " active_index=" << index;
+      changed_samples += output_values[index] != source_values[index] ? 1U : 0U;
+    }
+  }
+  EXPECT_GT(changed_samples, 0U);
   EXPECT_NE(output->CheckMemory(), 1);
   EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
   EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
