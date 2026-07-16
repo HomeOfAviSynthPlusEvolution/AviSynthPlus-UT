@@ -31,6 +31,8 @@ std::vector<MergeCase> merge_cases() {
   std::vector<MergeCase> cases;
   add_merge_cases(cases, "Plane", 8, 37, 13, 48, 56, 8192, 0x0800BEEFU, "0bfd45f11b093a11",
                   weighted_merge_c, weighted_merge_sse2, weighted_merge_avx2);
+  add_merge_cases(cases, "Plane", 8, 29, 5, 64, 72, 23456, 0xF30A11CEU, "",
+                  weighted_merge_c, weighted_merge_sse2, weighted_merge_avx2);
   add_merge_cases(cases, "Plane", 10, 19, 11, 48, 56, 12345, 0x0A00BEEFU, "e6589674b8fcdcc1",
                   weighted_merge_c, weighted_merge_sse2, weighted_merge_avx2);
   add_merge_cases(cases, "Plane", 12, 17, 9, 48, 64, 21845, 0x0C00BEEFU, "f3e059b967e7222c",
