@@ -16,6 +16,7 @@
 #endif
 
 #include "support/comparators.h"
+#include "support/deterministic_data.h"
 #include "support/guarded_video_buffer.h"
 #include "support/stable_hash.h"
 #include "support/variant_registry.h"
@@ -47,6 +48,7 @@ struct LayerGenericPlaneFastCase {
   std::size_t overlay_alignment_offset{};
   Variant<LayerGenericPlaneFastFunction> variant;
   std::string expected_hash;
+  std::uint32_t seed{};
   std::string name;
 };
 
@@ -73,7 +75,11 @@ inline std::string layer_genericplane_fast_case_name(const LayerGenericPlaneFast
          << "_Height" << test_case.height << "_DstPitch" << test_case.destination_pitch
          << "_OverlayPitch" << test_case.overlay_pitch << "_DstOffset"
          << test_case.destination_alignment_offset << "_OverlayOffset"
-         << test_case.overlay_alignment_offset << "_PatternBoundaryAnchors_"
+         << test_case.overlay_alignment_offset;
+  if (test_case.seed != 0) {
+    stream << "_Seed" << std::uppercase << std::hex << test_case.seed;
+  }
+  stream << (test_case.seed == 0 ? "_PatternBoundaryAnchors_" : "_PatternFixedRandom_")
          << layer_genericplane_fast_variant_name(test_case.variant);
   return stream.str();
 }
@@ -82,7 +88,8 @@ inline LayerGenericPlaneFastCase make_layer_genericplane_fast_case(
     int bits_per_sample, std::size_t width_samples, std::size_t height,
     std::size_t destination_pitch, std::size_t overlay_pitch,
     std::size_t destination_alignment_offset, std::size_t overlay_alignment_offset,
-    Variant<LayerGenericPlaneFastFunction> variant, std::string expected_hash = {}) {
+    Variant<LayerGenericPlaneFastFunction> variant, std::string expected_hash = {},
+    std::uint32_t seed = 0) {
   const auto bytes_per_sample = static_cast<std::size_t>(bits_per_sample / 8);
   if ((bits_per_sample != 8 && bits_per_sample != 16) || width_samples == 0 || height == 0 ||
       destination_pitch < width_samples * bytes_per_sample ||
@@ -99,6 +106,7 @@ inline LayerGenericPlaneFastCase make_layer_genericplane_fast_case(
                                    overlay_alignment_offset,
                                    std::move(variant),
                                    std::move(expected_hash),
+                                   seed,
                                    {}};
   result.name = layer_genericplane_fast_case_name(result);
   return result;
@@ -115,7 +123,13 @@ inline T layer_genericplane_fast_anchor(std::uint32_t anchor) {
 }
 
 template <typename T>
-inline void fill_layer_genericplane_fast_inputs(PlaneView<T> destination, PlaneView<T> overlay) {
+inline void fill_layer_genericplane_fast_inputs(PlaneView<T> destination, PlaneView<T> overlay,
+                                                std::uint32_t seed = 0) {
+  if (seed != 0) {
+    fill_random(destination, seed);
+    fill_random(overlay, seed ^ 0xA5A5A5A5U);
+    return;
+  }
   constexpr std::array<std::uint32_t, 12> anchors{0U,   1U,   2U,   17U,  63U,  64U,
                                                   127U, 128U, 191U, 223U, 254U, 255U};
   for (std::size_t y = 0; y < destination.height(); ++y) {
@@ -150,7 +164,7 @@ inline void run_layer_genericplane_fast_case(const LayerGenericPlaneFastCase& te
                                  test_case.destination_pitch, 64,
                                  test_case.destination_alignment_offset, 0xe1);
 
-  fill_layer_genericplane_fast_inputs(destination.view(), overlay.view());
+  fill_layer_genericplane_fast_inputs(destination.view(), overlay.view(), test_case.seed);
   for (std::size_t y = 0; y < destination.view().height(); ++y) {
     std::copy_n(destination.view().row(y), destination.view().width(), expected.view().row(y));
   }
