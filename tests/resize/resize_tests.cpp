@@ -116,6 +116,15 @@ std::vector<ResizeHorizontal8Case> resize_horizontal8_cases() {
           Variant<ResizeFunction>{"avx2", resizer_h_avx2_generic_uint8_t, IsaRequirement::Avx2},
           "5a5ffa34ace2e2d4", std::nullopt, ResizeFilter::Triangle, 0xF30D0802U),
       make_resize_horizontal8_case(
+          128, 192, 5, 192, 256,
+          Variant<ResizeFunction>{"ssse3", resizer_h_ssse3_generic_uint8_16<std::uint8_t, true>,
+                                  IsaRequirement::Ssse3},
+          "6641e00ace5dd4ab", std::nullopt, ResizeFilter::Lanczos3, 0xF30D0803U),
+      make_resize_horizontal8_case(
+          128, 192, 5, 192, 256,
+          Variant<ResizeFunction>{"avx2", resizer_h_avx2_generic_uint8_t, IsaRequirement::Avx2},
+          "6641e00ace5dd4ab", std::nullopt, ResizeFilter::Lanczos3, 0xF30D0803U),
+      make_resize_horizontal8_case(
           128, 192, 5, 192, 192,
           Variant<ResizeFunction>{
               "avx512_base",
@@ -226,6 +235,16 @@ std::vector<ResizeHorizontal16Case> resize_horizontal16_cases() {
           Variant<ResizeFunction>{"avx2", resizer_h_avx2_generic_uint16_t<false>,
                                   IsaRequirement::Avx2},
           "1872945cb8110531", std::nullopt, ResizeFilter::Triangle, 0xF30D1002U),
+      make_resize_horizontal16_case(
+          10, 128, 192, 5, 384, 512,
+          Variant<ResizeFunction>{"ssse3", resizer_h_ssse3_generic_uint8_16<std::uint16_t, true>,
+                                  IsaRequirement::Ssse3},
+          "fb5784303564bab7", std::nullopt, ResizeFilter::Lanczos3, 0xF30D1003U),
+      make_resize_horizontal16_case(
+          10, 128, 192, 5, 384, 512,
+          Variant<ResizeFunction>{"avx2", resizer_h_avx2_generic_uint16_t<true>,
+                                  IsaRequirement::Avx2},
+          "fb5784303564bab7", std::nullopt, ResizeFilter::Lanczos3, 0xF30D1003U),
       make_resize_horizontal16_case(
           10, 128, 192, 5, 384, 384,
           Variant<ResizeFunction>{
