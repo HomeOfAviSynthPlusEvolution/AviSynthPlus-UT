@@ -434,6 +434,37 @@ TEST(FlipFilter, FlipsYuva420AlphaWithTheFullResolutionPlanes) {
   EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
 }
 
+TEST(FlipFilter, DoubleHorizontalFlipRestoresYuva420ActivePlanes) {
+  AviSynthEnvironment environment;
+  constexpr int width = 8;
+  constexpr int height = 6;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_YUVA420, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V, PLANAR_A}) {
+    fill_plane_full_pitch(source, static_cast<std::uint8_t>(0x52 + plane * 0x17), plane);
+    write_frame_plane<std::uint8_t>(source, plane, [plane](int x, int y) {
+      return 11 + plane * 37 + x * 13 + y * 29;
+    });
+  }
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip_impl = new StaticFrameClip(vi, source);
+  const PClip source_clip(source_clip_impl);
+  const PClip flipped(new FlipHorizontal(source_clip));
+  const PClip restored(new FlipHorizontal(flipped));
+
+  EXPECT_EQ(restored->SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = restored->GetFrame(0, environment.get());
+
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V, PLANAR_A}) {
+    EXPECT_EQ(read_frame_plane_active<std::uint8_t>(output, plane),
+              read_frame_plane_active<std::uint8_t>(source, plane))
+        << "plane=" << plane;
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip_impl->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
 struct PackedFlipCase {
   int pixel_type;
   int component_bytes;
