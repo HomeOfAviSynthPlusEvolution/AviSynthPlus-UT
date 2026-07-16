@@ -4,6 +4,7 @@
 #include "filters/intel/layer_sse.h"
 
 #include "support/comparators.h"
+#include "support/deterministic_data.h"
 #include "support/guarded_video_buffer.h"
 #include "support/stable_hash.h"
 #include "support/variant_registry.h"
@@ -33,6 +34,7 @@ struct LayerRgb32AddCase {
   std::string level_name;
   Variant<LayerRgb32AddFunction> variant;
   std::string expected_hash;
+  std::uint32_t seed{};
   std::string name;
 };
 
@@ -56,7 +58,11 @@ inline std::string layer_rgb32_add_case_name(const LayerRgb32AddCase& test_case)
   std::ostringstream stream;
   stream << "Rgb32_AddLuma_Width" << test_case.width_pixels << "_Height" << test_case.height
          << "_DstPitch" << test_case.destination_pitch << "_OverlayPitch" << test_case.overlay_pitch
-         << "_Level" << test_case.level_name << "_PatternBoundaryAnchors_"
+         << "_Level" << test_case.level_name;
+  if (test_case.seed != 0) {
+    stream << "_Seed" << std::uppercase << std::hex << test_case.seed;
+  }
+  stream << (test_case.seed == 0 ? "_PatternBoundaryAnchors_" : "_PatternFixedRandom_")
          << layer_rgb32_add_variant_name(test_case.variant);
   return stream.str();
 }
@@ -66,7 +72,8 @@ inline LayerRgb32AddCase make_layer_rgb32_add_case(std::size_t width_pixels, std
                                                    std::size_t overlay_pitch, int level,
                                                    std::string level_name,
                                                    Variant<LayerRgb32AddFunction> variant,
-                                                   std::string expected_hash = {}) {
+                                                   std::string expected_hash = {},
+                                                   std::uint32_t seed = 0) {
   if (width_pixels == 0 || height == 0 || destination_pitch < width_pixels * 4 ||
       overlay_pitch < width_pixels * 4) {
     throw std::invalid_argument("Layer RGB32 add rows must contain active pixels");
@@ -82,6 +89,7 @@ inline LayerRgb32AddCase make_layer_rgb32_add_case(std::size_t width_pixels, std
                            std::move(level_name),
                            std::move(variant),
                            std::move(expected_hash),
+                           seed,
                            {}};
   result.name = layer_rgb32_add_case_name(result);
   return result;
@@ -92,7 +100,12 @@ inline void PrintTo(const LayerRgb32AddCase& test_case, std::ostream* stream) {
 }
 
 inline void fill_layer_rgb32_add_inputs(PlaneView<std::uint8_t> destination,
-                                        PlaneView<std::uint8_t> overlay) {
+                                        PlaneView<std::uint8_t> overlay, std::uint32_t seed = 0) {
+  if (seed != 0) {
+    fill_random(destination, seed);
+    fill_random(overlay, seed ^ 0xA5A5A5A5U);
+    return;
+  }
   constexpr std::array<std::uint8_t, 12> anchors{0U,   1U,   2U,   17U,  63U,  64U,
                                                  127U, 128U, 191U, 192U, 254U, 255U};
   const auto width_pixels = destination.width() / 4;
@@ -140,7 +153,7 @@ inline void run_layer_rgb32_add_case(const LayerRgb32AddCase& test_case) {
   GuardedVideoBuffer<std::uint8_t> expected(test_case.width_pixels * 4, test_case.height,
                                             test_case.destination_pitch, 64, 0, 0xb4);
 
-  fill_layer_rgb32_add_inputs(destination.view(), overlay.view());
+  fill_layer_rgb32_add_inputs(destination.view(), overlay.view(), test_case.seed);
   for (std::size_t y = 0; y < destination.view().height(); ++y) {
     std::copy_n(destination.view().row(y), destination.view().width(), expected.view().row(y));
   }

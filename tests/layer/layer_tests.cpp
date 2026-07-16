@@ -300,7 +300,7 @@ std::vector<LayerRgb32AddCase> layer_rgb32_add_cases() {
   constexpr std::size_t overlay_pitch = 80;
   constexpr int full_level = 257;
   constexpr int partial_level = 173;
-  return {
+  std::vector<LayerRgb32AddCase> cases{
       make_layer_rgb32_add_case(
           width_pixels, height, destination_pitch, overlay_pitch, full_level, "Full257",
           Variant<LayerRgb32AddFunction>{"sse2", layer_rgb32_add_sse2<false>, IsaRequirement::Sse2},
@@ -318,6 +318,14 @@ std::vector<LayerRgb32AddCase> layer_rgb32_add_cases() {
           Variant<LayerRgb32AddFunction>{"avx2", layer_rgb32_add_avx2<false>, IsaRequirement::Avx2},
           "8a5a44620cfb2a74"),
   };
+  for (const auto& variant : {
+           Variant<LayerRgb32AddFunction>{"sse2", layer_rgb32_add_sse2<false>, IsaRequirement::Sse2},
+           Variant<LayerRgb32AddFunction>{"avx2", layer_rgb32_add_avx2<false>, IsaRequirement::Avx2}}) {
+    cases.push_back(make_layer_rgb32_add_case(
+        13, 5, 64, 80, partial_level, "Partial173", variant, "ec203ae5164c3a95",
+        0xF30F2002U));
+  }
+  return cases;
 }
 
 class LayerRgb32AddKernels : public ::testing::TestWithParam<LayerRgb32AddCase> {};
@@ -343,7 +351,7 @@ std::vector<LayerRgb32SubtractCase> layer_rgb32_subtract_cases() {
   constexpr std::size_t overlay_pitch = 80;
   constexpr int full_level = 257;
   constexpr int partial_level = 173;
-  return {
+  std::vector<LayerRgb32SubtractCase> cases{
       make_layer_rgb32_subtract_case(
           width_pixels, height, destination_pitch, overlay_pitch, full_level, "Full257",
           Variant<LayerRgb32SubtractFunction>{"sse2", layer_rgb32_subtract_sse2<false>,
@@ -365,6 +373,16 @@ std::vector<LayerRgb32SubtractCase> layer_rgb32_subtract_cases() {
                                               IsaRequirement::Avx2},
           "340ea8bf55efe193"),
   };
+  for (const auto& variant : {
+           Variant<LayerRgb32SubtractFunction>{"sse2", layer_rgb32_subtract_sse2<false>,
+                                               IsaRequirement::Sse2},
+           Variant<LayerRgb32SubtractFunction>{"avx2", layer_rgb32_subtract_avx2<false>,
+                                               IsaRequirement::Avx2}}) {
+    cases.push_back(make_layer_rgb32_subtract_case(
+        13, 5, 64, 80, partial_level, "Partial173", variant, "e5d0d747c6bcf94c",
+        0xF30F2003U));
+  }
+  return cases;
 }
 
 class LayerRgb32SubtractKernels : public ::testing::TestWithParam<LayerRgb32SubtractCase> {};
