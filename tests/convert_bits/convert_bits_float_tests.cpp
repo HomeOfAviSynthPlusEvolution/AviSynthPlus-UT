@@ -23,6 +23,30 @@ std::vector<ConvertBitsFloatCase> convert_bits_float_cases() {
   add_integer_to_float_case<std::uint16_t, true, true, false>(cases, FloatConversion::UInt16ToFloat,
                                                               12, 96);
   cases.push_back(make_convert_bits_float_case(
+      FloatConversion::FloatToUInt8, false, false, true, 32, 8, 29, 4, 192, 96,
+      Variant<ConvertBitsIntegerFunc>{
+          "sse41", convert_32_to_uintN_sse41<std::uint8_t, false, false, true>,
+          IsaRequirement::Sse41},
+      "a164d8b0bc78e986", 0xF30B1402U));
+  cases.push_back(make_convert_bits_float_case(
+      FloatConversion::FloatToUInt8, false, false, true, 32, 8, 29, 4, 192, 96,
+      Variant<ConvertBitsIntegerFunc>{
+          "avx2-fma", convert_32_to_uintN_avx2<std::uint8_t, false, false, true>,
+          IsaRequirement::Avx2Fma},
+      "a164d8b0bc78e986", 0xF30B1402U));
+  cases.push_back(make_convert_bits_float_case(
+      FloatConversion::FloatToUInt16, false, true, false, 32, 10, 29, 4, 192, 128,
+      Variant<ConvertBitsIntegerFunc>{
+          "sse41", convert_32_to_uintN_sse41<std::uint16_t, false, true, false>,
+          IsaRequirement::Sse41},
+      "42df97d9eae3ace0", 0xF30B1403U));
+  cases.push_back(make_convert_bits_float_case(
+      FloatConversion::FloatToUInt16, false, true, false, 32, 10, 29, 4, 192, 128,
+      Variant<ConvertBitsIntegerFunc>{
+          "avx2-fma", convert_32_to_uintN_avx2<std::uint16_t, false, true, false>,
+          IsaRequirement::Avx2Fma},
+      "42df97d9eae3ace0", 0xF30B1403U));
+  cases.push_back(make_convert_bits_float_case(
       FloatConversion::UInt16ToFloat, false, false, true, 14, 32, 29, 4, 96, 128,
       Variant<ConvertBitsIntegerFunc>{
           "avx2-fma", convert_uintN_to_float_avx2<std::uint16_t, false, false, true>,

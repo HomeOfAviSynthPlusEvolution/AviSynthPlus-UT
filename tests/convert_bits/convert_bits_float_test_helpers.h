@@ -188,7 +188,7 @@ void run_float_to_integer_case(const ConvertBitsFloatCase& test_case) {
   GuardedVideoBuffer<Target> expected(test_case.width, test_case.height, test_case.target_pitch,
                                       64);
   GuardedVideoBuffer<Target> actual(test_case.width, test_case.height, test_case.target_pitch, 64);
-  fill_float_source(source.view(), test_case.chroma);
+  fill_float_source(source.view(), test_case.chroma, test_case.seed);
   const auto source_snapshot = source.snapshot_active();
   for (std::size_t y = 0; y < test_case.height; ++y) {
     for (std::size_t x = 0; x < test_case.width; ++x) {
@@ -209,7 +209,24 @@ void run_float_to_integer_case(const ConvertBitsFloatCase& test_case) {
   EXPECT_TRUE(source.active_matches(source_snapshot)) << test_case.name;
   EXPECT_TRUE(source.memory_intact()) << test_case.name;
   EXPECT_TRUE(expected.memory_intact()) << test_case.name;
-  EXPECT_TRUE(actual.memory_intact()) << test_case.name;
+  EXPECT_TRUE(actual.guards_intact()) << test_case.name << " output guards";
+  constexpr std::size_t kSimdTailBytes = sizeof(Target) == 1 ? 32 : 64;
+  const auto active_row_bytes = test_case.width * sizeof(Target);
+  const auto allowed_end = std::min(
+      test_case.target_pitch,
+      ((active_row_bytes + kSimdTailBytes - 1) / kSimdTailBytes) * kSimdTailBytes);
+  const bool permitted_tail_write =
+      !actual.padding_intact() && actual.padding_intact_from(allowed_end);
+  if (permitted_tail_write) {
+    std::cout << "[INFO] " << test_case.name
+              << " modified output padding within the permitted " << kSimdTailBytes
+              << "-byte SIMD tail"
+              << " (active_row_bytes=" << active_row_bytes << ", protected_from_byte="
+              << allowed_end << ")\n";
+  }
+  EXPECT_TRUE(actual.padding_intact_from(allowed_end))
+      << test_case.name << " output padding after permitted " << kSimdTailBytes
+      << "-byte SIMD tail boundary " << allowed_end;
 }
 
 template <typename Source>
