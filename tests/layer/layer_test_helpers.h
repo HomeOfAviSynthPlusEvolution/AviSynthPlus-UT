@@ -13,6 +13,7 @@
 #include "filters/overlay/intel/blend_common_sse.h"
 
 #include "support/comparators.h"
+#include "support/deterministic_data.h"
 #include "support/guarded_video_buffer.h"
 #include "support/stable_hash.h"
 #include "support/variant_registry.h"
@@ -53,6 +54,7 @@ struct LayerYuvAddCase {
   LayerYuvAddFuncPtr scalar_function{};
   Variant<LayerYuvAddFuncPtr> variant;
   std::string expected_hash;
+  std::uint32_t seed{};
   std::string name;
 };
 
@@ -113,7 +115,11 @@ inline std::string layer_yuv_add_case_name(const LayerYuvAddCase& test_case) {
          << layer_placement_name(test_case.placement) << "_Bpp" << test_case.bits_per_pixel
          << "_Width" << test_case.width_pixels << "_Height" << test_case.height_pixels
          << "_DstPitch" << test_case.destination_pitch << "_MaskPitch" << test_case.mask_pitch
-         << "_Opacity" << test_case.opacity_name << "_PatternBoundaryValues_"
+         << "_Opacity" << test_case.opacity_name;
+  if (test_case.seed != 0) {
+    stream << "_Seed" << std::uppercase << std::hex << test_case.seed;
+  }
+  stream << (test_case.seed == 0 ? "_PatternBoundaryValues_" : "_PatternFixedRandom_")
          << layer_variant_name(test_case.variant);
   return stream.str();
 }
@@ -184,7 +190,8 @@ inline LayerYuvAddCase make_layer_yuv_add_case(bool is_chroma, int colorspace, i
                                                std::size_t height_pixels, int opacity,
                                                std::string opacity_name,
                                                Variant<LayerYuvAddFuncPtr> variant,
-                                               std::string expected_hash) {
+                                               std::string expected_hash,
+                                               std::uint32_t seed = 0) {
   const auto bytes_per_pixel = bits_per_pixel == 8 ? std::size_t{1} : std::size_t{2};
   const auto mode = layer_mask_mode(is_chroma, colorspace, placement);
   const auto mask_width = layer_mask_width(mode, width_pixels);
@@ -204,6 +211,7 @@ inline LayerYuvAddCase make_layer_yuv_add_case(bool is_chroma, int colorspace, i
                          get_overlay_blend_masked_fn_c(is_chroma, mode),
                          std::move(variant),
                          std::move(expected_hash),
+                         seed,
                          {}};
   result.name = layer_yuv_add_case_name(result);
   return result;
@@ -307,9 +315,15 @@ void run_layer_yuv_add_case(const LayerYuvAddCase& test_case) {
   GuardedVideoBuffer<T> actual(test_case.width_pixels, test_case.height_pixels,
                                test_case.destination_pitch, 32);
 
-  fill_layer_plane(destination.view(), max_value, 0);
-  fill_layer_plane(overlay.view(), max_value, 3);
-  fill_layer_plane(mask.view(), max_value, 6);
+  if (test_case.seed == 0) {
+    fill_layer_plane(destination.view(), max_value, 0);
+    fill_layer_plane(overlay.view(), max_value, 3);
+    fill_layer_plane(mask.view(), max_value, 6);
+  } else {
+    fill_random(destination.view(), test_case.seed);
+    fill_random(overlay.view(), test_case.seed ^ 0xA5A5A5A5U);
+    fill_random(mask.view(), test_case.seed ^ 0x5A5A5A5AU);
+  }
   const auto overlay_snapshot = overlay.snapshot_active();
   const auto mask_snapshot = mask.snapshot_active();
   for (std::size_t y = 0; y < destination.view().height(); ++y) {

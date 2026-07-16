@@ -158,6 +158,16 @@ std::vector<LayerYuvAddCase> layer_yuv_add_cases() {
           layer_expected_hash(MASK444, bits_per_pixel, opacity == max_value)));
     }
   }
+  cases.push_back(make_layer_yuv_add_case(
+      true, 420, PLACEMENT_MPEG2, 8, 23, 7, 153, "Partial153",
+      Variant<LayerYuvAddFuncPtr>{"sse41", layer_sse41_function(true, 420, PLACEMENT_MPEG2, 8),
+                                  IsaRequirement::Sse41},
+      "3a7b2db2d25bf0b3", 0xF30F1B01U));
+  cases.push_back(make_layer_yuv_add_case(
+      true, 420, PLACEMENT_MPEG2, 8, 23, 7, 153, "Partial153",
+      Variant<LayerYuvAddFuncPtr>{"avx2", layer_avx2_function(true, 420, PLACEMENT_MPEG2, 8),
+                                  IsaRequirement::Avx2},
+      "3a7b2db2d25bf0b3", 0xF30F1B01U));
   return cases;
 }
 
