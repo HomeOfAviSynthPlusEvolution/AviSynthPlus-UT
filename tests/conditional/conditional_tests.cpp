@@ -10,8 +10,13 @@ namespace avsut::test {
 namespace {
 
 std::vector<SumCase> sum_cases() {
-  return {make_sum_case(
-      37, 5, 64, Variant<SumFunction>{"sse2", get_sum_of_pixels_sse2, IsaRequirement::Sse2})};
+  return {
+      make_sum_case(
+          37, 5, 64, Variant<SumFunction>{"sse2", get_sum_of_pixels_sse2, IsaRequirement::Sse2}),
+      make_sum_case(
+          53, 7, 96, Variant<SumFunction>{"sse2", get_sum_of_pixels_sse2, IsaRequirement::Sse2},
+          0xF30E5301U),
+  };
 }
 
 std::vector<SadIntCase> sad_int_cases() {
@@ -20,8 +25,16 @@ std::vector<SadIntCase> sad_int_cases() {
           "Plane8", false, 37, 5, 64, 80,
           Variant<SadIntFunction>{"sse2", calculate_sad_sse2<false>, IsaRequirement::Sse2}),
       make_sad_int_case(
+          "Plane8", false, 53, 7, 96, 112,
+          Variant<SadIntFunction>{"sse2", calculate_sad_sse2<false>, IsaRequirement::Sse2},
+          0xF30E5302U),
+      make_sad_int_case(
           "PackedRgb32", true, 32, 5, 64, 80,
           Variant<SadIntFunction>{"sse2", calculate_sad_sse2<true>, IsaRequirement::Sse2}),
+      make_sad_int_case(
+          "PackedRgb32", true, 44, 7, 96, 112,
+          Variant<SadIntFunction>{"sse2", calculate_sad_sse2<true>, IsaRequirement::Sse2},
+          0xF30E5303U),
   };
 }
 
@@ -32,13 +45,28 @@ std::vector<SadWideCase> sad_wide_cases() {
           Variant<SadWideFunction>{"sse2", calculate_sad_8_or_16_sse2<std::uint8_t, false>,
                                    IsaRequirement::Sse2}),
       make_sad_wide_case(
+          "Plane8Wide", 1, false, 53, 7, 96, 112,
+          Variant<SadWideFunction>{"sse2", calculate_sad_8_or_16_sse2<std::uint8_t, false>,
+                                   IsaRequirement::Sse2},
+          0xF30E5304U),
+      make_sad_wide_case(
           "Plane16", 2, false, 37, 5, 96, 112,
           Variant<SadWideFunction>{"sse2", calculate_sad_8_or_16_sse2<std::uint16_t, false>,
                                    IsaRequirement::Sse2}),
       make_sad_wide_case(
+          "Plane16", 2, false, 53, 7, 128, 144,
+          Variant<SadWideFunction>{"sse2", calculate_sad_8_or_16_sse2<std::uint16_t, false>,
+                                   IsaRequirement::Sse2},
+          0xF30E5305U),
+      make_sad_wide_case(
           "PackedRgb64", 2, true, 32, 5, 128, 144,
           Variant<SadWideFunction>{"sse2", calculate_sad_8_or_16_sse2<std::uint16_t, true>,
                                    IsaRequirement::Sse2}),
+      make_sad_wide_case(
+          "PackedRgb64", 2, true, 36, 7, 96, 112,
+          Variant<SadWideFunction>{"sse2", calculate_sad_8_or_16_sse2<std::uint16_t, true>,
+                                   IsaRequirement::Sse2},
+          0xF30E5306U),
   };
 }
 
