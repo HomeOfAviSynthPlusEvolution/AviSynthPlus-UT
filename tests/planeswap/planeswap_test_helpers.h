@@ -4,6 +4,7 @@
 #include "filters/intel/planeswap_sse.h"
 
 #include "support/comparators.h"
+#include "support/deterministic_data.h"
 #include "support/guarded_video_buffer.h"
 #include "support/stable_hash.h"
 #include "support/variant_registry.h"
@@ -34,6 +35,7 @@ struct Yuy2SwapCase {
   std::size_t destination_pitch{};
   Variant<PlaneSwapFuncPtr> variant;
   std::string expected_hash;
+  std::uint32_t seed{};
   std::string name;
 };
 
@@ -48,6 +50,7 @@ struct RgbExtractCase {
   PlaneSwapFuncPtr function{};
   Variant<PlaneSwapFuncPtr> variant;
   std::string expected_hash;
+  std::uint32_t seed{};
   std::string name;
 };
 
@@ -61,6 +64,7 @@ struct RgbNoAlphaExtractCase {
   std::size_t bytes_per_channel{};
   Variant<PlaneSwapFuncPtr> variant;
   std::string expected_hash;
+  std::uint32_t seed{};
   std::string name;
 };
 
@@ -123,10 +127,15 @@ inline const char* planeswap_channel_name(int channel_index) {
 
 inline std::string yuy2_case_name(std::size_t width_bytes, std::size_t height,
                                   std::size_t source_pitch, std::size_t destination_pitch,
-                                  const Variant<PlaneSwapFuncPtr>& variant) {
+                                  const Variant<PlaneSwapFuncPtr>& variant,
+                                  std::uint32_t seed) {
   std::ostringstream stream;
   stream << "Yuy2Swap_Width" << width_bytes << "_Height" << height << "_SrcPitch" << source_pitch
-         << "_DstPitch" << destination_pitch << "_PatternChannelRamp_"
+         << "_DstPitch" << destination_pitch;
+  if (seed != 0) {
+    stream << "_Seed" << std::uppercase << std::hex << seed;
+  }
+  stream << (seed == 0 ? "_PatternChannelRamp_" : "_PatternFixedRandom_")
          << planeswap_variant_name(variant);
   return stream.str();
 }
@@ -135,8 +144,12 @@ inline std::string rgb_case_name(const RgbExtractCase& test_case) {
   std::ostringstream stream;
   stream << test_case.format << "Channel" << planeswap_channel_name(test_case.channel_index)
          << "_Width" << test_case.width_pixels << "_Height" << test_case.height << "_SrcPitch"
-         << test_case.source_pitch << "_DstPitch" << test_case.destination_pitch
-         << "_PatternChannelRamp_" << planeswap_variant_name(test_case.variant);
+         << test_case.source_pitch << "_DstPitch" << test_case.destination_pitch;
+  if (test_case.seed != 0) {
+    stream << "_Seed" << std::uppercase << std::hex << test_case.seed;
+  }
+  stream << (test_case.seed == 0 ? "_PatternChannelRamp_" : "_PatternFixedRandom_")
+         << planeswap_variant_name(test_case.variant);
   return stream.str();
 }
 
@@ -144,8 +157,12 @@ inline std::string rgb_noalpha_case_name(const RgbNoAlphaExtractCase& test_case)
   std::ostringstream stream;
   stream << test_case.format << "NoAlphaChannel" << planeswap_channel_name(test_case.channel_index)
          << "_Width" << test_case.width_pixels << "_Height" << test_case.height << "_SrcPitch"
-         << test_case.source_pitch << "_DstPitch" << test_case.destination_pitch
-         << "_PatternChannelRamp_" << planeswap_variant_name(test_case.variant);
+         << test_case.source_pitch << "_DstPitch" << test_case.destination_pitch;
+  if (test_case.seed != 0) {
+    stream << "_Seed" << std::uppercase << std::hex << test_case.seed;
+  }
+  stream << (test_case.seed == 0 ? "_PatternChannelRamp_" : "_PatternFixedRandom_")
+         << planeswap_variant_name(test_case.variant);
   return stream.str();
 }
 
@@ -170,16 +187,18 @@ inline std::string yuy2_to_uv_case_name(const Yuy2ToUvCase& test_case) {
 
 inline Yuy2SwapCase make_yuy2_case(std::size_t width_bytes, std::size_t height,
                                    std::size_t source_pitch, std::size_t destination_pitch,
-                                   Variant<PlaneSwapFuncPtr> variant, std::string expected_hash) {
+                                   Variant<PlaneSwapFuncPtr> variant, std::string expected_hash,
+                                   std::uint32_t seed = 0) {
   Yuy2SwapCase result{width_bytes,
                       height,
                       source_pitch,
                       destination_pitch,
                       std::move(variant),
                       std::move(expected_hash),
+                      seed,
                       {}};
   result.name = yuy2_case_name(result.width_bytes, result.height, result.source_pitch,
-                               result.destination_pitch, result.variant);
+                               result.destination_pitch, result.variant, result.seed);
   return result;
 }
 
@@ -187,7 +206,7 @@ inline RgbExtractCase make_rgb_case(std::string format, int channel_index, std::
                                     std::size_t height, std::size_t source_pitch,
                                     std::size_t destination_pitch, std::size_t bytes_per_channel,
                                     PlaneSwapFuncPtr function, Variant<PlaneSwapFuncPtr> variant,
-                                    std::string expected_hash) {
+                                    std::string expected_hash, std::uint32_t seed = 0) {
   RgbExtractCase result{std::move(format),
                         channel_index,
                         width_pixels,
@@ -198,6 +217,7 @@ inline RgbExtractCase make_rgb_case(std::string format, int channel_index, std::
                         function,
                         std::move(variant),
                         std::move(expected_hash),
+                        seed,
                         {}};
   result.name = rgb_case_name(result);
   return result;
@@ -206,7 +226,7 @@ inline RgbExtractCase make_rgb_case(std::string format, int channel_index, std::
 inline RgbNoAlphaExtractCase make_rgb_noalpha_case(
     std::string format, int channel_index, std::size_t width_pixels, std::size_t height,
     std::size_t source_pitch, std::size_t destination_pitch, std::size_t bytes_per_channel,
-    Variant<PlaneSwapFuncPtr> variant, std::string expected_hash) {
+    Variant<PlaneSwapFuncPtr> variant, std::string expected_hash, std::uint32_t seed = 0) {
   RgbNoAlphaExtractCase result{std::move(format),
                                channel_index,
                                width_pixels,
@@ -216,6 +236,7 @@ inline RgbNoAlphaExtractCase make_rgb_noalpha_case(
                                bytes_per_channel,
                                std::move(variant),
                                std::move(expected_hash),
+                               seed,
                                {}};
   result.name = rgb_noalpha_case_name(result);
   return result;
@@ -351,7 +372,11 @@ inline void run_yuy2_case(const Yuy2SwapCase& test_case) {
   GuardedVideoBuffer<std::uint8_t> actual(test_case.width_bytes, test_case.height,
                                           test_case.destination_pitch, 32);
 
-  fill_yuy2_input(source.view());
+  if (test_case.seed == 0) {
+    fill_yuy2_input(source.view());
+  } else {
+    fill_random(source.view(), test_case.seed);
+  }
   const auto source_snapshot = source.snapshot_active();
   apply_yuy2_reference(source.view().as_const(), expected.view());
 
@@ -533,7 +558,11 @@ void run_rgb_case_typed(const RgbExtractCase& test_case) {
   GuardedVideoBuffer<T> actual(test_case.width_pixels, test_case.height,
                                test_case.destination_pitch, 64);
 
-  fill_rgb_input(source.view(), test_case.width_pixels);
+  if (test_case.seed == 0) {
+    fill_rgb_input(source.view(), test_case.width_pixels);
+  } else {
+    fill_random(source.view(), test_case.seed);
+  }
   const auto source_snapshot = source.snapshot_active();
   apply_rgb_reference(test_case, source.view().as_const(), expected.view());
 
@@ -569,7 +598,11 @@ void run_rgb_noalpha_case_typed(const RgbNoAlphaExtractCase& test_case) {
   GuardedVideoBuffer<T> actual(test_case.width_pixels, test_case.height,
                                test_case.destination_pitch, 64);
 
-  fill_rgb_noalpha_input(source.view(), test_case.width_pixels);
+  if (test_case.seed == 0) {
+    fill_rgb_noalpha_input(source.view(), test_case.width_pixels);
+  } else {
+    fill_random(source.view(), test_case.seed);
+  }
   const auto source_snapshot = source.snapshot_active();
   apply_rgb_noalpha_reference(test_case, source.view().as_const(), expected.view());
 

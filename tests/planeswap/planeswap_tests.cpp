@@ -18,6 +18,14 @@ std::vector<Yuy2SwapCase> yuy2_cases() {
       make_yuy2_case(48, 5, 64, 64,
                      Variant<PlaneSwapFuncPtr>{"ssse3", yuy2_swap_ssse3, IsaRequirement::Ssse3},
                      hash),
+      make_yuy2_case(
+          80, 7, 96, 112,
+          Variant<PlaneSwapFuncPtr>{"sse2", yuy2_swap_sse2, IsaRequirement::Sse2},
+          "a2242d88e87142cc", 0xF30A5A01U),
+      make_yuy2_case(
+          80, 7, 96, 112,
+          Variant<PlaneSwapFuncPtr>{"ssse3", yuy2_swap_ssse3, IsaRequirement::Ssse3},
+          "a2242d88e87142cc", 0xF30A5A01U),
   };
 }
 
@@ -56,31 +64,41 @@ std::vector<Yuy2ToUvCase> yuy2_to_uv_cases() {
 }
 
 template <int Channel>
-void add_rgb32_variants(std::vector<RgbExtractCase>& cases, const char* hash) {
+void add_rgb32_variants(std::vector<RgbExtractCase>& cases, const char* hash,
+                        std::size_t width_pixels = 48, std::size_t height = 5,
+                        std::size_t source_pitch = 256, std::size_t destination_pitch = 64,
+                        std::uint32_t seed = 0) {
   cases.push_back(
-      make_rgb_case("Rgb32", Channel, 48, 5, 256, 64, 1, extract_packed_rgb32_channel_sse2<Channel>,
+      make_rgb_case("Rgb32", Channel, width_pixels, height, source_pitch, destination_pitch, 1,
+                    extract_packed_rgb32_channel_sse2<Channel>,
                     Variant<PlaneSwapFuncPtr>{"sse2", extract_packed_rgb32_channel_sse2<Channel>,
                                               IsaRequirement::Sse2},
-                    hash));
+                    hash, seed));
   cases.push_back(
-      make_rgb_case("Rgb32", Channel, 48, 5, 256, 64, 1, extract_packed_rgb32_channel_sse2<Channel>,
+      make_rgb_case("Rgb32", Channel, width_pixels, height, source_pitch, destination_pitch, 1,
+                    extract_packed_rgb32_channel_sse2<Channel>,
                     Variant<PlaneSwapFuncPtr>{"avx2", extract_packed_rgb32_channel_avx2<Channel>,
                                               IsaRequirement::Avx2},
-                    hash));
+                    hash, seed));
 }
 
 template <int Channel>
-void add_rgb64_variants(std::vector<RgbExtractCase>& cases, const char* hash) {
+void add_rgb64_variants(std::vector<RgbExtractCase>& cases, const char* hash,
+                        std::size_t width_pixels = 24, std::size_t height = 5,
+                        std::size_t source_pitch = 256, std::size_t destination_pitch = 64,
+                        std::uint32_t seed = 0) {
   cases.push_back(
-      make_rgb_case("Rgb64", Channel, 24, 5, 256, 64, 2, extract_packed_rgb64_channel_sse2<Channel>,
+      make_rgb_case("Rgb64", Channel, width_pixels, height, source_pitch, destination_pitch, 2,
+                    extract_packed_rgb64_channel_sse2<Channel>,
                     Variant<PlaneSwapFuncPtr>{"sse2", extract_packed_rgb64_channel_sse2<Channel>,
                                               IsaRequirement::Sse2},
-                    hash));
+                    hash, seed));
   cases.push_back(
-      make_rgb_case("Rgb64", Channel, 24, 5, 256, 64, 2, extract_packed_rgb64_channel_sse2<Channel>,
+      make_rgb_case("Rgb64", Channel, width_pixels, height, source_pitch, destination_pitch, 2,
+                    extract_packed_rgb64_channel_sse2<Channel>,
                     Variant<PlaneSwapFuncPtr>{"avx2", extract_packed_rgb64_channel_avx2<Channel>,
                                               IsaRequirement::Avx2},
-                    hash));
+                    hash, seed));
 }
 
 std::vector<RgbExtractCase> rgb_cases() {
@@ -93,6 +111,14 @@ std::vector<RgbExtractCase> rgb_cases() {
   add_rgb64_variants<1>(cases, "cb3d6055cea48481");
   add_rgb64_variants<2>(cases, "1a89f7aa82a78924");
   add_rgb64_variants<3>(cases, "4f5ec488a42ad558");
+  add_rgb32_variants<0>(cases, "5cbf32337ea80618", 48, 7, 224, 96, 0xF30A5A02U);
+  add_rgb32_variants<1>(cases, "ee7299fe18dcebb0", 48, 7, 224, 96, 0xF30A5A02U);
+  add_rgb32_variants<2>(cases, "34af9542d8d39af2", 48, 7, 224, 96, 0xF30A5A02U);
+  add_rgb32_variants<3>(cases, "50bf31616868b922", 48, 7, 224, 96, 0xF30A5A02U);
+  add_rgb64_variants<0>(cases, "e793c2d8482429fc", 24, 7, 224, 96, 0xF30A5A02U);
+  add_rgb64_variants<1>(cases, "45bbc7ac2b974972", 24, 7, 224, 96, 0xF30A5A02U);
+  add_rgb64_variants<2>(cases, "829a07e146fb7ade", 24, 7, 224, 96, 0xF30A5A02U);
+  add_rgb64_variants<3>(cases, "c17913142b387d16", 24, 7, 224, 96, 0xF30A5A02U);
   return cases;
 }
 
@@ -100,10 +126,11 @@ template <int Channel>
 void add_rgb_noalpha_case(std::vector<RgbNoAlphaExtractCase>& cases, const char* format,
                           std::size_t width_pixels, std::size_t source_pitch,
                           std::size_t destination_pitch, std::size_t bytes_per_channel,
-                          PlaneSwapFuncPtr function, const char* hash) {
+                          PlaneSwapFuncPtr function, const char* hash, std::size_t height = 5,
+                          std::uint32_t seed = 0) {
   cases.push_back(make_rgb_noalpha_case(
-      format, Channel, width_pixels, 5, source_pitch, destination_pitch, bytes_per_channel,
-      Variant<PlaneSwapFuncPtr>{"avx2", function, IsaRequirement::Avx2}, hash));
+      format, Channel, width_pixels, height, source_pitch, destination_pitch, bytes_per_channel,
+      Variant<PlaneSwapFuncPtr>{"avx2", function, IsaRequirement::Avx2}, hash, seed));
 }
 
 std::vector<RgbNoAlphaExtractCase> rgb_noalpha_cases() {
@@ -126,6 +153,24 @@ std::vector<RgbNoAlphaExtractCase> rgb_noalpha_cases() {
   add_rgb_noalpha_case<2>(cases, "Rgb48", 23, 192, 64, 2,
                           extract_packed_rgb_noalpha_channel_avx2<std::uint16_t, 2>,
                           "d22b81f3c24d3a57");
+  add_rgb_noalpha_case<0>(cases, "Rgb24", 35, 160, 96, 1,
+                          extract_packed_rgb_noalpha_channel_avx2<std::uint8_t, 0>,
+                          "36e2e03680f80fdc", 7, 0xF30A5A03U);
+  add_rgb_noalpha_case<1>(cases, "Rgb24", 35, 160, 96, 1,
+                          extract_packed_rgb_noalpha_channel_avx2<std::uint8_t, 1>,
+                          "19828922c8712cfe", 7, 0xF30A5A03U);
+  add_rgb_noalpha_case<2>(cases, "Rgb24", 35, 160, 96, 1,
+                          extract_packed_rgb_noalpha_channel_avx2<std::uint8_t, 2>,
+                          "75213d04cfeb0e1e", 7, 0xF30A5A03U);
+  add_rgb_noalpha_case<0>(cases, "Rgb48", 19, 144, 96, 2,
+                          extract_packed_rgb_noalpha_channel_avx2<std::uint16_t, 0>,
+                          "0625dffbc37144ad", 7, 0xF30A5A04U);
+  add_rgb_noalpha_case<1>(cases, "Rgb48", 19, 144, 96, 2,
+                          extract_packed_rgb_noalpha_channel_avx2<std::uint16_t, 1>,
+                          "cd52d5bbfb8575a4", 7, 0xF30A5A04U);
+  add_rgb_noalpha_case<2>(cases, "Rgb48", 19, 144, 96, 2,
+                          extract_packed_rgb_noalpha_channel_avx2<std::uint16_t, 2>,
+                          "9953546f9cdb50b3", 7, 0xF30A5A04U);
   return cases;
 }
 
