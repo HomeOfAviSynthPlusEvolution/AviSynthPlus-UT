@@ -409,7 +409,7 @@ std::vector<LayerRgb32LightenDarkenCase> layer_rgb32_lighten_darken_cases() {
   constexpr int full_level = 257;
   constexpr int partial_level = 173;
   constexpr int threshold = 5;
-  return {
+  std::vector<LayerRgb32LightenDarkenCase> cases{
       make_layer_rgb32_lighten_darken_case(
           LayerRgb32LightenDarkenMode::Lighten, width_pixels, height, destination_pitch,
           overlay_pitch, full_level, "Full257", threshold,
@@ -459,6 +459,29 @@ std::vector<LayerRgb32LightenDarkenCase> layer_rgb32_lighten_darken_cases() {
                                                    IsaRequirement::Avx2},
           "f9984ff13b4d9cd9"),
   };
+  for (const auto mode : {LayerRgb32LightenDarkenMode::Lighten,
+                          LayerRgb32LightenDarkenMode::Darken}) {
+    for (const auto& variant : {
+             Variant<LayerRgb32LightenDarkenFunction>{
+                 "sse2",
+                 mode == LayerRgb32LightenDarkenMode::Lighten
+                     ? layer_rgb32_lighten_darken_sse2<LIGHTEN>
+                     : layer_rgb32_lighten_darken_sse2<DARKEN>,
+                 IsaRequirement::Sse2},
+             Variant<LayerRgb32LightenDarkenFunction>{
+                 "avx2",
+                 mode == LayerRgb32LightenDarkenMode::Lighten
+                     ? layer_rgb32_lighten_darken_avx2<LIGHTEN>
+                     : layer_rgb32_lighten_darken_avx2<DARKEN>,
+                 IsaRequirement::Avx2}}) {
+      cases.push_back(make_layer_rgb32_lighten_darken_case(
+          mode, 13, 5, 64, 80, partial_level, "Partial173", threshold, variant,
+          mode == LayerRgb32LightenDarkenMode::Lighten ? "f9cf16b2acd1c59c"
+                                                       : "cdd15890bdbca3b5",
+          mode == LayerRgb32LightenDarkenMode::Lighten ? 0xF30F2004U : 0xF30F2005U));
+    }
+  }
+  return cases;
 }
 
 class LayerRgb32LightenDarkenKernels
