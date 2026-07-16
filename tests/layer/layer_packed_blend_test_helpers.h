@@ -4,6 +4,7 @@
 #include "filters/intel/layer_sse41.h"
 
 #include "support/comparators.h"
+#include "support/deterministic_data.h"
 #include "support/guarded_video_buffer.h"
 #include "support/stable_hash.h"
 #include "support/variant_registry.h"
@@ -35,6 +36,7 @@ struct LayerPackedBlendCase {
   std::string opacity_name;
   Variant<LayerPackedBlendFuncPtr> variant;
   std::string expected_hash;
+  std::uint32_t seed{};
   std::string name;
 };
 
@@ -60,8 +62,12 @@ inline std::string layer_packed_blend_case_name(const LayerPackedBlendCase& test
   stream << "Rgb32_" << (test_case.has_separate_mask ? "SeparateMask" : "OverlayAlpha") << "_Width"
          << test_case.width_pixels << "_Height" << test_case.height_pixels << "_DstPitch"
          << test_case.destination_pitch << "_OverlayPitch" << test_case.overlay_pitch
-         << "_MaskPitch" << test_case.mask_pitch << "_Opacity" << test_case.opacity_name
-         << "_PatternBoundaryAnchors_" << layer_packed_blend_variant_name(test_case.variant);
+         << "_MaskPitch" << test_case.mask_pitch << "_Opacity" << test_case.opacity_name;
+  if (test_case.seed != 0) {
+    stream << "_Seed" << std::uppercase << std::hex << test_case.seed;
+  }
+  stream << (test_case.seed == 0 ? "_PatternBoundaryAnchors_" : "_PatternFixedRandom_")
+         << layer_packed_blend_variant_name(test_case.variant);
   return stream.str();
 }
 
@@ -69,7 +75,7 @@ inline LayerPackedBlendCase make_layer_packed_blend_case(
     bool has_separate_mask, std::size_t width_pixels, std::size_t height_pixels,
     std::size_t destination_pitch, std::size_t overlay_pitch, std::size_t mask_pitch, int opacity,
     std::string opacity_name, Variant<LayerPackedBlendFuncPtr> variant,
-    std::string expected_hash = {}) {
+    std::string expected_hash = {}, std::uint32_t seed = 0) {
   if (destination_pitch < width_pixels * 4 || overlay_pitch < width_pixels * 4 ||
       mask_pitch < width_pixels) {
     throw std::invalid_argument("Layer packed blend pitches must contain the active row");
@@ -87,6 +93,7 @@ inline LayerPackedBlendCase make_layer_packed_blend_case(
                               std::move(opacity_name),
                               std::move(variant),
                               std::move(expected_hash),
+                              seed,
                               {}};
   result.name = layer_packed_blend_case_name(result);
   return result;
@@ -98,7 +105,14 @@ inline void PrintTo(const LayerPackedBlendCase& test_case, std::ostream* stream)
 
 inline void fill_layer_packed_blend_inputs(PlaneView<std::uint8_t> destination,
                                            PlaneView<std::uint8_t> overlay,
-                                           PlaneView<std::uint8_t> mask) {
+                                           PlaneView<std::uint8_t> mask,
+                                           std::uint32_t seed = 0) {
+  if (seed != 0) {
+    fill_random(destination, seed);
+    fill_random(overlay, seed ^ 0xA5A5A5A5U);
+    fill_random(mask, seed ^ 0x5A5A5A5AU);
+    return;
+  }
   constexpr std::array<std::uint8_t, 10> channels{0, 1, 2, 63, 64, 127, 128, 192, 254, 255};
   constexpr std::array<std::uint8_t, 8> alpha{0, 1, 17, 64, 127, 128, 239, 255};
   const auto width_pixels = destination.width() / 4;
@@ -153,7 +167,7 @@ inline void run_layer_packed_blend_case(const LayerPackedBlendCase& test_case) {
   GuardedVideoBuffer<std::uint8_t> actual(test_case.width_pixels * 4, test_case.height_pixels,
                                           test_case.destination_pitch, 32);
 
-  fill_layer_packed_blend_inputs(destination.view(), overlay.view(), mask.view());
+  fill_layer_packed_blend_inputs(destination.view(), overlay.view(), mask.view(), test_case.seed);
   for (std::size_t y = 0; y < destination.view().height(); ++y) {
     std::copy_n(destination.view().row(y), destination.view().width(), expected.view().row(y));
     std::copy_n(destination.view().row(y), destination.view().width(), actual.view().row(y));

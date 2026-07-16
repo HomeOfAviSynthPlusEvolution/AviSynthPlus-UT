@@ -725,6 +725,23 @@ std::vector<LayerPackedBlendCase> layer_packed_blend_cases() {
       cases.back().name = layer_packed_blend_case_name(cases.back());
     }
   }
+  for (const bool has_separate_mask : {false, true}) {
+    const auto expected_hash = has_separate_mask ? "5c65743a4a7186a1" : "ed9f1b3092c1d01d";
+    cases.push_back(make_layer_packed_blend_case(
+        has_separate_mask, 13, 7, 64, 80, 32, 173, "Partial173",
+        Variant<LayerPackedBlendFuncPtr>{"sse41", nullptr, IsaRequirement::Sse41}, expected_hash,
+        0xF30F1C01U));
+    get_layer_packedrgb_blend_functions_sse41(has_separate_mask, 8,
+                                              &cases.back().variant.function);
+    cases.back().name = layer_packed_blend_case_name(cases.back());
+    cases.push_back(make_layer_packed_blend_case(
+        has_separate_mask, 13, 7, 64, 80, 32, 173, "Partial173",
+        Variant<LayerPackedBlendFuncPtr>{"avx2", nullptr, IsaRequirement::Avx2}, expected_hash,
+        0xF30F1C01U));
+    get_layer_packedrgb_blend_functions_avx2(has_separate_mask, 8,
+                                             &cases.back().variant.function);
+    cases.back().name = layer_packed_blend_case_name(cases.back());
+  }
   return cases;
 }
 
