@@ -108,7 +108,7 @@ double extra_resize_kernel_support(ExtraResizeKernel kernel) {
 
 std::vector<TriangleTap> extra_resize_taps(ExtraResizeKernel kernel, int source_size,
                                            double crop_start, double crop_size, int target_size,
-                                           int target_index) {
+                                           int target_index, int fixed_point_scale = FPScale) {
   const double source_step = crop_size / static_cast<double>(target_size);
   const double filter_unit = std::max(source_step, 1.0);
   const double impulse_step = 1.0 / filter_unit;
@@ -140,8 +140,8 @@ std::vector<TriangleTap> extra_resize_taps(ExtraResizeKernel kernel, int source_
     accumulated += raw_coefficients[static_cast<std::size_t>(k)];
     if (source_index >= 0 && source_index <= last_source) {
       const double current = previous + accumulated / total;
-      const int current_fixed = static_cast<int>(current * FPScale + 0.5);
-      const int previous_fixed = static_cast<int>(previous * FPScale + 0.5);
+      const int current_fixed = static_cast<int>(current * fixed_point_scale + 0.5);
+      const int previous_fixed = static_cast<int>(previous * fixed_point_scale + 0.5);
       taps.push_back(TriangleTap{source_index, current_fixed - previous_fixed});
       previous = current;
       accumulated = 0.0;
@@ -150,8 +150,8 @@ std::vector<TriangleTap> extra_resize_taps(ExtraResizeKernel kernel, int source_
 
   if (accumulated != 0.0) {
     const double current = previous + accumulated / total;
-    const int current_fixed = static_cast<int>(current * FPScale + 0.5);
-    const int previous_fixed = static_cast<int>(previous * FPScale + 0.5);
+    const int current_fixed = static_cast<int>(current * fixed_point_scale + 0.5);
+    const int previous_fixed = static_cast<int>(previous * fixed_point_scale + 0.5);
     if (!taps.empty()) {
       taps.back().coefficient += current_fixed - previous_fixed;
     } else {
@@ -438,16 +438,33 @@ Pixel triangle_integer_sample(const PVideoFrame& source, int plane, bool horizon
   return static_cast<Pixel>(std::clamp(result, 0, limit));
 }
 
-std::uint8_t extra_resize_integer_sample(const PVideoFrame& source, int plane, bool horizontal,
-                                          int fixed_index, const std::vector<TriangleTap>& taps) {
-  int result = 1 << (FPScale8bits - 1);
+template <typename Pixel>
+Pixel extra_resize_integer_sample(const PVideoFrame& source, int plane, bool horizontal,
+                                  int fixed_index, const std::vector<TriangleTap>& taps,
+                                  int bits_per_pixel) {
+  constexpr int scale_bits =
+      sizeof(Pixel) == sizeof(std::uint8_t) ? FPScale8bits : FPScale16bits;
+  int result = 1 << (scale_bits - 1);
   for (const auto& tap : taps) {
-    const auto* row = source->GetReadPtr(plane) +
-                      (horizontal ? fixed_index : tap.source_index) * source->GetPitch(plane);
-    result += row[horizontal ? tap.source_index : fixed_index] * tap.coefficient;
+    const auto* row = reinterpret_cast<const Pixel*>(
+        source->GetReadPtr(plane) +
+        (horizontal ? fixed_index : tap.source_index) * source->GetPitch(plane));
+    int value = row[horizontal ? tap.source_index : fixed_index];
+    if constexpr (sizeof(Pixel) == sizeof(std::uint16_t)) {
+      if (bits_per_pixel == 16) {
+        value -= 32768;
+      }
+    }
+    result += value * tap.coefficient;
   }
-  result >>= FPScale8bits;
-  return static_cast<std::uint8_t>(std::clamp(result, 0, 255));
+  if constexpr (sizeof(Pixel) == sizeof(std::uint16_t)) {
+    if (bits_per_pixel == 16) {
+      result += 32768 << scale_bits;
+    }
+  }
+  result >>= scale_bits;
+  const int limit = (1 << bits_per_pixel) - 1;
+  return static_cast<Pixel>(std::clamp(result, 0, limit));
 }
 
 double plane_center_for_placement(int plane, int placement, const VideoInfo& vi, bool horizontal) {
@@ -654,7 +671,8 @@ void run_extra_resize_case(const ExtraResizeCase& test_case) {
       for (int index = 0; index < target_axis; ++index) {
         const auto taps = extra_resize_taps(test_case.kernel, source_axis, 0.0,
                                             static_cast<double>(source_axis), target_axis, index);
-        const auto expected = extra_resize_integer_sample(source, plane, horizontal, fixed, taps);
+        const auto expected =
+            extra_resize_integer_sample<std::uint8_t>(source, plane, horizontal, fixed, taps, 8);
         const int output_x = horizontal ? index : fixed;
         const int output_y = horizontal ? fixed : index;
         const auto* output_row = output->GetReadPtr(plane) + output_y * output->GetPitch(plane);
@@ -691,6 +709,82 @@ INSTANTIATE_TEST_SUITE_P(
         ExtraResizeCase{ExtraResizeKernel::Spline36, ResizeDirection::Vertical,
                         "Spline36Vertical"}),
     [](const ::testing::TestParamInfo<ExtraResizeCase>& info) { return info.param.name; });
+
+struct Spline36Rgb16Case {
+  ResizeDirection direction;
+  const char* name;
+};
+
+void PrintTo(const Spline36Rgb16Case& test_case, std::ostream* stream) {
+  *stream << test_case.name;
+}
+
+class Spline36Rgb16ResizeTest : public ::testing::TestWithParam<Spline36Rgb16Case> {};
+
+TEST_P(Spline36Rgb16ResizeTest, AppliesSpline36ReferenceToSixteenBitPlanarRgb) {
+  const auto& test_case = GetParam();
+  const bool horizontal = test_case.direction == ResizeDirection::Horizontal;
+  AviSynthEnvironment environment;
+  constexpr int source_width = 7;
+  constexpr int source_height = 5;
+  const int target_width = horizontal ? 4 : source_width;
+  const int target_height = horizontal ? source_height : 3;
+  const auto vi = make_video_info(
+      VideoInfoSpec{source_width, source_height, VideoInfo::CS_RGBP16, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_planar_resize_pattern<std::uint16_t>(source, vi);
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+  Spline36Filter filter_function;
+
+  PVideoFrame output;
+  if (horizontal) {
+    FilteredResizeH filter(clip, 0.0, static_cast<double>(source_width), target_width,
+                           &filter_function, true, AVS_CHROMA_UNUSED, environment.get());
+    EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+    output = filter.GetFrame(0, environment.get());
+  } else {
+    FilteredResizeV filter(clip, 0.0, static_cast<double>(source_height), target_height,
+                           &filter_function, true, AVS_CHROMA_UNUSED, environment.get());
+    EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+    output = filter.GetFrame(0, environment.get());
+  }
+
+  for (const int plane : video_frame_planes(vi)) {
+    const int source_axis = horizontal ? source->GetRowSize(plane) / sizeof(std::uint16_t)
+                                       : source->GetHeight(plane);
+    const int target_axis = horizontal ? output->GetRowSize(plane) / sizeof(std::uint16_t)
+                                       : output->GetHeight(plane);
+    const int fixed_count = horizontal ? output->GetHeight(plane)
+                                       : output->GetRowSize(plane) / sizeof(std::uint16_t);
+    for (int fixed = 0; fixed < fixed_count; ++fixed) {
+      for (int index = 0; index < target_axis; ++index) {
+        const auto taps = extra_resize_taps(ExtraResizeKernel::Spline36, source_axis, 0.0,
+                                            static_cast<double>(source_axis), target_axis, index,
+                                            FPScale16);
+        const auto expected = extra_resize_integer_sample<std::uint16_t>(
+            source, plane, horizontal, fixed, taps, 16);
+        const int output_x = horizontal ? index : fixed;
+        const int output_y = horizontal ? fixed : index;
+        const auto* output_row = reinterpret_cast<const std::uint16_t*>(
+            output->GetReadPtr(plane) + output_y * output->GetPitch(plane));
+        EXPECT_EQ(output_row[output_x], expected)
+            << "case=" << test_case.name << " plane=" << plane << " x=" << output_x
+            << " y=" << output_y;
+      }
+    }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    SixteenBitPlanarRgb, Spline36Rgb16ResizeTest,
+    ::testing::Values(Spline36Rgb16Case{ResizeDirection::Horizontal, "Spline36Horizontal"},
+                      Spline36Rgb16Case{ResizeDirection::Vertical, "Spline36Vertical"}),
+    [](const ::testing::TestParamInfo<Spline36Rgb16Case>& info) { return info.param.name; });
 
 template <typename Pixel>
 void fill_packed_resize_pattern(PVideoFrame& frame, int components) {
