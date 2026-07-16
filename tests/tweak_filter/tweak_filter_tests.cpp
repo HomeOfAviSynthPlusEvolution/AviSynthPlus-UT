@@ -26,6 +26,7 @@ using avsut::test::AviSynthEnvironment;
 using avsut::test::fill_plane_full_pitch;
 using avsut::test::FrameSnapshot;
 using avsut::test::make_video_info;
+using avsut::test::read_frame_plane_active;
 using avsut::test::StaticFrameClip;
 using avsut::test::VideoInfoSpec;
 using avsut::test::write_frame_plane;
@@ -102,6 +103,49 @@ TEST(TweakFilter, AppliesEightBitLumaBrightnessWithoutTouchingSource) {
   EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
   EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
 }
+
+class NeutralTweakTest : public ::testing::TestWithParam<bool> {};
+
+TEST_P(NeutralTweakTest, PreservesAllYuv444ActivePlanes) {
+  const bool realcalc = GetParam();
+  AviSynthEnvironment environment;
+  constexpr int width = 8;
+  constexpr int height = 2;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_YV24, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(source, 0x61, PLANAR_Y);
+  fill_plane_full_pitch(source, 0x72, PLANAR_U);
+  fill_plane_full_pitch(source, 0x83, PLANAR_V);
+  const std::array<std::uint8_t, 8> y_values{0, 1, 16, 64, 128, 200, 235, 255};
+  const std::array<std::uint8_t, 8> u_values{0, 17, 64, 96, 128, 160, 224, 255};
+  const std::array<std::uint8_t, 8> v_values{255, 211, 173, 128, 97, 53, 19, 0};
+  write_values(source, PLANAR_Y, y_values);
+  write_values(source, PLANAR_U, u_values);
+  write_values(source, PLANAR_V, v_values);
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  Tweak filter(clip, 0.0, 1.0, 0.0, 1.0, false, 0.0, 360.0, 150.0, 0.0, 0.0, false,
+               realcalc, 1.0, environment.get());
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    EXPECT_EQ(read_frame_plane_active<std::uint8_t>(output, plane),
+              read_frame_plane_active<std::uint8_t>(source, plane))
+        << "realcalc=" << realcalc << " plane=" << plane;
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Implementation, NeutralTweakTest, ::testing::Values(false, true),
+    [](const ::testing::TestParamInfo<bool>& info) {
+      return info.param ? "VariantRealcalc" : "VariantLut";
+    });
 
 TEST(TweakFilter, AppliesRealCalcToSixteenBitYuv420LumaAndChroma) {
   AviSynthEnvironment environment;
