@@ -376,6 +376,15 @@ std::vector<ResizeVerticalFloatCase> resize_vertical_float_cases() {
           Variant<ResizeFunction>{"avx2_fma_base", resize_v_avx2_planar_float,
                                   IsaRequirement::Avx2Fma}),
       make_resize_vertical_float_case(
+          37, 9, 6, 192, 192,
+          Variant<ResizeFunction>{"sse2", resize_v_sse2_planar_float, IsaRequirement::Sse2},
+          0xF30D3701U),
+      make_resize_vertical_float_case(
+          37, 9, 6, 192, 192,
+          Variant<ResizeFunction>{"avx2_fma", resize_v_avx2_planar_float_w_sr,
+                                  IsaRequirement::Avx2Fma},
+          0xF30D3701U),
+      make_resize_vertical_float_case(
           64, 7, 5, 320, 320,
           Variant<ResizeFunction>{"avx512_base", resize_v_avx512_planar_float_w_sr,
                                   IsaRequirement::Avx512Base}),
@@ -391,6 +400,15 @@ std::vector<ResizeHorizontalFloatCase> resize_horizontal_float_cases() {
           48, 32, 5, 256, 128,
           Variant<ResizeFunction>{"avx2_fma", resizer_h_avx2_generic_float_pix16_sub4_ks_4_8_16,
                                   IsaRequirement::Avx2Fma}),
+      make_resize_horizontal_float_case(
+          37, 23, 4, 192, 128,
+          Variant<ResizeFunction>{"ssse3", resizer_h_ssse3_generic_float, IsaRequirement::Ssse3},
+          ResizeFilter::Triangle, 0, false, 0xF30D2302U),
+      make_resize_horizontal_float_case(
+          37, 23, 4, 192, 192,
+          Variant<ResizeFunction>{"avx2_fma", resizer_h_avx2_generic_float_pix16_sub4_ks_4_8_16,
+                                  IsaRequirement::Avx2Fma},
+          ResizeFilter::Triangle, 0, false, 0xF30D2302U, 64),
       make_resize_horizontal_float_case(
           64, 64, 5, 320, 320,
           Variant<ResizeFunction>{"avx2_fma_gather_permutex_ks4",
