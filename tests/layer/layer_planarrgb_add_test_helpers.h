@@ -4,6 +4,7 @@
 #include "filters/intel/layer_sse41.h"
 
 #include "support/comparators.h"
+#include "support/deterministic_data.h"
 #include "support/guarded_video_buffer.h"
 #include "support/stable_hash.h"
 #include "support/variant_registry.h"
@@ -38,6 +39,7 @@ struct LayerPlanarRgbAddCase {
   std::string opacity_name;
   Variant<LayerPlanarRgbAddFuncPtr> variant;
   std::string expected_hash;
+  std::uint32_t seed{};
   std::string name;
 };
 
@@ -64,7 +66,11 @@ inline std::string layer_planarrgb_add_case_name(const LayerPlanarRgbAddCase& te
          << test_case.bits_per_pixel << "_Width" << test_case.width_samples << "_Height"
          << test_case.height << "_DstPitch" << test_case.destination_pitch << "_OverlayPitch"
          << test_case.overlay_pitch << "_MaskPitch" << test_case.mask_pitch << "_Opacity"
-         << test_case.opacity_name << "_PatternBoundaryAnchors_"
+         << test_case.opacity_name;
+  if (test_case.seed != 0) {
+    stream << "_Seed" << std::uppercase << std::hex << test_case.seed;
+  }
+  stream << (test_case.seed == 0 ? "_PatternBoundaryAnchors_" : "_PatternFixedRandom_")
          << layer_planarrgb_add_variant_name(test_case.variant);
   return stream.str();
 }
@@ -87,7 +93,7 @@ inline LayerPlanarRgbAddCase make_layer_planarrgb_add_case(
     bool blend_alpha, int bits_per_pixel, std::size_t width_samples, std::size_t height,
     std::size_t destination_pitch, std::size_t overlay_pitch, std::size_t mask_pitch, int opacity,
     std::string opacity_name, std::string variant_name, IsaRequirement requirement, bool avx2,
-    std::string expected_hash = {}) {
+    std::string expected_hash = {}, std::uint32_t seed = 0) {
   LayerPlanarRgbAddCase result{
       blend_alpha,
       bits_per_pixel,
@@ -102,6 +108,7 @@ inline LayerPlanarRgbAddCase make_layer_planarrgb_add_case(
           std::move(variant_name), layer_planarrgb_add_function(avx2, blend_alpha, bits_per_pixel),
           requirement},
       std::move(expected_hash),
+      seed,
       {}};
   result.name = layer_planarrgb_add_case_name(result);
   return result;
@@ -123,6 +130,18 @@ void fill_layer_planarrgb_add_inputs(
     std::array<std::unique_ptr<GuardedVideoBuffer<T>>, 4>& overlay, GuardedVideoBuffer<T>& mask) {
   const auto plane_count = test_case.blend_alpha ? std::size_t{4} : std::size_t{3};
   const auto max_value = (std::uint32_t{1} << test_case.bits_per_pixel) - 1U;
+  if (test_case.seed != 0) {
+    for (std::size_t plane = 0; plane < plane_count; ++plane) {
+      const auto plane_seed =
+          test_case.seed ^ (static_cast<std::uint32_t>(plane + 1) * 0x10001U);
+      fill_random(destination[plane]->view(), plane_seed);
+      fill_random(overlay[plane]->view(),
+                  test_case.seed ^ 0xA5A5A5A5U ^
+                      (static_cast<std::uint32_t>(plane + 1) * 0x10001U));
+    }
+    fill_random(mask.view(), test_case.seed ^ 0x5A5A5A5AU);
+    return;
+  }
   constexpr std::array<std::uint32_t, 10> anchors{0U,   1U,   17U,  63U,  127U,
                                                   128U, 191U, 254U, 255U, 42U};
   for (std::size_t plane = 0; plane < plane_count; ++plane) {

@@ -802,6 +802,18 @@ std::vector<LayerPlanarRgbAddCase> layer_planarrgb_add_cases() {
       }
     }
   }
+  cases.push_back(make_layer_planarrgb_add_case(
+      true, 8, 37, 3, 64, 80, 64, 153, "Partial153", "sse41", IsaRequirement::Sse41, false,
+      "3cd5bd02a423c7ce", 0xF30F1D01U));
+  cases.push_back(make_layer_planarrgb_add_case(
+      true, 8, 37, 3, 64, 80, 64, 153, "Partial153", "avx2", IsaRequirement::Avx2, true,
+      "3cd5bd02a423c7ce", 0xF30F1D01U));
+  cases.push_back(make_layer_planarrgb_add_case(
+      false, 16, 19, 3, 96, 112, 96, 39321, "Partial39321", "sse41", IsaRequirement::Sse41,
+      false, "e38ad4005cdc3354", 0xF30F1D02U));
+  cases.push_back(make_layer_planarrgb_add_case(
+      false, 16, 19, 3, 96, 112, 96, 39321, "Partial39321", "avx2", IsaRequirement::Avx2, true,
+      "e38ad4005cdc3354", 0xF30F1D02U));
   return cases;
 }
 
