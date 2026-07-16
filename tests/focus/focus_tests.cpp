@@ -26,6 +26,14 @@ std::vector<FocusHorizontal8Case> focus_horizontal8_cases() {
         Variant<FocusHorizontal8FuncPtr>{"avx2", af_horizontal_planar_avx2, IsaRequirement::Avx2},
         amount == kBlurAmount ? "aadf7fda96287d75" : "c68060bea1c036ea"));
   }
+  cases.push_back(make_focus_horizontal8_case(
+      53, 7, 80, kBlurAmount,
+      Variant<FocusHorizontal8FuncPtr>{"sse2", af_horizontal_planar_sse2, IsaRequirement::Sse2},
+      "99a2f1d81fb25341", 0xF30F0C01U));
+  cases.push_back(make_focus_horizontal8_case(
+      53, 7, 96, kBlurAmount,
+      Variant<FocusHorizontal8FuncPtr>{"avx2", af_horizontal_planar_avx2, IsaRequirement::Avx2},
+      "99a2f1d81fb25341", 0xF30F0C01U));
   return cases;
 }
 
@@ -48,6 +56,21 @@ std::vector<FocusHorizontal16Case> focus_horizontal16_cases() {
                                           IsaRequirement::Avx2},
         amount == kBlurAmount ? "7b8dd1fffa3dfcc9" : "b48673d2a3f16b46"));
   }
+  cases.push_back(make_focus_horizontal16_case(
+      27, 7, 80, kBlurAmount, 16,
+      Variant<FocusHorizontal16FuncPtr>{"sse2", af_horizontal_planar_uint16_t_sse2,
+                                        IsaRequirement::Sse2},
+      "7d51bef45b4b595c", 0xF30F0C02U));
+  cases.push_back(make_focus_horizontal16_case(
+      27, 7, 80, kBlurAmount, 16,
+      Variant<FocusHorizontal16FuncPtr>{"sse41", af_horizontal_planar_uint16_t_sse41,
+                                        IsaRequirement::Sse41},
+      "7d51bef45b4b595c", 0xF30F0C02U));
+  cases.push_back(make_focus_horizontal16_case(
+      27, 7, 96, kBlurAmount, 16,
+      Variant<FocusHorizontal16FuncPtr>{"avx2", af_horizontal_planar_uint16_t_avx2,
+                                        IsaRequirement::Avx2},
+      "7d51bef45b4b595c", 0xF30F0C02U));
   return cases;
 }
 
@@ -63,6 +86,16 @@ std::vector<FocusVertical8Case> focus_vertical8_cases() {
         Variant<FocusVertical8FuncPtr>{"avx2", af_vertical_avx2, IsaRequirement::Avx2},
         amount == kBlurAmount ? "cc86e5ffb527ad5c" : "85c6e277c2156823"));
   }
+  cases.push_back(make_focus_vertical8_case(
+      64, 7, 80, kBlurAmount,
+      Variant<FocusVertical8FuncPtr>{"sse2", af_vertical_sse2, IsaRequirement::Sse2},
+      "72dcbb0b2bef45b8",
+      0xF30F0C03U));
+  cases.push_back(make_focus_vertical8_case(
+      64, 7, 96, kBlurAmount,
+      Variant<FocusVertical8FuncPtr>{"avx2", af_vertical_avx2, IsaRequirement::Avx2},
+      "72dcbb0b2bef45b8",
+      0xF30F0C03U));
   return cases;
 }
 
@@ -82,6 +115,18 @@ std::vector<FocusVertical16Case> focus_vertical16_cases() {
         Variant<FocusVertical16FuncPtr>{"avx2", af_vertical_uint16_t_avx2, IsaRequirement::Avx2},
         amount == kBlurAmount ? "34d727de54e3bf82" : "ac8dcc0705230d02"));
   }
+  cases.push_back(make_focus_vertical16_case(
+      32, 7, 80, kBlurAmount,
+      Variant<FocusVertical16FuncPtr>{"sse2", af_vertical_uint16_t_sse2, IsaRequirement::Sse2},
+      "a85909e830dc36b2", 0xF30F0C04U));
+  cases.push_back(make_focus_vertical16_case(
+      32, 7, 80, kBlurAmount,
+      Variant<FocusVertical16FuncPtr>{"sse41", af_vertical_uint16_t_sse41, IsaRequirement::Sse41},
+      "a85909e830dc36b2", 0xF30F0C04U));
+  cases.push_back(make_focus_vertical16_case(
+      32, 7, 96, kBlurAmount,
+      Variant<FocusVertical16FuncPtr>{"avx2", af_vertical_uint16_t_avx2, IsaRequirement::Avx2},
+      "a85909e830dc36b2", 0xF30F0C04U));
   return cases;
 }
 

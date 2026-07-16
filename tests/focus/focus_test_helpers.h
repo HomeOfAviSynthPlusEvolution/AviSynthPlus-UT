@@ -4,6 +4,7 @@
 #include "filters/intel/focus_sse.h"
 
 #include "support/comparators.h"
+#include "support/deterministic_data.h"
 #include "support/guarded_video_buffer.h"
 #include "support/stable_hash.h"
 #include "support/variant_registry.h"
@@ -36,6 +37,7 @@ struct FocusHorizontal8Case {
   std::size_t amount{};
   Variant<FocusHorizontal8FuncPtr> variant;
   std::string expected_hash;
+  std::uint32_t seed{};
   std::string name;
 };
 
@@ -47,6 +49,7 @@ struct FocusHorizontal16Case {
   int bits_per_pixel{};
   Variant<FocusHorizontal16FuncPtr> variant;
   std::string expected_hash;
+  std::uint32_t seed{};
   std::string name;
 };
 
@@ -57,6 +60,7 @@ struct FocusVertical8Case {
   std::size_t amount{};
   Variant<FocusVertical8FuncPtr> variant;
   std::string expected_hash;
+  std::uint32_t seed{};
   std::string name;
 };
 
@@ -67,6 +71,7 @@ struct FocusVertical16Case {
   std::size_t amount{};
   Variant<FocusVertical16FuncPtr> variant;
   std::string expected_hash;
+  std::uint32_t seed{};
   std::string name;
 };
 
@@ -90,20 +95,30 @@ inline std::string focus_variant_name(const Variant<Function>& variant) {
 template <typename Function>
 inline std::string focus_case_name(const char* format, std::size_t width, std::size_t height,
                                    std::size_t pitch, std::size_t amount,
-                                   const Variant<Function>& variant) {
+                                   const Variant<Function>& variant, std::uint32_t seed) {
   std::ostringstream stream;
   stream << format << "_Width" << width << "_Height" << height << "_Pitch" << pitch << "_Amount"
-         << amount << "_PatternBoundaryRamp_" << focus_variant_name(variant);
+         << amount;
+  if (seed != 0) {
+    stream << "_Seed" << std::uppercase << std::hex << seed;
+  }
+  stream << (seed == 0 ? "_PatternBoundaryRamp_" : "_PatternFixedRandom_")
+         << focus_variant_name(variant);
   return stream.str();
 }
 
 inline std::string focus_horizontal16_case_name(std::size_t width, std::size_t height,
                                                 std::size_t pitch, std::size_t amount,
                                                 int bits_per_pixel,
-                                                const Variant<FocusHorizontal16FuncPtr>& variant) {
+                                                const Variant<FocusHorizontal16FuncPtr>& variant,
+                                                std::uint32_t seed) {
   std::ostringstream stream;
   stream << "Plane16Horizontal_Width" << width << "_Height" << height << "_Pitch" << pitch
-         << "_Amount" << amount << "_Bits" << bits_per_pixel << "_PatternBoundaryRamp_"
+         << "_Amount" << amount << "_Bits" << bits_per_pixel;
+  if (seed != 0) {
+    stream << "_Seed" << std::uppercase << std::hex << seed;
+  }
+  stream << (seed == 0 ? "_PatternBoundaryRamp_" : "_PatternFixedRandom_")
          << focus_variant_name(variant);
   return stream.str();
 }
@@ -111,11 +126,12 @@ inline std::string focus_horizontal16_case_name(std::size_t width, std::size_t h
 inline FocusHorizontal8Case make_focus_horizontal8_case(std::size_t width, std::size_t height,
                                                         std::size_t pitch, std::size_t amount,
                                                         Variant<FocusHorizontal8FuncPtr> variant,
-                                                        std::string expected_hash) {
+                                                        std::string expected_hash,
+                                                        std::uint32_t seed = 0) {
   FocusHorizontal8Case result{
-      width, height, pitch, amount, std::move(variant), std::move(expected_hash), {}};
+      width, height, pitch, amount, std::move(variant), std::move(expected_hash), seed, {}};
   result.name = focus_case_name("Plane8Horizontal", result.width, result.height, result.pitch,
-                                result.amount, result.variant);
+                                result.amount, result.variant, result.seed);
   return result;
 }
 
@@ -123,34 +139,38 @@ inline FocusHorizontal16Case make_focus_horizontal16_case(std::size_t width, std
                                                           std::size_t pitch, std::size_t amount,
                                                           int bits_per_pixel,
                                                           Variant<FocusHorizontal16FuncPtr> variant,
-                                                          std::string expected_hash) {
+                                                          std::string expected_hash,
+                                                          std::uint32_t seed = 0) {
   FocusHorizontal16Case result{
       width, height, pitch, amount, bits_per_pixel, std::move(variant), std::move(expected_hash),
-      {}};
+      seed, {}};
   result.name = focus_horizontal16_case_name(result.width, result.height, result.pitch,
-                                             result.amount, result.bits_per_pixel, result.variant);
+                                             result.amount, result.bits_per_pixel, result.variant,
+                                             result.seed);
   return result;
 }
 
 inline FocusVertical8Case make_focus_vertical8_case(std::size_t width, std::size_t height,
                                                     std::size_t pitch, std::size_t amount,
                                                     Variant<FocusVertical8FuncPtr> variant,
-                                                    std::string expected_hash) {
+                                                    std::string expected_hash,
+                                                    std::uint32_t seed = 0) {
   FocusVertical8Case result{
-      width, height, pitch, amount, std::move(variant), std::move(expected_hash), {}};
+      width, height, pitch, amount, std::move(variant), std::move(expected_hash), seed, {}};
   result.name = focus_case_name("Plane8Vertical", result.width, result.height, result.pitch,
-                                result.amount, result.variant);
+                                result.amount, result.variant, result.seed);
   return result;
 }
 
 inline FocusVertical16Case make_focus_vertical16_case(std::size_t width, std::size_t height,
                                                       std::size_t pitch, std::size_t amount,
                                                       Variant<FocusVertical16FuncPtr> variant,
-                                                      std::string expected_hash) {
+                                                      std::string expected_hash,
+                                                      std::uint32_t seed = 0) {
   FocusVertical16Case result{
-      width, height, pitch, amount, std::move(variant), std::move(expected_hash), {}};
+      width, height, pitch, amount, std::move(variant), std::move(expected_hash), seed, {}};
   result.name = focus_case_name("Plane16Vertical", result.width, result.height, result.pitch,
-                                result.amount, result.variant);
+                                result.amount, result.variant, result.seed);
   return result;
 }
 
@@ -171,8 +191,12 @@ inline void PrintTo(const FocusVertical16Case& test_case, std::ostream* stream) 
 }
 
 template <typename T>
-void fill_focus_input(PlaneView<T> view) {
+void fill_focus_input(PlaneView<T> view, std::uint32_t seed = 0) {
   static_assert(std::is_integral_v<T>);
+  if (seed != 0) {
+    fill_random(view, seed);
+    return;
+  }
   const auto max_value =
       static_cast<std::uint32_t>(std::numeric_limits<std::remove_const_t<T>>::max());
   const std::array<std::uint32_t, 10> anchors{0U,
@@ -259,7 +283,7 @@ inline void run_focus_horizontal8_case(const FocusHorizontal8Case& test_case) {
   GuardedVideoBuffer<std::uint8_t> input(test_case.width, test_case.height, test_case.pitch, 32);
   GuardedVideoBuffer<std::uint8_t> actual(test_case.width, test_case.height, test_case.pitch, 32);
   GuardedVideoBuffer<std::uint8_t> expected(test_case.width, test_case.height, test_case.pitch, 32);
-  fill_focus_input(input.view());
+  fill_focus_input(input.view(), test_case.seed);
   copy_focus_active(input.view().as_const(), actual.view());
   copy_focus_active(input.view().as_const(), expected.view());
   apply_focus_horizontal_reference(input.view().as_const(), expected.view(), test_case.amount);
@@ -283,7 +307,7 @@ inline void run_focus_horizontal16_case(const FocusHorizontal16Case& test_case) 
   GuardedVideoBuffer<std::uint16_t> actual(test_case.width, test_case.height, test_case.pitch, 32);
   GuardedVideoBuffer<std::uint16_t> expected(test_case.width, test_case.height, test_case.pitch,
                                              32);
-  fill_focus_input(input.view());
+  fill_focus_input(input.view(), test_case.seed);
   copy_focus_active(input.view().as_const(), actual.view());
   copy_focus_active(input.view().as_const(), expected.view());
   apply_focus_horizontal_reference(input.view().as_const(), expected.view(), test_case.amount);
@@ -309,7 +333,7 @@ void run_focus_vertical_case(const Case& test_case, Function function) {
   GuardedVideoBuffer<T> actual(test_case.width, test_case.height, test_case.pitch, 32);
   GuardedVideoBuffer<T> expected(test_case.width, test_case.height, test_case.pitch, 32);
   GuardedVideoBuffer<std::uint8_t> line_buffer(active_row_bytes, 1, active_row_bytes, 32);
-  fill_focus_input(actual.view());
+  fill_focus_input(actual.view(), test_case.seed);
   copy_focus_active(actual.view().as_const(), expected.view());
   apply_focus_vertical_reference(actual.view().as_const(), expected.view(), test_case.amount);
   std::copy_n(reinterpret_cast<const std::uint8_t*>(actual.view().data()), active_row_bytes,
