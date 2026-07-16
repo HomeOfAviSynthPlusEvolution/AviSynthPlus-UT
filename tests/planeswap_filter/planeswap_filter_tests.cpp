@@ -301,6 +301,12 @@ TEST(CombinePlanesFilter, RejectsInvalidTargetPlaneCountAndDimensionsBeforeFrame
 
   EXPECT_THROW(
       {
+        CombinePlanes filter(source_clip, PClip(), PClip(), PClip(), PClip(), "YQ", "", "",
+                             environment.get());
+      },
+      AvisynthError);
+  EXPECT_THROW(
+      {
         CombinePlanes filter(source_clip, source_clip, source_clip, PClip(), PClip(), "YU", "", "",
                              environment.get());
       },

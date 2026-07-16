@@ -257,6 +257,40 @@ TEST(ResetMaskFilter, UsesOpacityForPlanarYuvaAlpha) {
   EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
 }
 
+TEST(ResetMaskFilter, RejectsMissingAlphaAndNegativeMaskBeforeFrameRequest) {
+  AviSynthEnvironment environment;
+  constexpr int width = 4;
+  constexpr int height = 2;
+  const auto no_alpha_vi =
+      make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_YV24, 1, 25, 1});
+  const auto alpha_vi =
+      make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_YUVA444, 1, 25, 1});
+  PVideoFrame no_alpha = environment.get()->NewVideoFrame(no_alpha_vi);
+  PVideoFrame alpha = environment.get()->NewVideoFrame(alpha_vi);
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    fill_plane_full_pitch(no_alpha, static_cast<std::uint8_t>(0x51 + plane), plane);
+    fill_plane_full_pitch(alpha, static_cast<std::uint8_t>(0x61 + plane), plane);
+  }
+  fill_plane_full_pitch(alpha, 0xa4, PLANAR_A);
+  const auto no_alpha_before = FrameSnapshot::capture(no_alpha, no_alpha_vi);
+  const auto alpha_before = FrameSnapshot::capture(alpha, alpha_vi);
+  auto* no_alpha_clip_impl = new StaticFrameClip(no_alpha_vi, no_alpha);
+  auto* alpha_clip_impl = new StaticFrameClip(alpha_vi, alpha);
+  const PClip no_alpha_clip(no_alpha_clip_impl);
+  const PClip alpha_clip(alpha_clip_impl);
+
+  EXPECT_THROW(
+      { ResetMask filter(no_alpha_clip, AVSValue(), AVSValue(), environment.get()); },
+      AvisynthError);
+  EXPECT_THROW(
+      { ResetMask filter(alpha_clip, AVSValue(-1), AVSValue(), environment.get()); },
+      AvisynthError);
+  EXPECT_TRUE(no_alpha_clip_impl->frame_requests().empty());
+  EXPECT_TRUE(alpha_clip_impl->frame_requests().empty());
+  EXPECT_EQ(FrameSnapshot::capture(no_alpha, no_alpha_vi), no_alpha_before);
+  EXPECT_EQ(FrameSnapshot::capture(alpha, alpha_vi), alpha_before);
+}
+
 TEST(ShowChannelFilter, ExtractsPackedRedToYuvaAndPreservesAlpha) {
   AviSynthEnvironment environment;
   constexpr int width = 5;

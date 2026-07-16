@@ -433,4 +433,50 @@ TEST(Histogram, AmplifiesLumaAndRestoresNeutralChromaAndAlpha) {
   EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
 }
 
+TEST(Histogram, RejectsInvalidDisplayBitsBeforeFrameRequest) {
+  AviSynthEnvironment environment;
+  const auto vi = make_video_info(VideoInfoSpec{4, 2, VideoInfo::CS_YV24, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(source, 0xa1, PLANAR_Y);
+  fill_plane_full_pitch(source, 0xb2, PLANAR_U);
+  fill_plane_full_pitch(source, 0xc3, PLANAR_V);
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  EXPECT_THROW(
+      {
+        Histogram filter(clip, Histogram::ModeColor2, AVSValue(), 7, false, false, nullptr,
+                         no_color_overlays(), environment.get());
+      },
+      AvisynthError);
+  EXPECT_THROW(
+      {
+        Histogram filter(clip, Histogram::ModeColor2, AVSValue(), 13, false, false, nullptr,
+                         no_color_overlays(), environment.get());
+      },
+      AvisynthError);
+  EXPECT_TRUE(source_clip->frame_requests().empty());
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+TEST(Histogram, RejectsColor2ForGreyscaleAfterPropertyProbe) {
+  AviSynthEnvironment environment;
+  const auto vi = make_video_info(VideoInfoSpec{4, 2, VideoInfo::CS_Y8, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(source, 0xd4, PLANAR_Y);
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  EXPECT_THROW(
+      {
+        Histogram filter(clip, Histogram::ModeColor2, AVSValue(), 8, false, false, nullptr,
+                         no_color_overlays(), environment.get());
+      },
+      AvisynthError);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
 }  // namespace

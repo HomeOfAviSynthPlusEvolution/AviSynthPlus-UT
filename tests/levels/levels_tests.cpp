@@ -324,4 +324,52 @@ TEST(MaskHsFilter, ProducesSubsampledMaskGeometryForYuv420) {
   EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
 }
 
+struct MaskHsInvalidCase {
+  const char* name;
+  double start_hue;
+  double end_hue;
+  double max_sat;
+  double min_sat;
+};
+
+class MaskHsInvalidTest : public ::testing::TestWithParam<MaskHsInvalidCase> {};
+
+TEST_P(MaskHsInvalidTest, RejectsOutOfRangeConstructionArgumentsBeforeFrameRequest) {
+  const auto& test_case = GetParam();
+  AviSynthEnvironment environment;
+  const auto vi = make_video_info(VideoInfoSpec{4, 2, VideoInfo::CS_YV24, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(source, 0x71, PLANAR_Y);
+  fill_plane_full_pitch(source, 0x82, PLANAR_U);
+  fill_plane_full_pitch(source, 0x93, PLANAR_V);
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  EXPECT_THROW(
+      {
+        MaskHS filter(clip, test_case.start_hue, test_case.end_hue, test_case.max_sat,
+                      test_case.min_sat, false, true, environment.get());
+      },
+      AvisynthError)
+      << "case=" << test_case.name;
+  EXPECT_TRUE(source_clip->frame_requests().empty()) << "case=" << test_case.name;
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before) << "case=" << test_case.name;
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    ArgumentBounds, MaskHsInvalidTest,
+    ::testing::Values(
+        MaskHsInvalidCase{"StartBelowZero", -0.1, 60.0, 80.0, 20.0},
+        MaskHsInvalidCase{"StartAt360", 360.0, 60.0, 80.0, 20.0},
+        MaskHsInvalidCase{"EndAtZero", 0.0, 0.0, 80.0, 20.0},
+        MaskHsInvalidCase{"EndAbove360", 0.0, 360.1, 80.0, 20.0},
+        MaskHsInvalidCase{"MinNotBelowMax", 0.0, 60.0, 20.0, 80.0},
+        MaskHsInvalidCase{"MinBelowZero", 0.0, 60.0, 80.0, -0.1},
+        MaskHsInvalidCase{"MinAt150", 0.0, 60.0, 80.0, 150.0},
+        MaskHsInvalidCase{"MaxAbove150", 0.0, 60.0, 150.1, 20.0}),
+    [](const ::testing::TestParamInfo<MaskHsInvalidCase>& info) {
+      return info.param.name;
+    });
+
 }  // namespace
