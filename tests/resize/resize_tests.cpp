@@ -43,6 +43,22 @@ std::vector<ResizeVertical8Case> resize_vertical8_cases() {
           "70ed9a0fd3bcf668",
           0xF30D0801U),
       make_resize_vertical8_case(
+          64, 9, 6, 96, 128,
+          Variant<ResizeFunction>{"sse2", resize_v_sse2_planar, IsaRequirement::Sse2},
+          "f78c70f9dab9cd8d", 0xF30D0806U, ResizeFilter::Lanczos6),
+      make_resize_vertical8_case(
+          64, 9, 6, 96, 128,
+          Variant<ResizeFunction>{"avx2", resize_v_avx2_planar_uint8_t, IsaRequirement::Avx2},
+          "f78c70f9dab9cd8d", 0xF30D0806U, ResizeFilter::Lanczos6),
+      make_resize_vertical8_case(
+          64, 9, 6, 96, 128,
+          Variant<ResizeFunction>{"sse2", resize_v_sse2_planar, IsaRequirement::Sse2},
+          "369fa4270dfe3662", 0xF30D0807U, ResizeFilter::Lanczos10),
+      make_resize_vertical8_case(
+          64, 9, 6, 96, 128,
+          Variant<ResizeFunction>{"avx2", resize_v_avx2_planar_uint8_t, IsaRequirement::Avx2},
+          "369fa4270dfe3662", 0xF30D0807U, ResizeFilter::Lanczos10),
+      make_resize_vertical8_case(
           64, 7, 5, 128, 128,
           Variant<ResizeFunction>{"avx512_base", resize_v_avx512_planar_uint8_t_w_sr,
                                   IsaRequirement::Avx512Base},
@@ -82,6 +98,26 @@ std::vector<ResizeVertical16Case> resize_vertical16_cases() {
           Variant<ResizeFunction>{"avx2", resize_v_avx2_planar_uint16_t<true>,
                                   IsaRequirement::Avx2},
           "3059ea0bddf8b584", 0xF30D1001U),
+      make_resize_vertical16_case(
+          10, 48, 9, 6, 128, 192,
+          Variant<ResizeFunction>{"sse2", resize_v_sse2_planar_uint16_t<true>,
+                                  IsaRequirement::Sse2},
+          "2a02d0a1c77306e2", 0xF30D1006U, ResizeFilter::Lanczos6),
+      make_resize_vertical16_case(
+          10, 48, 9, 6, 128, 192,
+          Variant<ResizeFunction>{"avx2", resize_v_avx2_planar_uint16_t<true>,
+                                  IsaRequirement::Avx2},
+          "2a02d0a1c77306e2", 0xF30D1006U, ResizeFilter::Lanczos6),
+      make_resize_vertical16_case(
+          10, 48, 9, 6, 128, 192,
+          Variant<ResizeFunction>{"sse2", resize_v_sse2_planar_uint16_t<true>,
+                                  IsaRequirement::Sse2},
+          "79f98f384c2ad039", 0xF30D1007U, ResizeFilter::Lanczos10),
+      make_resize_vertical16_case(
+          10, 48, 9, 6, 128, 192,
+          Variant<ResizeFunction>{"avx2", resize_v_avx2_planar_uint16_t<true>,
+                                  IsaRequirement::Avx2},
+          "79f98f384c2ad039", 0xF30D1007U, ResizeFilter::Lanczos10),
       make_resize_vertical16_case(
           10, 64, 7, 5, 256, 256,
           Variant<ResizeFunction>{"avx512_base", resize_v_avx512_planar_uint16_t_w_sr<true>,
