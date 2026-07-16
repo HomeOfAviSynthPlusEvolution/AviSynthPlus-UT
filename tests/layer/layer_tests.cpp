@@ -765,11 +765,16 @@ std::vector<LayerYuy2FastCase> layer_yuy2_fast_cases() {
   constexpr std::size_t overlay_pitch = 80;
   constexpr std::size_t destination_alignment_offset = 3;
   constexpr std::size_t overlay_alignment_offset = 5;
-  return {make_layer_yuy2_fast_case(
+  std::vector<LayerYuy2FastCase> cases{make_layer_yuy2_fast_case(
       width_pixels, height, destination_pitch, overlay_pitch, destination_alignment_offset,
       overlay_alignment_offset,
       Variant<LayerYuy2FastFunction>{"avx2", layer_yuy2_or_rgb32_fast_avx2, IsaRequirement::Avx2},
       "467d20be64ba47ef")};
+  cases.push_back(make_layer_yuy2_fast_case(
+      31, 7, 80, 96, 7, 11,
+      Variant<LayerYuy2FastFunction>{"avx2", layer_yuy2_or_rgb32_fast_avx2, IsaRequirement::Avx2},
+      "21be240352c36f33", 0xF30F2301U));
+  return cases;
 }
 
 class LayerYuy2FastKernels : public ::testing::TestWithParam<LayerYuy2FastCase> {};
