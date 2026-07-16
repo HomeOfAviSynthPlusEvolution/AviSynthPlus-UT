@@ -26,6 +26,7 @@ using avsut::test::AviSynthEnvironment;
 using avsut::test::fill_plane_full_pitch;
 using avsut::test::FrameSnapshot;
 using avsut::test::make_video_info;
+using avsut::test::read_frame_plane_active;
 using avsut::test::StaticFrameClip;
 using avsut::test::VideoInfoSpec;
 using avsut::test::write_frame_plane;
@@ -205,6 +206,119 @@ TEST(Levels, AppliesGammaToFloatYuv444AndPreservesChromaCenter) {
     }
     EXPECT_EQ(pitch >= output->GetRowSize(plane), true);
   }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+bool mask_hs_selects(std::uint8_t u, std::uint8_t v, double start_hue, double end_hue,
+                     double max_sat, double min_sat) {
+  const double x = static_cast<double>(v) - 128.0;
+  const double y = static_cast<double>(u) - 128.0;
+  double hue = std::atan2(x, y) * 180.0 / 3.141592653589793;
+  if (hue < 0.0) {
+    hue += 360.0;
+  }
+  const bool in_hue = start_hue < end_hue
+                          ? hue >= start_hue && hue <= end_hue
+                          : !(hue < start_hue && hue > end_hue);
+  if (!in_hue) {
+    return false;
+  }
+  const double saturation_squared = x * x + y * y;
+  const double scaled_min_sat = 1.19 * min_sat;
+  const double scaled_max_sat = 1.19 * max_sat;
+  return scaled_min_sat * scaled_min_sat <= saturation_squared &&
+         saturation_squared <= scaled_max_sat * scaled_max_sat;
+}
+
+class MaskHsYuv444Test : public ::testing::TestWithParam<bool> {};
+
+TEST_P(MaskHsYuv444Test, SelectsWrappedHueAndSaturationWithIndependentOutputRange) {
+  constexpr int width = 7;
+  constexpr int height = 2;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_YV24, 1, 25, 1});
+  AviSynthEnvironment environment;
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(source, 0x91, PLANAR_Y);
+  fill_plane_full_pitch(source, 0xa2, PLANAR_U);
+  fill_plane_full_pitch(source, 0xb3, PLANAR_V);
+  const std::array<std::uint8_t, 7> u_values{128, 188, 168, 98, 228, 160, 128};
+  const std::array<std::uint8_t, 7> v_values{128, 128, 168, 180, 128, 73, 68};
+  write_frame_plane<std::uint8_t>(source, PLANAR_U,
+                                  [&u_values](int x, int) { return u_values[static_cast<std::size_t>(x)]; });
+  write_frame_plane<std::uint8_t>(source, PLANAR_V,
+                                  [&v_values](int x, int) { return v_values[static_cast<std::size_t>(x)]; });
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+  const bool realcalc = GetParam();
+
+  MaskHS filter(clip, 300.0, 60.0, 80.0, 20.0, true, realcalc, environment.get());
+  EXPECT_EQ(filter.GetVideoInfo().pixel_type, VideoInfo::CS_Y8);
+  EXPECT_EQ(filter.GetVideoInfo().width, width);
+  EXPECT_EQ(filter.GetVideoInfo().height, height);
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  const auto expected_for = [&u_values, &v_values](int x) {
+    return mask_hs_selects(u_values[static_cast<std::size_t>(x)],
+                           v_values[static_cast<std::size_t>(x)], 300.0, 60.0, 80.0, 20.0)
+               ? static_cast<std::uint8_t>(235)
+               : static_cast<std::uint8_t>(16);
+  };
+  for (int y = 0; y < height; ++y) {
+    const auto* row = output->GetReadPtr() + y * output->GetPitch();
+    for (int x = 0; x < width; ++x) {
+      EXPECT_EQ(row[x], expected_for(x))
+          << "realcalc=" << realcalc << " x=" << x << " y=" << y;
+    }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Implementation, MaskHsYuv444Test, ::testing::Values(false, true),
+    [](const ::testing::TestParamInfo<bool>& info) {
+      return info.param ? "VariantRealcalc" : "VariantLut";
+    });
+
+TEST(MaskHsFilter, ProducesSubsampledMaskGeometryForYuv420) {
+  constexpr int width = 8;
+  constexpr int height = 4;
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_YV12, 1, 25, 1});
+  AviSynthEnvironment environment;
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(source, 0xc4, PLANAR_Y);
+  fill_plane_full_pitch(source, 0xd5, PLANAR_U);
+  fill_plane_full_pitch(source, 0xe6, PLANAR_V);
+  const std::array<std::uint8_t, 4> u_values{188, 98, 228, 160};
+  const std::array<std::uint8_t, 4> v_values{128, 180, 128, 73};
+  write_frame_plane<std::uint8_t>(source, PLANAR_U,
+                                  [&u_values](int x, int) { return u_values[static_cast<std::size_t>(x)]; });
+  write_frame_plane<std::uint8_t>(source, PLANAR_V,
+                                  [&v_values](int x, int) { return v_values[static_cast<std::size_t>(x)]; });
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  MaskHS filter(clip, 0.0, 180.0, 80.0, 20.0, false, true, environment.get());
+  EXPECT_EQ(filter.GetVideoInfo().pixel_type, VideoInfo::CS_Y8);
+  EXPECT_EQ(filter.GetVideoInfo().width, width / 2);
+  EXPECT_EQ(filter.GetVideoInfo().height, height / 2);
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  std::vector<std::uint8_t> expected;
+  expected.reserve(u_values.size() * 2);
+  for (std::size_t x = 0; x < u_values.size(); ++x) {
+    expected.push_back(mask_hs_selects(u_values[x], v_values[x], 0.0, 180.0, 80.0, 20.0)
+                           ? static_cast<std::uint8_t>(255)
+                           : static_cast<std::uint8_t>(0));
+  }
+  expected.insert(expected.end(), expected.begin(), expected.end());
+  EXPECT_EQ(read_frame_plane_active<std::uint8_t>(output, DEFAULT_PLANE), expected);
   EXPECT_NE(output->CheckMemory(), 1);
   EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
   EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
