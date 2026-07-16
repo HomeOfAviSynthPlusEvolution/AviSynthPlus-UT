@@ -632,6 +632,32 @@ std::vector<LayerInvertCase> layer_invert_cases() {
             "avx2", chroma ? invert_plane_avx2_f32<true> : invert_plane_avx2_f32<false>,
             IsaRequirement::Avx2}));
   }
+  for (const bool chroma : {false, true}) {
+    cases.push_back(make_layer_invert_case(
+        LayerInvertElement::UInt16, chroma, 12, 32, 5, 96, 128,
+        Variant<LayerInvertFuncPtr>{
+            "sse2", chroma ? invert_plane_sse2_u16<true> : invert_plane_sse2_u16<false>,
+            IsaRequirement::Sse2},
+        chroma ? "ae22902194acc072" : "3d1cad7f0dcd05de", 0xF30F2101U));
+    cases.push_back(make_layer_invert_case(
+        LayerInvertElement::UInt16, chroma, 12, 32, 5, 96, 128,
+        Variant<LayerInvertFuncPtr>{
+            "avx2", chroma ? invert_plane_avx2_u16<true> : invert_plane_avx2_u16<false>,
+            IsaRequirement::Avx2},
+        chroma ? "ae22902194acc072" : "3d1cad7f0dcd05de", 0xF30F2101U));
+    cases.push_back(make_layer_invert_case(
+        LayerInvertElement::Float32, chroma, 32, 16, 5, 96, 128,
+        Variant<LayerInvertFuncPtr>{
+            "sse2", chroma ? invert_plane_sse2_f32<true> : invert_plane_sse2_f32<false>,
+            IsaRequirement::Sse2},
+        {}, 0xF30F2102U));
+    cases.push_back(make_layer_invert_case(
+        LayerInvertElement::Float32, chroma, 32, 16, 5, 96, 128,
+        Variant<LayerInvertFuncPtr>{
+            "avx2", chroma ? invert_plane_avx2_f32<true> : invert_plane_avx2_f32<false>,
+            IsaRequirement::Avx2},
+        {}, 0xF30F2102U));
+  }
   return cases;
 }
 

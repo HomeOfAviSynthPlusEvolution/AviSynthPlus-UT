@@ -4,6 +4,7 @@
 #include "filters/intel/layer_sse.h"
 
 #include "support/comparators.h"
+#include "support/deterministic_data.h"
 #include "support/guarded_video_buffer.h"
 #include "support/stable_hash.h"
 #include "support/variant_registry.h"
@@ -41,6 +42,7 @@ struct LayerInvertCase {
   std::size_t destination_pitch{};
   Variant<LayerInvertFuncPtr> variant;
   std::string expected_hash;
+  std::uint32_t seed{};
   std::string name;
 };
 
@@ -77,8 +79,12 @@ inline std::string layer_invert_case_name(const LayerInvertCase& test_case) {
   stream << layer_invert_element_name(test_case.element) << "_"
          << (test_case.chroma ? "Chroma" : "Luma") << "_Bits" << test_case.bits_per_pixel
          << "_Width" << test_case.width_pixels << "_Height" << test_case.height_pixels
-         << "_SrcPitch" << test_case.source_pitch << "_DstPitch" << test_case.destination_pitch
-         << "_PatternBoundaryAnchors_" << layer_invert_variant_name(test_case.variant);
+         << "_SrcPitch" << test_case.source_pitch << "_DstPitch" << test_case.destination_pitch;
+  if (test_case.seed != 0) {
+    stream << "_Seed" << std::uppercase << std::hex << test_case.seed;
+  }
+  stream << (test_case.seed == 0 ? "_PatternBoundaryAnchors_" : "_PatternFixedRandom_")
+         << layer_invert_variant_name(test_case.variant);
   return stream.str();
 }
 
@@ -87,7 +93,8 @@ inline LayerInvertCase make_layer_invert_case(LayerInvertElement element, bool c
                                               std::size_t height_pixels, std::size_t source_pitch,
                                               std::size_t destination_pitch,
                                               Variant<LayerInvertFuncPtr> variant,
-                                              std::string expected_hash = {}) {
+                                              std::string expected_hash = {},
+                                              std::uint32_t seed = 0) {
   const auto bytes_per_pixel = element == LayerInvertElement::UInt8    ? std::size_t{1}
                                : element == LayerInvertElement::UInt16 ? std::size_t{2}
                                                                        : std::size_t{4};
@@ -104,6 +111,7 @@ inline LayerInvertCase make_layer_invert_case(LayerInvertElement element, bool c
                          destination_pitch,
                          std::move(variant),
                          std::move(expected_hash),
+                         seed,
                          {}};
   result.name = layer_invert_case_name(result);
   return result;
@@ -114,8 +122,18 @@ inline void PrintTo(const LayerInvertCase& test_case, std::ostream* stream) {
 }
 
 template <typename T>
-void fill_layer_invert_integer_input(PlaneView<T> view, std::uint32_t max_value) {
+void fill_layer_invert_integer_input(PlaneView<T> view, std::uint32_t max_value,
+                                     std::uint32_t seed = 0) {
   static_assert(std::is_integral_v<T>);
+  if (seed != 0) {
+    fill_random(view, seed);
+    for (std::size_t y = 0; y < view.height(); ++y) {
+      for (std::size_t x = 0; x < view.width(); ++x) {
+        view.row(y)[x] = static_cast<T>(static_cast<std::uint32_t>(view.row(y)[x]) & max_value);
+      }
+    }
+    return;
+  }
   const std::array<std::uint32_t, 9> anchors{0,
                                              1,
                                              2,
@@ -132,7 +150,11 @@ void fill_layer_invert_integer_input(PlaneView<T> view, std::uint32_t max_value)
   }
 }
 
-inline void fill_layer_invert_float_input(PlaneView<float> view) {
+inline void fill_layer_invert_float_input(PlaneView<float> view, std::uint32_t seed = 0) {
+  if (seed != 0) {
+    fill_random(view, seed);
+    return;
+  }
   constexpr std::array<float, 10> anchors{-3.25F, -1.0F, -0.5F, -0.0F, 0.0F,
                                           0.25F,  0.5F,  1.0F,  2.5F,  17.0F};
   for (std::size_t y = 0; y < view.height(); ++y) {
@@ -229,7 +251,7 @@ void run_layer_invert_integer_case(const LayerInvertCase& test_case) {
                                  test_case.destination_pitch, 32);
   GuardedVideoBuffer<T> actual(test_case.width_pixels, test_case.height_pixels,
                                test_case.destination_pitch, 32);
-  fill_layer_invert_integer_input(source.view(), max_value);
+  fill_layer_invert_integer_input(source.view(), max_value, test_case.seed);
   apply_layer_invert_integer_reference(test_case, source.view().as_const(), expected.view());
   const auto source_snapshot = source.snapshot_active();
 
@@ -260,7 +282,7 @@ inline void run_layer_invert_float_case(const LayerInvertCase& test_case) {
                                      test_case.destination_pitch, 32);
   GuardedVideoBuffer<float> actual(test_case.width_pixels, test_case.height_pixels,
                                    test_case.destination_pitch, 32);
-  fill_layer_invert_float_input(source.view());
+  fill_layer_invert_float_input(source.view(), test_case.seed);
   apply_layer_invert_float_reference(test_case, source.view().as_const(), expected.view());
   const auto source_snapshot = source.snapshot_active();
 
