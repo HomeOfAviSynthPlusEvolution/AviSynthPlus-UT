@@ -30,6 +30,7 @@
 #include <ostream>
 #include <sstream>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 namespace avsut::test {
@@ -134,6 +135,12 @@ struct PlanarRgbToYuvFloatCoefficients {
   float v_r{};
   float input_offset{};
   float output_offset{};
+};
+
+struct PlanarFloatRange {
+  double offset{};
+  double span{};
+  double chroma_span{};
 };
 
 inline int planar_round_symmetric(double value) {
@@ -250,6 +257,11 @@ inline PlanarRgbToYuvFloatCoefficients make_planar_rgb_to_yuv_float_coefficients
   };
 }
 
+inline PlanarFloatRange make_planar_float_range(bool full) {
+  return full ? PlanarFloatRange{0.0, 1.0, 0.5}
+              : PlanarFloatRange{16.0 / 255.0, 219.0 / 255.0, 112.0 / 255.0};
+}
+
 inline std::uint16_t planar_clip_sample(std::int64_t value, int bit_depth) {
   const auto maximum = (std::int64_t{1} << bit_depth) - 1;
   return static_cast<std::uint16_t>(std::clamp<std::int64_t>(value, 0, maximum));
@@ -276,6 +288,54 @@ template <typename T>
 inline void fill_planar_matrix_inputs(PlaneView<T> plane0, PlaneView<T> plane1,
                                        PlaneView<T> plane2, int bit_depth,
                                        bool yuv_to_rgb = false, bool source_full = true) {
+  if (bit_depth == 32) {
+    const auto range = make_planar_float_range(source_full);
+    const std::array<float, 8> luma_anchors{
+        static_cast<float>(range.offset),
+        static_cast<float>(range.offset + range.span * 0.25),
+        static_cast<float>(range.offset + range.span * 0.5),
+        static_cast<float>(range.offset + range.span * 0.75),
+        static_cast<float>(range.offset + range.span),
+        static_cast<float>(range.offset + range.span / 3.0),
+        static_cast<float>(range.offset + range.span * 2.0 / 3.0),
+        static_cast<float>(range.offset + range.span * 0.125)};
+    if (yuv_to_rgb) {
+      const std::array<float, 8> chroma_anchors{
+          static_cast<float>(-range.chroma_span),
+          static_cast<float>(-range.chroma_span * 0.5), 0.0F,
+          static_cast<float>(range.chroma_span * 0.5),
+          static_cast<float>(range.chroma_span),
+          static_cast<float>(-range.chroma_span * 0.25),
+          static_cast<float>(range.chroma_span * 0.25), 0.0F};
+      for (std::size_t row = 0; row < plane0.height(); ++row) {
+        for (std::size_t column = 0; column < plane0.width(); ++column) {
+          const auto anchor = (column + row * 3) % luma_anchors.size();
+          plane0.row(row)[column] = static_cast<T>(luma_anchors[anchor]);
+          plane1.row(row)[column] = static_cast<T>(chroma_anchors[(anchor + 2) % chroma_anchors.size()]);
+          plane2.row(row)[column] = static_cast<T>(chroma_anchors[(anchor + 4) % chroma_anchors.size()]);
+          if (anchor == 0 || anchor == 2 || anchor == 4) {
+            plane1.row(row)[column] = 0.0F;
+            plane2.row(row)[column] = 0.0F;
+          }
+        }
+      }
+    } else {
+      for (std::size_t row = 0; row < plane0.height(); ++row) {
+        for (std::size_t column = 0; column < plane0.width(); ++column) {
+          const auto anchor = (column + row * 3) % luma_anchors.size();
+          plane0.row(row)[column] = static_cast<T>(luma_anchors[anchor]);
+          plane1.row(row)[column] = static_cast<T>(luma_anchors[(anchor + 2) % luma_anchors.size()]);
+          plane2.row(row)[column] = static_cast<T>(luma_anchors[(anchor + 4) % luma_anchors.size()]);
+          if (anchor == 0 || anchor == 2 || anchor == 4) {
+            plane1.row(row)[column] = plane0.row(row)[column];
+            plane2.row(row)[column] = plane0.row(row)[column];
+          }
+        }
+      }
+    }
+    return;
+  }
+
   const auto scale = std::uint32_t{1} << (bit_depth - 8);
   const auto maximum = (std::uint32_t{1} << bit_depth) - 1U;
   if (yuv_to_rgb) {
@@ -372,6 +432,51 @@ inline void make_planar_matrix_reference(const PlanarMatrixCase& test_case,
                                          PlaneView<const T> source0, PlaneView<const T> source1,
                                          PlaneView<const T> source2, PlaneView<T> output0,
                                          PlaneView<T> output1, PlaneView<T> output2) {
+  if (test_case.bit_depth == 32) {
+    const auto source_range = make_planar_float_range(test_case.source_full);
+    const auto destination_range = make_planar_float_range(test_case.destination_full);
+    double kr{};
+    double kb{};
+    planar_kr_kb(test_case.matrix, kr, kb);
+    const double kg = 1.0 - kr - kb;
+    for (std::size_t row = 0; row < source0.height(); ++row) {
+      for (std::size_t column = 0; column < source0.width(); ++column) {
+        if (test_case.direction == PlanarMatrixDirection::YuvToRgb) {
+          const double y =
+              (static_cast<double>(source0.row(row)[column]) - source_range.offset) /
+              source_range.span;
+          const double u = static_cast<double>(source1.row(row)[column]) /
+                           source_range.chroma_span;
+          const double v = static_cast<double>(source2.row(row)[column]) /
+                           source_range.chroma_span;
+          const double g = y - u * (1.0 - kb) * kb / kg - v * (1.0 - kr) * kr / kg;
+          const double b = y + u * (1.0 - kb);
+          const double r = y + v * (1.0 - kr);
+          output0.row(row)[column] = static_cast<T>(destination_range.offset + destination_range.span * g);
+          output1.row(row)[column] = static_cast<T>(destination_range.offset + destination_range.span * b);
+          output2.row(row)[column] = static_cast<T>(destination_range.offset + destination_range.span * r);
+        } else {
+          const double g =
+              (static_cast<double>(source0.row(row)[column]) - source_range.offset) /
+              source_range.span;
+          const double b =
+              (static_cast<double>(source1.row(row)[column]) - source_range.offset) /
+              source_range.span;
+          const double r =
+              (static_cast<double>(source2.row(row)[column]) - source_range.offset) /
+              source_range.span;
+          const double y = kr * r + kg * g + kb * b;
+          const double u = b - (kr * r + kg * g) / (1.0 - kb);
+          const double v = r - (kg * g + kb * b) / (1.0 - kr);
+          output0.row(row)[column] = static_cast<T>(destination_range.offset + destination_range.span * y);
+          output1.row(row)[column] = static_cast<T>(destination_range.chroma_span * u);
+          output2.row(row)[column] = static_cast<T>(destination_range.chroma_span * v);
+        }
+      }
+    }
+    return;
+  }
+
   // Exact 16-bit RGB->YUV uses the upstream float workflow to avoid int32 overflow;
   // keep its independent range and rounding semantics in the reference.
   if (test_case.direction == PlanarMatrixDirection::RgbToYuv && test_case.bit_depth == 16) {
@@ -576,6 +681,9 @@ inline void run_planar_matrix_case_typed(const PlanarMatrixCase& test_case) {
   if constexpr (sizeof(T) == 1) {
     call_planar_matrix_kernel_typed<T, true>(test_case, destination, destination_pitch, source,
                                              source_pitch, matrix);
+  } else if constexpr (std::is_floating_point_v<T>) {
+    call_planar_matrix_kernel_typed<T, false>(test_case, destination, destination_pitch, source,
+                                              source_pitch, matrix);
   } else if (test_case.bit_depth < 16) {
     call_planar_matrix_kernel_typed<T, true>(test_case, destination, destination_pitch, source,
                                              source_pitch, matrix);
@@ -584,18 +692,31 @@ inline void run_planar_matrix_case_typed(const PlanarMatrixCase& test_case) {
                                               source_pitch, matrix);
   }
 
-  EXPECT_TRUE(compare_exact(expected0.view().as_const(), actual0.view().as_const()))
-      << test_case.name << " output G/Y";
-  EXPECT_TRUE(compare_exact(expected1.view().as_const(), actual1.view().as_const()))
-      << test_case.name << " output B/U";
-  EXPECT_TRUE(compare_exact(expected2.view().as_const(), actual2.view().as_const()))
-      << test_case.name << " output R/V";
-  EXPECT_EQ(format_hash(hash_active(actual0.view().as_const())), test_case.expected_hashes[0])
-      << test_case.name << " output G/Y";
-  EXPECT_EQ(format_hash(hash_active(actual1.view().as_const())), test_case.expected_hashes[1])
-      << test_case.name << " output B/U";
-  EXPECT_EQ(format_hash(hash_active(actual2.view().as_const())), test_case.expected_hashes[2])
-      << test_case.name << " output R/V";
+  if constexpr (std::is_floating_point_v<T>) {
+    for (std::size_t row = 0; row < test_case.height; ++row) {
+      for (std::size_t column = 0; column < test_case.width; ++column) {
+        EXPECT_NEAR(expected0.view().row(row)[column], actual0.view().row(row)[column], 6.0e-6F)
+            << test_case.name << " output G/Y row=" << row << " column=" << column;
+        EXPECT_NEAR(expected1.view().row(row)[column], actual1.view().row(row)[column], 6.0e-6F)
+            << test_case.name << " output B/U row=" << row << " column=" << column;
+        EXPECT_NEAR(expected2.view().row(row)[column], actual2.view().row(row)[column], 6.0e-6F)
+            << test_case.name << " output R/V row=" << row << " column=" << column;
+      }
+    }
+  } else {
+    EXPECT_TRUE(compare_exact(expected0.view().as_const(), actual0.view().as_const()))
+        << test_case.name << " output G/Y";
+    EXPECT_TRUE(compare_exact(expected1.view().as_const(), actual1.view().as_const()))
+        << test_case.name << " output B/U";
+    EXPECT_TRUE(compare_exact(expected2.view().as_const(), actual2.view().as_const()))
+        << test_case.name << " output R/V";
+    EXPECT_EQ(format_hash(hash_active(actual0.view().as_const())), test_case.expected_hashes[0])
+        << test_case.name << " output G/Y";
+    EXPECT_EQ(format_hash(hash_active(actual1.view().as_const())), test_case.expected_hashes[1])
+        << test_case.name << " output B/U";
+    EXPECT_EQ(format_hash(hash_active(actual2.view().as_const())), test_case.expected_hashes[2])
+        << test_case.name << " output R/V";
+  }
   EXPECT_TRUE(source0.active_matches(source0_snapshot)) << test_case.name;
   EXPECT_TRUE(source1.active_matches(source1_snapshot)) << test_case.name;
   EXPECT_TRUE(source2.active_matches(source2_snapshot)) << test_case.name;
@@ -613,6 +734,8 @@ inline void run_planar_matrix_case_typed(const PlanarMatrixCase& test_case) {
 inline void run_planar_matrix_case(const PlanarMatrixCase& test_case) {
   if (test_case.bit_depth == 8) {
     run_planar_matrix_case_typed<std::uint8_t>(test_case);
+  } else if (test_case.bit_depth == 32) {
+    run_planar_matrix_case_typed<float>(test_case);
   } else {
     run_planar_matrix_case_typed<std::uint16_t>(test_case);
   }
