@@ -100,6 +100,36 @@ float expected_float_chroma_dither(float source, int x, int y, bool coring) {
   return std::clamp(source + ordered_dither, min_uv, max_uv);
 }
 
+std::array<float, 2> expected_float_conditional_chroma(float source_u, float source_v) {
+  constexpr double pi = 3.14159265358979323846;
+  constexpr double start_hue = 329.0;
+  constexpr double end_hue = 31.0;
+  constexpr double max_sat = 1.19 * 100.0;
+  constexpr double min_sat = 1.19 * 40.0;
+  constexpr double saturation = 1.5;
+  const double u = static_cast<double>(source_u) * 255.0;
+  const double v = static_cast<double>(source_v) * 255.0;
+  double hue = std::atan2(v, u) * 180.0 / pi;
+  if (hue < 0.0) {
+    hue += 360.0;
+  }
+  const bool hue_selected =
+      !(hue < start_hue && hue > end_hue);
+  const double squared_sat = u * u + v * v;
+  const bool sat_selected = min_sat * min_sat <= squared_sat &&
+                            squared_sat <= max_sat * max_sat;
+  if (!hue_selected || !sat_selected) {
+    return {std::clamp(source_u, -0.5F, 0.5F), std::clamp(source_v, -0.5F, 0.5F)};
+  }
+
+  constexpr double hue_radians = 90.0 * pi / 180.0;
+  const float mapped_u = static_cast<float>(
+      (source_u * std::cos(hue_radians) + source_v * std::sin(hue_radians)) * saturation);
+  const float mapped_v = static_cast<float>(
+      (source_v * std::cos(hue_radians) - source_u * std::sin(hue_radians)) * saturation);
+  return {std::clamp(mapped_u, -0.5F, 0.5F), std::clamp(mapped_v, -0.5F, 0.5F)};
+}
+
 TEST(TweakFilter, AppliesEightBitLumaBrightnessWithoutTouchingSource) {
   AviSynthEnvironment environment;
   const auto vi = make_video_info(VideoInfoSpec{8, 2, VideoInfo::CS_Y8, 1, 25, 1});
@@ -340,6 +370,59 @@ INSTANTIATE_TEST_SUITE_P(
     [](const ::testing::TestParamInfo<bool>& info) {
       return info.param ? "Coring" : "FullRange";
     });
+
+TEST(TweakFilter, SelectsConditionalFloatHueAndSaturationWithWrapping) {
+  AviSynthEnvironment environment;
+  constexpr int width = 7;
+  constexpr int height = 2;
+  const auto vi = make_video_info(
+      VideoInfoSpec{width, height, VideoInfo::CS_YUV444PS, 1, 25, 1});
+  const std::array<float, width> luma{0.0F, 0.1F, 0.3F, 0.5F, 0.7F, 0.9F, 1.0F};
+  constexpr std::array<std::uint8_t, width> u_values{192, 183, 183, 173, 173, 152, 254};
+  constexpr std::array<std::uint8_t, width> v_values{128, 160, 96, 173, 83, 128, 128};
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(source, 0x81, PLANAR_Y);
+  fill_plane_full_pitch(source, 0x92, PLANAR_U);
+  fill_plane_full_pitch(source, 0xa3, PLANAR_V);
+  write_frame_plane<float>(source, PLANAR_Y, [&luma](int x, int) {
+    return luma[static_cast<std::size_t>(x)];
+  });
+  write_frame_plane<float>(source, PLANAR_U, [&u_values](int x, int) {
+    return (static_cast<float>(u_values[static_cast<std::size_t>(x)]) - 128.0F) / 255.0F;
+  });
+  write_frame_plane<float>(source, PLANAR_V, [&v_values](int x, int) {
+    return (static_cast<float>(v_values[static_cast<std::size_t>(x)]) - 128.0F) / 255.0F;
+  });
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_clip = new StaticFrameClip(vi, source);
+  const PClip clip(source_clip);
+
+  Tweak filter(clip, 90.0, 1.5, 0.0, 1.0, false, 329.0, 31.0, 100.0, 40.0, 0.0, false,
+               false, 1.0, environment.get());
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  for (int y = 0; y < height; ++y) {
+    const auto* output_y = reinterpret_cast<const float*>(
+        output->GetReadPtr(PLANAR_Y) + y * output->GetPitch(PLANAR_Y));
+    const auto* output_u = reinterpret_cast<const float*>(
+        output->GetReadPtr(PLANAR_U) + y * output->GetPitch(PLANAR_U));
+    const auto* output_v = reinterpret_cast<const float*>(
+        output->GetReadPtr(PLANAR_V) + y * output->GetPitch(PLANAR_V));
+    for (int x = 0; x < width; ++x) {
+      const auto expected = expected_float_conditional_chroma(
+          (static_cast<float>(u_values[static_cast<std::size_t>(x)]) - 128.0F) / 255.0F,
+          (static_cast<float>(v_values[static_cast<std::size_t>(x)]) - 128.0F) / 255.0F);
+      EXPECT_NEAR(output_u[x], expected[0], 1.0e-6F) << "plane=U x=" << x << " y=" << y;
+      EXPECT_NEAR(output_v[x], expected[1], 1.0e-6F) << "plane=V x=" << x << " y=" << y;
+      EXPECT_NEAR(output_y[x], luma[static_cast<std::size_t>(x)], 1.0e-6F)
+          << "plane=Y x=" << x << " y=" << y;
+    }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
 
 TEST(TweakFilter, AppliesFloatHueSaturationAndBrightnessWithRealCalc) {
   AviSynthEnvironment environment;
