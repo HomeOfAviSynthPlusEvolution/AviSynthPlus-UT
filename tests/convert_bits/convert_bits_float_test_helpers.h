@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <iostream>
 #include <limits>
 #include <ostream>
 #include <sstream>
@@ -31,6 +32,7 @@ struct ConvertBitsFloatCase {
   std::size_t target_pitch{};
   Variant<ConvertBitsIntegerFunc> variant;
   std::string expected_hash;
+  std::uint32_t seed{};
   std::string name;
 };
 
@@ -56,17 +58,20 @@ inline ConvertBitsFloatCase make_convert_bits_float_case(
     FloatConversion conversion, bool chroma, bool source_full, bool target_full,
     int source_bit_depth, int target_bit_depth, std::size_t width, std::size_t height,
     std::size_t source_pitch, std::size_t target_pitch, Variant<ConvertBitsIntegerFunc> variant,
-    std::string expected_hash = {}) {
+    std::string expected_hash = {}, std::uint32_t seed = 0) {
   ConvertBitsFloatCase result{
       conversion, chroma, source_full,  target_full,  source_bit_depth,   target_bit_depth,
       width,      height, source_pitch, target_pitch, std::move(variant), std::move(expected_hash),
-      {}};
+      seed, {}};
   std::ostringstream stream;
   stream << (chroma ? "Chroma" : "Luma") << "_" << float_conversion_name(conversion) << "_Src"
          << source_bit_depth << (source_full ? "Full" : "Limited") << "_Dst" << target_bit_depth
          << (target_full ? "Full" : "Limited") << "_Width" << width << "_Height" << height
-         << "_SrcPitch" << source_pitch << "_DstPitch" << target_pitch << "_PatternFiniteAnchors_"
-         << integer_variant_name(result.variant.name);
+         << "_SrcPitch" << source_pitch << "_DstPitch" << target_pitch;
+  if (result.seed != 0) {
+    stream << "_Seed" << std::uppercase << std::hex << result.seed;
+  }
+  stream << "_PatternFiniteAnchors_" << integer_variant_name(result.variant.name);
   result.name = stream.str();
   return result;
 }
@@ -87,7 +92,7 @@ inline NumericRange numeric_range(bool chroma, bool full, int bit_depth) {
   return {static_cast<float>(range.offset), static_cast<float>(range.span)};
 }
 
-inline void fill_float_source(PlaneView<float> source, bool chroma) {
+inline void fill_float_source(PlaneView<float> source, bool chroma, std::uint32_t seed = 0) {
   constexpr std::array<float, 16> luma_anchors{
       -0.25F,          0.0F, 1.0F / 255.0F, 15.0F / 255.0F,  16.0F / 255.0F,  17.0F / 255.0F,
       0.25F,           0.5F, 0.75F,         234.0F / 255.0F, 235.0F / 255.0F, 236.0F / 255.0F,
@@ -97,9 +102,10 @@ inline void fill_float_source(PlaneView<float> source, bool chroma) {
       1.0F / 255.0F, 0.25F,           112.0F / 255.0F,  0.5F,   0.75F,          -0.125F,
       0.125F,        -64.0F / 255.0F, 64.0F / 255.0F,   0.375F};
   const auto& anchors = chroma ? chroma_anchors : luma_anchors;
+  const auto anchor_offset = static_cast<std::size_t>(seed % anchors.size());
   for (std::size_t y = 0; y < source.height(); ++y) {
     for (std::size_t x = 0; x < source.width(); ++x) {
-      source.row(y)[x] = anchors[(x + 3 * y) % anchors.size()];
+      source.row(y)[x] = anchors[(x + 3 * y + anchor_offset) % anchors.size()];
     }
   }
 }
@@ -225,6 +231,7 @@ void run_integer_to_float_case(const ConvertBitsFloatCase& test_case) {
                                     test_case.source_pitch,
                                     {},
                                     {},
+                                    test_case.seed,
                                     {}};
   fill_convert_bits_integer_source(source.view(), input_case);
   const auto source_snapshot = source.snapshot_active();
@@ -244,7 +251,22 @@ void run_integer_to_float_case(const ConvertBitsFloatCase& test_case) {
   EXPECT_TRUE(source.active_matches(source_snapshot)) << test_case.name;
   EXPECT_TRUE(source.memory_intact()) << test_case.name;
   EXPECT_TRUE(expected.memory_intact()) << test_case.name;
-  EXPECT_TRUE(actual.memory_intact()) << test_case.name;
+  EXPECT_TRUE(actual.guards_intact()) << test_case.name << " output guards";
+  constexpr std::size_t kSimdTailBytes = 64;
+  const auto active_row_bytes = test_case.width * sizeof(float);
+  const auto allowed_end = std::min(
+      test_case.target_pitch,
+      ((active_row_bytes + kSimdTailBytes - 1) / kSimdTailBytes) * kSimdTailBytes);
+  const bool permitted_tail_write =
+      !actual.padding_intact() && actual.padding_intact_from(allowed_end);
+  if (permitted_tail_write) {
+    std::cout << "[INFO] " << test_case.name
+              << " modified output padding within the permitted 64-byte SIMD tail"
+              << " (active_row_bytes=" << active_row_bytes << ", protected_from_byte="
+              << allowed_end << ")\n";
+  }
+  EXPECT_TRUE(actual.padding_intact_from(allowed_end))
+      << test_case.name << " output padding after permitted SIMD tail boundary " << allowed_end;
 }
 
 inline void run_convert_bits_float_case(const ConvertBitsFloatCase& test_case) {

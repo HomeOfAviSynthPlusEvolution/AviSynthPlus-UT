@@ -22,6 +22,12 @@ std::vector<ConvertBitsFloatCase> convert_bits_float_cases() {
                                                               8, 64);
   add_integer_to_float_case<std::uint16_t, true, true, false>(cases, FloatConversion::UInt16ToFloat,
                                                               12, 96);
+  cases.push_back(make_convert_bits_float_case(
+      FloatConversion::UInt16ToFloat, false, false, true, 14, 32, 29, 4, 96, 128,
+      Variant<ConvertBitsIntegerFunc>{
+          "avx2-fma", convert_uintN_to_float_avx2<std::uint16_t, false, false, true>,
+          IsaRequirement::Avx2Fma},
+      "", 0xF30B1401U));
   return cases;
 }
 

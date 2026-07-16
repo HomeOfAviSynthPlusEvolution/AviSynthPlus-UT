@@ -44,6 +44,7 @@ struct ConvertBitsIntegerCase {
   std::size_t target_pitch{};
   Variant<ConvertBitsIntegerFunc> variant;
   std::string expected_hash;
+  std::uint32_t seed{};
   std::string name;
 };
 
@@ -84,18 +85,22 @@ inline std::string integer_variant_name(const std::string& name) {
 inline ConvertBitsIntegerCase make_convert_bits_integer_case(
     IntegerStorage storage, bool chroma, bool source_full, bool target_full, int source_bit_depth,
     int target_bit_depth, std::size_t width, std::size_t height, std::size_t source_pitch,
-    std::size_t target_pitch, Variant<ConvertBitsIntegerFunc> variant, std::string expected_hash) {
+    std::size_t target_pitch, Variant<ConvertBitsIntegerFunc> variant, std::string expected_hash,
+    std::uint32_t seed = 0) {
   ConvertBitsIntegerCase result{
       storage, chroma, source_full,  target_full,  source_bit_depth,   target_bit_depth,
       width,   height, source_pitch, target_pitch, std::move(variant), std::move(expected_hash),
-      {}};
+      seed, {}};
   std::ostringstream stream;
   stream << (chroma ? "Chroma" : "Luma") << "_Src" << source_bit_depth
          << (source_full ? "Full" : "Limited") << "_Dst" << target_bit_depth
          << (target_full ? "Full" : "Limited") << "_Storage" << integer_storage_name(storage)
          << "_Width" << width << "_Height" << height << "_SrcPitch" << source_pitch << "_DstPitch"
-         << target_pitch << "_DitherNone_PatternBoundaryValues_"
-         << integer_variant_name(result.variant.name);
+         << target_pitch;
+  if (result.seed != 0) {
+    stream << "_Seed" << std::uppercase << std::hex << result.seed;
+  }
+  stream << "_DitherNone_PatternBoundaryValues_" << integer_variant_name(result.variant.name);
   result.name = stream.str();
   return result;
 }
@@ -150,9 +155,10 @@ void fill_convert_bits_integer_source(PlaneView<T> source,
                                               maximum > 1 ? maximum - 1 : maximum,
                                               maximum,
                                               maximum / 3};
+  const auto anchor_offset = static_cast<std::size_t>(test_case.seed % anchors.size());
   for (std::size_t y = 0; y < source.height(); ++y) {
     for (std::size_t x = 0; x < source.width(); ++x) {
-      source.row(y)[x] = static_cast<T>(anchors[(x + 5 * y) % anchors.size()]);
+      source.row(y)[x] = static_cast<T>(anchors[(x + 5 * y + anchor_offset) % anchors.size()]);
     }
   }
 }
