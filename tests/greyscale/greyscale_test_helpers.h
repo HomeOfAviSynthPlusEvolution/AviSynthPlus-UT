@@ -6,6 +6,7 @@
 #include "convert/convert_helper.h"
 
 #include "support/comparators.h"
+#include "support/deterministic_data.h"
 #include "support/guarded_video_buffer.h"
 #include "support/stable_hash.h"
 #include "support/variant_registry.h"
@@ -37,6 +38,7 @@ struct GreyscaleYuy2Case {
   std::size_t pitch{};
   Variant<GreyscaleYuy2FuncPtr> variant;
   std::string expected_hash;
+  std::uint32_t seed{};
   std::string name;
 };
 
@@ -51,6 +53,7 @@ struct GreyscaleRgb32Case {
   ConversionMatrix matrix{};
   Variant<GreyscaleRgb32FuncPtr> variant;
   std::string expected_hash;
+  std::uint32_t seed{};
   std::string name;
 };
 
@@ -65,6 +68,7 @@ struct GreyscaleRgb64Case {
   ConversionMatrix matrix{};
   Variant<GreyscaleRgb64FuncPtr> variant;
   std::string expected_hash;
+  std::uint32_t seed{};
   std::string name;
 };
 
@@ -95,10 +99,15 @@ inline ConversionMatrix build_greyscale_matrix(int matrix_id, int color_range, i
 
 inline std::string greyscale_yuy2_case_name(std::size_t width_bytes, std::size_t height,
                                             std::size_t pitch,
-                                            const Variant<GreyscaleYuy2FuncPtr>& variant) {
+                                            const Variant<GreyscaleYuy2FuncPtr>& variant,
+                                            std::uint32_t seed) {
   std::ostringstream stream;
-  stream << "Yuy2_Width" << width_bytes << "Bytes_Height" << height << "_Pitch" << pitch
-         << "_PatternNeutralChroma_" << greyscale_variant_name(variant);
+  stream << "Yuy2_Width" << width_bytes << "Bytes_Height" << height << "_Pitch" << pitch;
+  if (seed != 0) {
+    stream << "_Seed" << std::uppercase << std::hex << seed;
+  }
+  stream << (seed == 0 ? "_PatternNeutralChroma_" : "_PatternFixedRandom_")
+         << greyscale_variant_name(variant);
   return stream.str();
 }
 
@@ -106,10 +115,15 @@ template <typename Function>
 inline std::string greyscale_rgb_case_name(const char* format, const std::string& matrix_name,
                                            const std::string& range_name, std::size_t width_pixels,
                                            std::size_t height, std::size_t pitch,
-                                           const Variant<Function>& variant) {
+                                           const Variant<Function>& variant,
+                                           std::uint32_t seed) {
   std::ostringstream stream;
   stream << format << "_" << matrix_name << "_" << range_name << "_Width" << width_pixels
-         << "_Height" << height << "_Pitch" << pitch << "_PatternMatrixLuma_"
+         << "_Height" << height << "_Pitch" << pitch;
+  if (seed != 0) {
+    stream << "_Seed" << std::uppercase << std::hex << seed;
+  }
+  stream << (seed == 0 ? "_PatternMatrixLuma_" : "_PatternFixedRandom_")
          << greyscale_variant_name(variant);
   return stream.str();
 }
@@ -117,11 +131,13 @@ inline std::string greyscale_rgb_case_name(const char* format, const std::string
 inline GreyscaleYuy2Case make_greyscale_yuy2_case(std::size_t width_bytes, std::size_t height,
                                                   std::size_t pitch,
                                                   Variant<GreyscaleYuy2FuncPtr> variant,
-                                                  std::string expected_hash) {
+                                                  std::string expected_hash,
+                                                  std::uint32_t seed = 0) {
   GreyscaleYuy2Case result{width_bytes, height, pitch, std::move(variant), std::move(expected_hash),
-                           {}};
+                           seed, {}};
   result.name =
-      greyscale_yuy2_case_name(result.width_bytes, result.height, result.pitch, result.variant);
+      greyscale_yuy2_case_name(result.width_bytes, result.height, result.pitch, result.variant,
+                               result.seed);
   return result;
 }
 
@@ -130,7 +146,8 @@ inline GreyscaleRgb32Case make_greyscale_rgb32_case(std::string matrix_name, std
                                                     std::size_t width_pixels, std::size_t height,
                                                     std::size_t pitch,
                                                     Variant<GreyscaleRgb32FuncPtr> variant,
-                                                    std::string expected_hash) {
+                                                    std::string expected_hash,
+                                                    std::uint32_t seed = 0) {
   GreyscaleRgb32Case result{std::move(matrix_name),
                             std::move(range_name),
                             matrix_id,
@@ -141,10 +158,11 @@ inline GreyscaleRgb32Case make_greyscale_rgb32_case(std::string matrix_name, std
                             build_greyscale_matrix(matrix_id, color_range, 8),
                             std::move(variant),
                             std::move(expected_hash),
+                            seed,
                             {}};
-  result.name =
-      greyscale_rgb_case_name("Rgb32", result.matrix_name, result.range_name, result.width_pixels,
-                              result.height, result.pitch, result.variant);
+  result.name = greyscale_rgb_case_name("Rgb32", result.matrix_name, result.range_name,
+                                        result.width_pixels, result.height, result.pitch,
+                                        result.variant, result.seed);
   return result;
 }
 
@@ -153,7 +171,8 @@ inline GreyscaleRgb64Case make_greyscale_rgb64_case(std::string matrix_name, std
                                                     std::size_t width_pixels, std::size_t height,
                                                     std::size_t pitch,
                                                     Variant<GreyscaleRgb64FuncPtr> variant,
-                                                    std::string expected_hash) {
+                                                    std::string expected_hash,
+                                                    std::uint32_t seed = 0) {
   GreyscaleRgb64Case result{std::move(matrix_name),
                             std::move(range_name),
                             matrix_id,
@@ -164,10 +183,11 @@ inline GreyscaleRgb64Case make_greyscale_rgb64_case(std::string matrix_name, std
                             build_greyscale_matrix(matrix_id, color_range, 16),
                             std::move(variant),
                             std::move(expected_hash),
+                            seed,
                             {}};
-  result.name =
-      greyscale_rgb_case_name("Rgb64", result.matrix_name, result.range_name, result.width_pixels,
-                              result.height, result.pitch, result.variant);
+  result.name = greyscale_rgb_case_name("Rgb64", result.matrix_name, result.range_name,
+                                        result.width_pixels, result.height, result.pitch,
+                                        result.variant, result.seed);
   return result;
 }
 
@@ -205,7 +225,11 @@ inline void run_greyscale_yuy2_case(const GreyscaleYuy2Case& test_case) {
                                           32);
   GuardedVideoBuffer<std::uint8_t> expected(test_case.width_bytes, test_case.height,
                                             test_case.pitch, 32);
-  fill_greyscale_yuy2_input(actual.view());
+  if (test_case.seed == 0) {
+    fill_greyscale_yuy2_input(actual.view());
+  } else {
+    fill_random(actual.view(), test_case.seed);
+  }
   apply_greyscale_yuy2_reference(actual.view().as_const(), expected.view());
 
   test_case.variant.function(actual.view().data(), test_case.width_bytes, test_case.height,
@@ -282,8 +306,12 @@ void run_greyscale_rgb_case(const Case& test_case) {
   const auto source_width = test_case.width_pixels * 4;
   GuardedVideoBuffer<T> actual(source_width, test_case.height, test_case.pitch, 32);
   GuardedVideoBuffer<T> expected(source_width, test_case.height, test_case.pitch, 32);
-  fill_greyscale_rgb_input(actual.view(), test_case.width_pixels, test_case.color_range,
-                           sizeof(T) == 1 ? 8 : 16);
+  if (test_case.seed == 0) {
+    fill_greyscale_rgb_input(actual.view(), test_case.width_pixels, test_case.color_range,
+                             sizeof(T) == 1 ? 8 : 16);
+  } else {
+    fill_random(actual.view(), test_case.seed);
+  }
   copy_active_greyscale(actual.view().as_const(), expected.view());
   apply_greyscale_rgb_reference(expected.view(), test_case.width_pixels, test_case.matrix);
   auto matrix = test_case.matrix;
