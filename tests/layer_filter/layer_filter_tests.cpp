@@ -17,7 +17,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
+#include <ostream>
 #include <utility>
 #include <vector>
 
@@ -759,6 +761,201 @@ INSTANTIATE_TEST_SUITE_P(
                       LayerYuvFormatCase{VideoInfo::CS_YUVA420, 8, 4,
                                          "Yuva420_Width8_Height4_AddAlphaMask"}),
     [](const ::testing::TestParamInfo<LayerYuvFormatCase>& info) { return info.param.name; });
+
+struct LayerYuvFloatLightenDarkenCase {
+  int pixel_type;
+  int placement;
+  bool lighten;
+  int threshold_8bit;
+  float opacity;
+  int width;
+  int height;
+  const char* name;
+};
+
+void PrintTo(const LayerYuvFloatLightenDarkenCase& test_case, std::ostream* stream) {
+  *stream << test_case.name;
+}
+
+float layer_yuv_float_base_value(int plane, int x, int y, int frame_index) {
+  const int index = (x * 5 + y * 3 + frame_index * 2 + plane) % 8;
+  if (plane == PLANAR_Y)
+    return 0.12F + static_cast<float>(index) * 0.08F;
+  if (plane == PLANAR_U)
+    return -0.42F + static_cast<float>(index) * 0.11F;
+  if (plane == PLANAR_V)
+    return 0.38F - static_cast<float>(index) * 0.10F;
+  return 0.2F + static_cast<float>(index % 5) * 0.12F;
+}
+
+float layer_yuv_float_overlay_value(int plane, int x, int y) {
+  const float base = layer_yuv_float_base_value(plane, x, y, 0);
+  if (plane == PLANAR_A)
+    return 0.18F + static_cast<float>((x * 3 + y * 2) % 6) * 0.12F;
+
+  const int selector = (x + y * 2 + plane) % 5;
+  const float delta = selector == 0 ? 0.18F
+                                    : selector == 1 ? -0.16F
+                                    : selector == 2 ? 0.05F
+                                    : selector == 3 ? -0.05F
+                                                    : 0.0F;
+  return base + delta;
+}
+
+PVideoFrame make_layer_yuv_float_frame(AviSynthEnvironment& environment, const VideoInfo& vi,
+                                       bool overlay, int frame_index) {
+  PVideoFrame frame = environment.get()->NewVideoFrame(vi);
+  for (const int plane : video_frame_planes(vi)) {
+    fill_plane_full_pitch(frame, static_cast<std::uint8_t>(0x50 + plane * 0x17 + frame_index),
+                          plane);
+    write_frame_plane<float>(frame, plane, [overlay, frame_index, plane](int x, int y) {
+      return overlay ? layer_yuv_float_overlay_value(plane, x, y)
+                     : layer_yuv_float_base_value(plane, x, y, frame_index);
+    });
+  }
+  return frame;
+}
+
+float layer_yuv_float_effective_subsampled(const std::vector<float>& values, int luma_width,
+                                           int x, int y, int placement) {
+  const int top_row = y * 2;
+  if (placement == PLACEMENT_MPEG1) {
+    return (values[static_cast<std::size_t>(top_row * luma_width + x * 2)] +
+            values[static_cast<std::size_t>(top_row * luma_width + x * 2 + 1)] +
+            values[static_cast<std::size_t>((top_row + 1) * luma_width + x * 2)] +
+            values[static_cast<std::size_t>((top_row + 1) * luma_width + x * 2 + 1)]) *
+           0.25F;
+  }
+  if (placement == PLACEMENT_TOPLEFT)
+    return values[static_cast<std::size_t>(top_row * luma_width + x * 2)];
+
+  const auto vertical_sum = [&](int sample_x) {
+    return values[static_cast<std::size_t>(top_row * luma_width + sample_x)] +
+           values[static_cast<std::size_t>((top_row + 1) * luma_width + sample_x)];
+  };
+  const float left = vertical_sum(x == 0 ? 0 : x * 2 - 1);
+  const float middle = vertical_sum(x * 2);
+  const float right = vertical_sum(x * 2 + 1);
+  return (left + 2.0F * middle + right) * 0.125F;
+}
+
+void expect_layer_yuv_float_lighten_darken_reference(
+    const LayerYuvFloatLightenDarkenCase& test_case, const VideoInfo& vi,
+    const PVideoFrame& base, const PVideoFrame& overlay, const PVideoFrame& output) {
+  const auto base_y = read_frame_plane_active<float>(base, PLANAR_Y);
+  const auto overlay_y = read_frame_plane_active<float>(overlay, PLANAR_Y);
+  const bool has_alpha = vi.IsYUVA();
+  const auto base_alpha = has_alpha ? read_frame_plane_active<float>(base, PLANAR_A)
+                                    : std::vector<float>{};
+  const auto overlay_alpha = has_alpha ? read_frame_plane_active<float>(overlay, PLANAR_A)
+                                       : std::vector<float>{};
+  const int luma_width = base->GetRowSize(PLANAR_Y) / static_cast<int>(sizeof(float));
+  const bool subsampled = vi.Is420();
+  const float threshold = static_cast<float>(test_case.threshold_8bit) / 255.0F;
+  const auto selected = [&](float base_luma, float overlay_luma) {
+    return test_case.lighten ? overlay_luma > base_luma + threshold
+                             : overlay_luma < base_luma - threshold;
+  };
+  const auto alpha_at = [&](int x, int y, bool chroma) {
+    if (!has_alpha)
+      return 1.0F;
+    return chroma && subsampled
+               ? layer_yuv_float_effective_subsampled(overlay_alpha, luma_width, x, y,
+                                                       test_case.placement)
+                  : overlay_alpha[static_cast<std::size_t>(y * luma_width + x)];
+  };
+  const auto luma_at = [&](const std::vector<float>& values, int x, int y, bool chroma) {
+    return chroma && subsampled
+               ? layer_yuv_float_effective_subsampled(values, luma_width, x, y,
+                                                       test_case.placement)
+                  : values[static_cast<std::size_t>(y * luma_width + x)];
+  };
+
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    const int plane_width = output->GetRowSize(plane) / static_cast<int>(sizeof(float));
+    const int plane_height = output->GetHeight(plane);
+    const bool chroma = plane != PLANAR_Y;
+    const auto base_values = read_frame_plane_active<float>(base, plane);
+    const auto overlay_values = read_frame_plane_active<float>(overlay, plane);
+    for (int y = 0; y < plane_height; ++y) {
+      const auto* output_row = reinterpret_cast<const float*>(
+          output->GetReadPtr(plane) + y * output->GetPitch(plane));
+      for (int x = 0; x < plane_width; ++x) {
+        const float base_luma = luma_at(base_y, x, y, chroma);
+        const float overlay_luma = luma_at(overlay_y, x, y, chroma);
+        const float blend_alpha = selected(base_luma, overlay_luma)
+                                      ? alpha_at(x, y, chroma) * test_case.opacity
+                                      : 0.0F;
+        const float expected = base_values[static_cast<std::size_t>(y * plane_width + x)] +
+                               (overlay_values[static_cast<std::size_t>(y * plane_width + x)] -
+                                base_values[static_cast<std::size_t>(y * plane_width + x)]) *
+                                   blend_alpha;
+        ASSERT_TRUE(std::isfinite(output_row[x]))
+            << "case=" << test_case.name << " plane=" << plane << " x=" << x << " y=" << y;
+        EXPECT_NEAR(output_row[x], expected, 1.0e-6F)
+            << "case=" << test_case.name << " plane=" << plane << " x=" << x << " y=" << y;
+      }
+    }
+  }
+  if (has_alpha) {
+    EXPECT_EQ(read_frame_plane_active<float>(output, PLANAR_A), base_alpha)
+        << "case=" << test_case.name << " destination alpha";
+  }
+}
+
+class LayerYuvFloatLightenDarkenTest
+    : public ::testing::TestWithParam<LayerYuvFloatLightenDarkenCase> {};
+
+TEST_P(LayerYuvFloatLightenDarkenTest, AppliesThresholdBlendWithIndependentPlacementReference) {
+  const auto& test_case = GetParam();
+  AviSynthEnvironment environment;
+  const auto vi = make_video_info(VideoInfoSpec{test_case.width, test_case.height,
+                                                test_case.pixel_type, 2, 25, 1});
+  const auto overlay_vi = make_video_info(VideoInfoSpec{test_case.width, test_case.height,
+                                                        test_case.pixel_type, 1, 25, 1});
+  auto base_frame0 = make_layer_yuv_float_frame(environment, vi, false, 0);
+  auto base_frame1 = make_layer_yuv_float_frame(environment, vi, false, 1);
+  auto overlay_frame = make_layer_yuv_float_frame(environment, overlay_vi, true, 0);
+  const auto base_before = FrameSnapshot::capture(base_frame1, vi);
+  const auto overlay_before = FrameSnapshot::capture(overlay_frame, overlay_vi);
+  auto* base_clip = new FrameSequenceClip(vi, {base_frame0, base_frame1});
+  auto* overlay_clip = new StaticFrameClip(overlay_vi, overlay_frame);
+  const PClip base(base_clip);
+  const PClip overlay(overlay_clip);
+
+  Layer filter(base, overlay, nullptr, test_case.lighten ? "Lighten" : "Darken", -1, 0, 0,
+               test_case.threshold_8bit, true, test_case.opacity, test_case.placement,
+               environment.get());
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(1, environment.get());
+
+  expect_layer_yuv_float_lighten_darken_reference(test_case, vi, base_frame1, overlay_frame,
+                                                  output);
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(base_clip->frame_requests(), std::vector<int>{1});
+  EXPECT_EQ(overlay_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(base_frame1, vi), base_before);
+  EXPECT_EQ(FrameSnapshot::capture(overlay_frame, overlay_vi), overlay_before);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    FormatAndOperation, LayerYuvFloatLightenDarkenTest,
+    ::testing::Values(
+        LayerYuvFloatLightenDarkenCase{VideoInfo::CS_YUV444PS, PLACEMENT_MPEG2, true, 10, 0.625F,
+                                       7, 3, "Yuv444Ps_Lighten_Width7_Height3_Threshold10"},
+        LayerYuvFloatLightenDarkenCase{VideoInfo::CS_YUV444PS, PLACEMENT_MPEG2, false, 10, 0.625F,
+                                       7, 3, "Yuv444Ps_Darken_Width7_Height3_Threshold10"},
+        LayerYuvFloatLightenDarkenCase{VideoInfo::CS_YUV420PS, PLACEMENT_MPEG1, true, 10, 0.625F,
+                                       8, 6, "Yuv420Ps_Lighten_Mpeg1_Width8_Height6_Threshold10"},
+        LayerYuvFloatLightenDarkenCase{VideoInfo::CS_YUV420PS, PLACEMENT_MPEG2, false, 10, 0.625F,
+                                       8, 6, "Yuv420Ps_Darken_Mpeg2_Width8_Height6_Threshold10"},
+        LayerYuvFloatLightenDarkenCase{VideoInfo::CS_YUV420PS, PLACEMENT_TOPLEFT, true, 10, 0.625F,
+                                       8, 6, "Yuv420Ps_Lighten_TopLeft_Width8_Height6_Threshold10"},
+        LayerYuvFloatLightenDarkenCase{VideoInfo::CS_YUVA420PS, PLACEMENT_MPEG1, true, 10, 0.625F,
+                                       8, 6, "Yuva420Ps_Lighten_Mpeg1_Alpha_Width8_Height6_Threshold10"}),
+    [](const ::testing::TestParamInfo<LayerYuvFloatLightenDarkenCase>& info) {
+      return info.param.name;
+    });
 
 TEST(LayerFilter, UsesBaseFramePropertiesForWeightedYuvOutput) {
   AviSynthEnvironment environment;
