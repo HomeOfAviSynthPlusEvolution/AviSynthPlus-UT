@@ -600,6 +600,68 @@ TEST(ConvertToPlanarGeneric, UpsamplesYv12ChromaWithBilinearTopPlacement) {
   EXPECT_EQ(FrameSnapshot::capture(source_frame, source_vi), source_before);
 }
 
+TEST(ConvertToPlanarGeneric, UpsamplesYv12ChromaWithBilinearBottomPlacement) {
+  AviSynthEnvironment environment;
+  const auto source_vi = yv12_video_info();
+  PVideoFrame source_frame = environment.get()->NewVideoFrame(source_vi);
+  fill_yuv8_source(source_frame);
+  set_frame_property_int(environment.get(), source_frame, "_ChromaLocation", AVS_CHROMA_BOTTOM);
+  set_frame_property_int(environment.get(), source_frame, "_ColorRange", AVS_COLORRANGE_FULL);
+  set_frame_property_int(environment.get(), source_frame, "_FieldBased", AVS_FIELD_TOP);
+  const auto source_before = FrameSnapshot::capture(source_frame, source_vi);
+  auto* source_clip_impl = new StaticFrameClip(source_vi, source_frame);
+  const PClip source(source_clip_impl);
+
+  const AVSValue bilinear_resampler("bilinear");
+  const AVSValue no_parameter;
+  ConvertToPlanarGeneric filter(source, VideoInfo::CS_YV24, false, AVS_CHROMA_BOTTOM,
+                                bilinear_resampler, no_parameter, no_parameter, no_parameter,
+                                AVS_CHROMA_UNUSED, environment.get());
+
+  ASSERT_EQ(filter.GetVideoInfo().pixel_type, VideoInfo::CS_YV24);
+  ASSERT_EQ(filter.GetVideoInfo().width, kYv12Width);
+  ASSERT_EQ(filter.GetVideoInfo().height, kYv12Height);
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+  ASSERT_EQ(output->GetRowSize(PLANAR_Y), kYv12Width);
+  ASSERT_EQ(output->GetRowSize(PLANAR_U), kYv12Width);
+  ASSERT_EQ(output->GetRowSize(PLANAR_V), kYv12Width);
+  ASSERT_EQ(output->GetHeight(PLANAR_U), kYv12Height);
+  ASSERT_EQ(output->GetHeight(PLANAR_V), kYv12Height);
+
+  const auto expected_u = expected_bilinear_chroma(
+      source_frame, PLANAR_U, kYv12Width / 2, kYv12Height / 2, kYv12Width, kYv12Height, 0.0,
+      -0.25);
+  const auto expected_v = expected_bilinear_chroma(
+      source_frame, PLANAR_V, kYv12Width / 2, kYv12Height / 2, kYv12Width, kYv12Height, 0.0,
+      -0.25);
+  for (int y = 0; y < kYv12Height; ++y) {
+    const auto* source_y =
+        source_frame->GetReadPtr(PLANAR_Y) + y * source_frame->GetPitch(PLANAR_Y);
+    const auto* output_y = output->GetReadPtr(PLANAR_Y) + y * output->GetPitch(PLANAR_Y);
+    const auto* output_u = output->GetReadPtr(PLANAR_U) + y * output->GetPitch(PLANAR_U);
+    const auto* output_v = output->GetReadPtr(PLANAR_V) + y * output->GetPitch(PLANAR_V);
+    for (int x = 0; x < kYv12Width; ++x) {
+      const auto index = static_cast<std::size_t>(y * kYv12Width + x);
+      EXPECT_EQ(output_y[x], source_y[x]) << "plane=Y row=" << y << " column=" << x;
+      EXPECT_EQ(output_u[x], expected_u[index]) << "plane=U row=" << y << " column=" << x;
+      EXPECT_EQ(output_v[x], expected_v[index]) << "plane=V row=" << y << " column=" << x;
+    }
+  }
+
+  EXPECT_FALSE(get_frame_property_int(environment.get(), output, "_ChromaLocation").has_value());
+  EXPECT_EQ(get_frame_property_int(environment.get(), output, "_ColorRange"),
+            std::optional<int>{AVS_COLORRANGE_FULL});
+  EXPECT_EQ(get_frame_property_int(environment.get(), output, "_FieldBased"),
+            std::optional<int>{AVS_FIELD_TOP});
+  const std::vector<int> expected_requests{0, 0, 0};
+  EXPECT_EQ(source_clip_impl->frame_requests(), expected_requests);
+  EXPECT_NE(source_frame->CheckMemory(), 1);
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(FrameSnapshot::capture(source_frame, source_vi), source_before);
+}
+
 TEST(ConvertToPlanarGeneric, UpsamplesYv12ChromaWithDefaultBicubicResampler) {
   AviSynthEnvironment environment;
   const auto source_vi = yv12_video_info();
