@@ -7,6 +7,7 @@
 #include "layer_mask_test_helpers.h"
 #include "layer_packed_blend_test_helpers.h"
 #include "layer_planarrgb_add_test_helpers.h"
+#include "layer_planarrgb_mul_test_helpers.h"
 #include "layer_rgb32_add_test_helpers.h"
 #include "layer_rgb32_fast_test_helpers.h"
 #include "layer_rgb32_lighten_darken_test_helpers.h"
@@ -981,6 +982,68 @@ TEST_P(LayerPlanarRgbAddKernels, MatchesIndependentReference) {
 INSTANTIATE_TEST_SUITE_P(Kernels, LayerPlanarRgbAddKernels,
                          ::testing::ValuesIn(layer_planarrgb_add_cases()),
                          [](const ::testing::TestParamInfo<LayerPlanarRgbAddCase>& info) {
+                           return info.param.name;
+                         });
+
+std::vector<LayerPlanarRgbMulCase> layer_planarrgb_mul_cases() {
+  constexpr std::size_t width_8 = 13;
+  constexpr std::size_t height_8 = 5;
+  constexpr std::size_t destination_pitch_8 = 64;
+  constexpr std::size_t overlay_pitch_8 = 80;
+  constexpr std::size_t mask_pitch_8 = 64;
+  constexpr int opacity_8 = 173;
+  constexpr std::uint32_t seed_8 = 0xF30F2601U;
+  constexpr std::size_t width_16 = 19;
+  constexpr std::size_t height_16 = 3;
+  constexpr std::size_t destination_pitch_16 = 96;
+  constexpr std::size_t overlay_pitch_16 = 112;
+  constexpr std::size_t mask_pitch_16 = 96;
+  constexpr int opacity_16 = 39321;
+  constexpr std::uint32_t seed_16 = 0xF30F2602U;
+
+  return {
+      make_layer_planarrgb_mul_case(
+          true, false, false, 8, width_8, height_8, destination_pitch_8, overlay_pitch_8, 0,
+          opacity_8, "Partial173", seed_8, "4526897b232aa349"),
+      make_layer_planarrgb_mul_case(
+          true, true, false, 8, width_8, height_8, destination_pitch_8, overlay_pitch_8,
+          mask_pitch_8, opacity_8, "Partial173", seed_8, "b4eb9f389ef05d26"),
+      make_layer_planarrgb_mul_case(
+          false, true, true, 8, width_8, height_8, destination_pitch_8, overlay_pitch_8,
+          mask_pitch_8, opacity_8, "Partial173", seed_8, "6d45d21ee6daf4f9"),
+      make_layer_planarrgb_mul_case(
+          false, false, false, 16, width_16, height_16, destination_pitch_16, overlay_pitch_16, 0,
+          opacity_16, "Partial39321", seed_16, "ad3c8ab8c4db317a"),
+      make_layer_planarrgb_mul_case(
+          false, true, false, 16, width_16, height_16, destination_pitch_16, overlay_pitch_16,
+          mask_pitch_16, opacity_16, "Partial39321", seed_16, "ac465b016bff2ec2"),
+      make_layer_planarrgb_mul_case(
+          true, true, true, 16, width_16, height_16, destination_pitch_16, overlay_pitch_16,
+          mask_pitch_16, opacity_16, "Partial39321", seed_16, "923705c83b096da5"),
+  };
+}
+
+class LayerPlanarRgbMulKernels : public ::testing::TestWithParam<LayerPlanarRgbMulCase> {};
+
+TEST_P(LayerPlanarRgbMulKernels, MatchesIndependentReference) {
+  const auto& test_case = GetParam();
+  if (!test_case.variant.function) {
+    GTEST_SKIP() << "upstream did not provide " << test_case.variant.name
+                 << " planar RGB multiply function";
+  }
+  if (!variant_supported(test_case.variant, CpuFeatures::detect())) {
+    GTEST_SKIP() << "host does not support " << test_case.variant.name;
+  }
+  if (test_case.bits_per_pixel == 8) {
+    run_layer_planarrgb_mul_case<std::uint8_t>(test_case);
+  } else {
+    run_layer_planarrgb_mul_case<std::uint16_t>(test_case);
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(Kernels, LayerPlanarRgbMulKernels,
+                         ::testing::ValuesIn(layer_planarrgb_mul_cases()),
+                         [](const ::testing::TestParamInfo<LayerPlanarRgbMulCase>& info) {
                            return info.param.name;
                          });
 
