@@ -380,5 +380,76 @@ TEST(ConvertToPlanarGeneric, UpsamplesYuva420AndPreservesAlphaPlane) {
   EXPECT_EQ(FrameSnapshot::capture(source_frame, source_vi), source_before);
 }
 
+TEST(ConvertToPlanarGeneric, UpsamplesYuv420P16ToYuv444P16WithPointFilter) {
+  AviSynthEnvironment environment;
+  const auto source_vi =
+      make_video_info(VideoInfoSpec{kYv12Width, kYv12Height, VideoInfo::CS_YUV420P16, 1, 25, 1});
+  PVideoFrame source_frame = environment.get()->NewVideoFrame(source_vi);
+  fill_plane_full_pitch(source_frame, 0x21, PLANAR_Y);
+  fill_plane_full_pitch(source_frame, 0x32, PLANAR_U);
+  fill_plane_full_pitch(source_frame, 0x43, PLANAR_V);
+  write_frame_plane<std::uint16_t>(source_frame, PLANAR_Y,
+                                   [](int x, int y) { return 1000 + x * 701 + y * 907; });
+  write_frame_plane<std::uint16_t>(source_frame, PLANAR_U,
+                                   [](int x, int y) { return 20000 + x * 1003 + y * 1201; });
+  write_frame_plane<std::uint16_t>(source_frame, PLANAR_V,
+                                   [](int x, int y) { return 40000 + x * 503 + y * 1307; });
+  set_frame_property_int(environment.get(), source_frame, "_ChromaLocation", AVS_CHROMA_TOP_LEFT);
+  set_frame_property_int(environment.get(), source_frame, "_ColorRange", AVS_COLORRANGE_FULL);
+  set_frame_property_int(environment.get(), source_frame, "_FieldBased", AVS_FIELD_TOP);
+  const auto source_before = FrameSnapshot::capture(source_frame, source_vi);
+  auto* source_clip_impl = new StaticFrameClip(source_vi, source_frame);
+  const PClip source(source_clip_impl);
+
+  const AVSValue point_resampler("point");
+  const AVSValue no_parameter;
+  ConvertToPlanarGeneric filter(source, VideoInfo::CS_YUV444P16, false, AVS_CHROMA_TOP_LEFT,
+                                point_resampler, no_parameter, no_parameter, no_parameter,
+                                AVS_CHROMA_UNUSED, environment.get());
+
+  ASSERT_EQ(filter.GetVideoInfo().pixel_type, VideoInfo::CS_YUV444P16);
+  ASSERT_EQ(filter.GetVideoInfo().width, kYv12Width);
+  ASSERT_EQ(filter.GetVideoInfo().height, kYv12Height);
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+  ASSERT_EQ(output->GetRowSize(PLANAR_Y), kYv12Width * sizeof(std::uint16_t));
+  ASSERT_EQ(output->GetRowSize(PLANAR_U), kYv12Width * sizeof(std::uint16_t));
+  ASSERT_EQ(output->GetRowSize(PLANAR_V), kYv12Width * sizeof(std::uint16_t));
+  ASSERT_EQ(output->GetHeight(PLANAR_U), kYv12Height);
+  ASSERT_EQ(output->GetHeight(PLANAR_V), kYv12Height);
+
+  for (int y = 0; y < kYv12Height; ++y) {
+    const auto* source_y = reinterpret_cast<const std::uint16_t*>(
+        source_frame->GetReadPtr(PLANAR_Y) + y * source_frame->GetPitch(PLANAR_Y));
+    const auto* source_u = reinterpret_cast<const std::uint16_t*>(
+        source_frame->GetReadPtr(PLANAR_U) + (y / 2) * source_frame->GetPitch(PLANAR_U));
+    const auto* source_v = reinterpret_cast<const std::uint16_t*>(
+        source_frame->GetReadPtr(PLANAR_V) + (y / 2) * source_frame->GetPitch(PLANAR_V));
+    const auto* output_y = reinterpret_cast<const std::uint16_t*>(output->GetReadPtr(PLANAR_Y) +
+                                                                  y * output->GetPitch(PLANAR_Y));
+    const auto* output_u = reinterpret_cast<const std::uint16_t*>(output->GetReadPtr(PLANAR_U) +
+                                                                  y * output->GetPitch(PLANAR_U));
+    const auto* output_v = reinterpret_cast<const std::uint16_t*>(output->GetReadPtr(PLANAR_V) +
+                                                                  y * output->GetPitch(PLANAR_V));
+    for (int x = 0; x < kYv12Width; ++x) {
+      EXPECT_EQ(output_y[x], source_y[x]) << "plane=Y row=" << y << " column=" << x;
+      EXPECT_EQ(output_u[x], source_u[x / 2]) << "plane=U row=" << y << " column=" << x;
+      EXPECT_EQ(output_v[x], source_v[x / 2]) << "plane=V row=" << y << " column=" << x;
+    }
+  }
+
+  EXPECT_FALSE(get_frame_property_int(environment.get(), output, "_ChromaLocation").has_value());
+  EXPECT_EQ(get_frame_property_int(environment.get(), output, "_ColorRange"),
+            std::optional<int>{AVS_COLORRANGE_FULL});
+  EXPECT_EQ(get_frame_property_int(environment.get(), output, "_FieldBased"),
+            std::optional<int>{AVS_FIELD_TOP});
+  const std::vector<int> expected_requests{0, 0, 0};
+  EXPECT_EQ(source_clip_impl->frame_requests(), expected_requests);
+  EXPECT_NE(source_frame->CheckMemory(), 1);
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(FrameSnapshot::capture(source_frame, source_vi), source_before);
+}
+
 }  // namespace
 }  // namespace avsut::test
