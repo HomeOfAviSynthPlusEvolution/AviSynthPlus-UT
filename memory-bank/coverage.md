@@ -183,6 +183,7 @@ submodule checkout cannot build `AvsCore` reliably.
 
 | `Layer` | Public float YUV `Mul` product composition and neutral-chroma mode | `YUV444PS`, `YUV420PS`, and `YUVA420PS` through the direct `Layer` constructor | Independent per-plane product/overlay references across MPEG-1, MPEG-2, and TopLeft placement; `use_chroma=false` neutral-chroma references for YUV444PS and YUV420PS; overlay-alpha mask averaging, base-alpha preservation, source immutability, cache hints, frame requests, and output memory checks |
 | `Layer` | Public float YUV `Add` weighted composition and neutral-chroma mode | `YUV444PS`, `YUV420PS`, and `YUVA420PS` through the direct `Layer` constructor | Independent weighted and alpha-masked references across MPEG-1, MPEG-2, and TopLeft placement; `use_chroma=false` neutral-chroma references for YUV444PS and YUV420PS; overlay-alpha mask averaging, base-alpha preservation, source immutability, cache hints, frame requests, and output memory checks. The YUVA420PS MPEG-2 alpha case retains an expected red for an upstream float mask-row bug |
+| `Layer` | Public float planar RGB `Mul` composition | `RGBPS`/`RGBAPS` through the direct `Layer` constructor, including an RGBPS base with an RGBAPS overlay | Independent GBR-order per-channel product references for no-alpha, overlay-alpha, and dual-alpha clips; overlay-alpha weighting and destination-alpha product; source immutability, cache hints, frame requests, and output memory checks |
 
 ## Finding Test Coverage
 

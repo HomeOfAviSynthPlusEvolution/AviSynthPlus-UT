@@ -1595,6 +1595,138 @@ INSTANTIATE_TEST_SUITE_P(
       return info.param.name;
     });
 
+float layer_planar_rgb_float_base_value(int plane, int x, int y, int frame_index) {
+  const int index = (x * 5 + y * 3 + frame_index * 2 + plane) % 8;
+  if (plane == PLANAR_A)
+    return 0.22F + static_cast<float>(index % 5) * 0.11F;
+  return 0.08F + static_cast<float>(index) * 0.09F;
+}
+
+float layer_planar_rgb_float_overlay_value(int plane, int x, int y) {
+  if (plane == PLANAR_A)
+    return 0.18F + static_cast<float>((x * 3 + y * 2) % 6) * 0.12F;
+  const int index = (x * 7 + y * 2 + plane * 3) % 8;
+  return 0.14F + static_cast<float>(index) * 0.085F;
+}
+
+PVideoFrame make_layer_planar_rgb_float_frame(AviSynthEnvironment& environment,
+                                              const VideoInfo& vi, bool overlay,
+                                              int frame_index) {
+  PVideoFrame frame = environment.get()->NewVideoFrame(vi);
+  for (const int plane : video_frame_planes(vi)) {
+    fill_plane_full_pitch(frame, static_cast<std::uint8_t>(0x68 + plane * 0x13 + frame_index),
+                          plane);
+    write_frame_plane<float>(frame, plane, [overlay, frame_index, plane](int x, int y) {
+      return overlay ? layer_planar_rgb_float_overlay_value(plane, x, y)
+                     : layer_planar_rgb_float_base_value(plane, x, y, frame_index);
+    });
+  }
+  return frame;
+}
+
+struct LayerPlanarRgbFloatMulCase {
+  int base_pixel_type;
+  int overlay_pixel_type;
+  float opacity;
+  int width;
+  int height;
+  const char* name;
+};
+
+void PrintTo(const LayerPlanarRgbFloatMulCase& test_case, std::ostream* stream) {
+  *stream << test_case.name;
+}
+
+class LayerPlanarRgbFloatMulTest
+    : public ::testing::TestWithParam<LayerPlanarRgbFloatMulCase> {};
+
+TEST_P(LayerPlanarRgbFloatMulTest, AppliesPerChannelProductWithOverlayAlphaReference) {
+  const auto& test_case = GetParam();
+  AviSynthEnvironment environment;
+  const auto vi = make_video_info(VideoInfoSpec{test_case.width, test_case.height,
+                                                test_case.base_pixel_type, 2, 25, 1});
+  const auto overlay_vi = make_video_info(VideoInfoSpec{test_case.width, test_case.height,
+                                                        test_case.overlay_pixel_type, 1, 25, 1});
+  const bool base_has_alpha = vi.IsPlanarRGBA();
+  const bool overlay_has_alpha = overlay_vi.IsPlanarRGBA();
+  auto base_frame0 = make_layer_planar_rgb_float_frame(environment, vi, false, 0);
+  auto base_frame1 = make_layer_planar_rgb_float_frame(environment, vi, false, 1);
+  auto overlay_frame = make_layer_planar_rgb_float_frame(environment, overlay_vi, true, 0);
+  const auto base_before = FrameSnapshot::capture(base_frame1, vi);
+  const auto overlay_before = FrameSnapshot::capture(overlay_frame, overlay_vi);
+  auto* base_clip = new FrameSequenceClip(vi, {base_frame0, base_frame1});
+  auto* overlay_clip = new StaticFrameClip(overlay_vi, overlay_frame);
+  const PClip base(base_clip);
+  const PClip overlay(overlay_clip);
+
+  Layer filter(base, overlay, nullptr, "Mul", -1, 0, 0, 0, true, test_case.opacity,
+               PLACEMENT_MPEG2, environment.get());
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(1, environment.get());
+
+  const int width = output->GetRowSize(PLANAR_G) / static_cast<int>(sizeof(float));
+  const int height = output->GetHeight(PLANAR_G);
+  const auto overlay_alpha = overlay_has_alpha
+                                 ? read_frame_plane_active<float>(overlay_frame, PLANAR_A)
+                                 : std::vector<float>{};
+  for (const int plane : {PLANAR_G, PLANAR_B, PLANAR_R}) {
+    const auto base_values = read_frame_plane_active<float>(base_frame1, plane);
+    const auto overlay_values = read_frame_plane_active<float>(overlay_frame, plane);
+    const auto* output_base = output->GetReadPtr(plane);
+    for (int y = 0; y < height; ++y) {
+      const auto* output_row = reinterpret_cast<const float*>(
+          output_base + y * output->GetPitch(plane));
+      for (int x = 0; x < width; ++x) {
+        const auto index = static_cast<std::size_t>(y * width + x);
+        const float alpha = overlay_has_alpha ? overlay_alpha[index] * test_case.opacity
+                                              : test_case.opacity;
+        const float target = base_values[index] * overlay_values[index];
+        const float expected = base_values[index] + (target - base_values[index]) * alpha;
+        ASSERT_TRUE(std::isfinite(output_row[x]))
+            << "case=" << test_case.name << " plane=" << plane << " x=" << x << " y=" << y;
+        EXPECT_NEAR(output_row[x], expected, 1.0e-6F)
+            << "case=" << test_case.name << " plane=" << plane << " x=" << x << " y=" << y;
+      }
+    }
+  }
+  if (base_has_alpha) {
+    const auto base_alpha = read_frame_plane_active<float>(base_frame1, PLANAR_A);
+    const auto overlay_alpha_values = read_frame_plane_active<float>(overlay_frame, PLANAR_A);
+    const auto* output_base = output->GetReadPtr(PLANAR_A);
+    for (int y = 0; y < height; ++y) {
+      const auto* output_row = reinterpret_cast<const float*>(
+          output_base + y * output->GetPitch(PLANAR_A));
+      for (int x = 0; x < width; ++x) {
+        const auto index = static_cast<std::size_t>(y * width + x);
+        const float alpha = overlay_alpha_values[index] * test_case.opacity;
+        const float target = base_alpha[index] * overlay_alpha_values[index];
+        const float expected = base_alpha[index] + (target - base_alpha[index]) * alpha;
+        EXPECT_NEAR(output_row[x], expected, 1.0e-6F)
+            << "case=" << test_case.name << " plane=" << PLANAR_A << " x=" << x
+            << " y=" << y;
+      }
+    }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(base_clip->frame_requests(), std::vector<int>{1});
+  EXPECT_EQ(overlay_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(base_frame1, vi), base_before);
+  EXPECT_EQ(FrameSnapshot::capture(overlay_frame, overlay_vi), overlay_before);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    FormatAndAlpha, LayerPlanarRgbFloatMulTest,
+    ::testing::Values(
+        LayerPlanarRgbFloatMulCase{VideoInfo::CS_RGBPS, VideoInfo::CS_RGBPS, 0.625F, 7, 3,
+                                   "BaseRgbps_OverlayRgbps_Width7_Height3_Opacity625"},
+        LayerPlanarRgbFloatMulCase{VideoInfo::CS_RGBPS, VideoInfo::CS_RGBAPS, 0.625F, 7, 3,
+                                   "BaseRgbps_OverlayRgbaps_Width7_Height3_Opacity625"},
+        LayerPlanarRgbFloatMulCase{VideoInfo::CS_RGBAPS, VideoInfo::CS_RGBAPS, 0.625F, 7, 3,
+                                   "BaseRgbaps_OverlayRgbaps_Width7_Height3_Opacity625"}),
+    [](const ::testing::TestParamInfo<LayerPlanarRgbFloatMulCase>& info) {
+      return info.param.name;
+    });
+
 std::uint16_t layer_mul_u16(std::uint16_t base, std::uint16_t overlay,
                             std::uint16_t mask, std::uint16_t alpha_target) {
   constexpr std::uint64_t max_value = 65535;
