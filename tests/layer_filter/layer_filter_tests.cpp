@@ -1974,6 +1974,80 @@ INSTANTIATE_TEST_SUITE_P(
       return info.param.name;
     });
 
+struct LayerPlanarRgbFloatFastCase {
+  int pixel_type;
+  float opacity;
+  int width;
+  int height;
+  const char* name;
+};
+
+void PrintTo(const LayerPlanarRgbFloatFastCase& test_case, std::ostream* stream) {
+  *stream << test_case.name;
+}
+
+class LayerPlanarRgbFloatFastTest
+    : public ::testing::TestWithParam<LayerPlanarRgbFloatFastCase> {};
+
+TEST_P(LayerPlanarRgbFloatFastTest, AveragesEveryPlanarRgbChannel) {
+  const auto& test_case = GetParam();
+  AviSynthEnvironment environment;
+  const auto vi = make_video_info(VideoInfoSpec{test_case.width, test_case.height,
+                                                test_case.pixel_type, 2, 25, 1});
+  const auto overlay_vi = make_video_info(VideoInfoSpec{test_case.width, test_case.height,
+                                                        test_case.pixel_type, 1, 25, 1});
+  auto base_frame0 = make_layer_planar_rgb_float_frame(environment, vi, false, 0);
+  auto base_frame1 = make_layer_planar_rgb_float_frame(environment, vi, false, 1);
+  auto overlay_frame = make_layer_planar_rgb_float_frame(environment, overlay_vi, true, 0);
+  const auto base_before = FrameSnapshot::capture(base_frame1, vi);
+  const auto overlay_before = FrameSnapshot::capture(overlay_frame, overlay_vi);
+  auto* base_clip = new FrameSequenceClip(vi, {base_frame0, base_frame1});
+  auto* overlay_clip = new StaticFrameClip(overlay_vi, overlay_frame);
+  const PClip base(base_clip);
+  const PClip overlay(overlay_clip);
+
+  Layer filter(base, overlay, nullptr, "Fast", -1, 0, 0, 0, true, test_case.opacity,
+               PLACEMENT_MPEG2, environment.get());
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(1, environment.get());
+
+  for (const int plane : video_frame_planes(vi)) {
+    const int width = output->GetRowSize(plane) / static_cast<int>(sizeof(float));
+    const int height = output->GetHeight(plane);
+    const auto base_values = read_frame_plane_active<float>(base_frame1, plane);
+    const auto overlay_values = read_frame_plane_active<float>(overlay_frame, plane);
+    for (int y = 0; y < height; ++y) {
+      const auto* output_row = reinterpret_cast<const float*>(
+          output->GetReadPtr(plane) + y * output->GetPitch(plane));
+      for (int x = 0; x < width; ++x) {
+        const auto index = static_cast<std::size_t>(y * width + x);
+        const float expected = base_values[index] +
+                               (overlay_values[index] - base_values[index]) * 0.5F;
+        ASSERT_TRUE(std::isfinite(output_row[x]))
+            << "case=" << test_case.name << " plane=" << plane << " x=" << x << " y=" << y;
+        EXPECT_NEAR(output_row[x], expected, 1.0e-6F)
+            << "case=" << test_case.name << " plane=" << plane << " x=" << x << " y=" << y;
+      }
+    }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(base_clip->frame_requests(), std::vector<int>{1});
+  EXPECT_EQ(overlay_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(base_frame1, vi), base_before);
+  EXPECT_EQ(FrameSnapshot::capture(overlay_frame, overlay_vi), overlay_before);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    FormatCases, LayerPlanarRgbFloatFastTest,
+    ::testing::Values(
+        LayerPlanarRgbFloatFastCase{VideoInfo::CS_RGBPS, 0.5F, 7, 3,
+                                    "Rgbps_Fast_Width7_Height3"},
+        LayerPlanarRgbFloatFastCase{VideoInfo::CS_RGBAPS, 0.5F, 7, 3,
+                                    "Rgbaps_Fast_Alpha_Width7_Height3"}),
+    [](const ::testing::TestParamInfo<LayerPlanarRgbFloatFastCase>& info) {
+      return info.param.name;
+    });
+
 std::uint16_t layer_mul_u16(std::uint16_t base, std::uint16_t overlay,
                             std::uint16_t mask, std::uint16_t alpha_target) {
   constexpr std::uint64_t max_value = 65535;
