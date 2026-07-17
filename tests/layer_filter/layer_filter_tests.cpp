@@ -1838,6 +1838,142 @@ INSTANTIATE_TEST_SUITE_P(
       return info.param.name;
     });
 
+struct LayerPlanarRgbFloatLightenDarkenCase {
+  int base_pixel_type;
+  int overlay_pixel_type;
+  bool lighten;
+  int threshold_8bit;
+  float opacity;
+  int width;
+  int height;
+  const char* name;
+};
+
+void PrintTo(const LayerPlanarRgbFloatLightenDarkenCase& test_case, std::ostream* stream) {
+  *stream << test_case.name;
+}
+
+class LayerPlanarRgbFloatLightenDarkenTest
+    : public ::testing::TestWithParam<LayerPlanarRgbFloatLightenDarkenCase> {};
+
+TEST_P(LayerPlanarRgbFloatLightenDarkenTest,
+       AppliesThresholdBlendWithGbrAndOverlayAlphaReference) {
+  const auto& test_case = GetParam();
+  AviSynthEnvironment environment;
+  const auto vi = make_video_info(VideoInfoSpec{test_case.width, test_case.height,
+                                                test_case.base_pixel_type, 2, 25, 1});
+  const auto overlay_vi = make_video_info(VideoInfoSpec{test_case.width, test_case.height,
+                                                        test_case.overlay_pixel_type, 1, 25, 1});
+  const bool base_has_alpha = vi.IsPlanarRGBA();
+  const bool overlay_has_alpha = overlay_vi.IsPlanarRGBA();
+  auto base_frame0 = make_layer_planar_rgb_float_frame(environment, vi, false, 0);
+  auto base_frame1 = make_layer_planar_rgb_float_frame(environment, vi, false, 1);
+  auto overlay_frame = make_layer_planar_rgb_float_frame(environment, overlay_vi, true, 0);
+  const auto base_before = FrameSnapshot::capture(base_frame1, vi);
+  const auto overlay_before = FrameSnapshot::capture(overlay_frame, overlay_vi);
+  auto* base_clip = new FrameSequenceClip(vi, {base_frame0, base_frame1});
+  auto* overlay_clip = new StaticFrameClip(overlay_vi, overlay_frame);
+  const PClip base(base_clip);
+  const PClip overlay(overlay_clip);
+
+  Layer filter(base, overlay, nullptr, test_case.lighten ? "Lighten" : "Darken", -1, 0, 0,
+               test_case.threshold_8bit, true, test_case.opacity, PLACEMENT_MPEG2,
+               environment.get());
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(1, environment.get());
+
+  const int width = output->GetRowSize(PLANAR_G) / static_cast<int>(sizeof(float));
+  const int height = output->GetHeight(PLANAR_G);
+  const float threshold = static_cast<float>(test_case.threshold_8bit) / 255.0F;
+  const auto overlay_alpha = overlay_has_alpha
+                                 ? read_frame_plane_active<float>(overlay_frame, PLANAR_A)
+                                 : std::vector<float>{};
+  const auto base_g = read_frame_plane_active<float>(base_frame1, PLANAR_G);
+  const auto base_b = read_frame_plane_active<float>(base_frame1, PLANAR_B);
+  const auto base_r = read_frame_plane_active<float>(base_frame1, PLANAR_R);
+  const auto overlay_g = read_frame_plane_active<float>(overlay_frame, PLANAR_G);
+  const auto overlay_b = read_frame_plane_active<float>(overlay_frame, PLANAR_B);
+  const auto overlay_r = read_frame_plane_active<float>(overlay_frame, PLANAR_R);
+  for (const int plane : {PLANAR_G, PLANAR_B, PLANAR_R}) {
+    const auto base_values = read_frame_plane_active<float>(base_frame1, plane);
+    const auto overlay_values = read_frame_plane_active<float>(overlay_frame, plane);
+    const auto* output_base = output->GetReadPtr(plane);
+    for (int y = 0; y < height; ++y) {
+      const auto* output_row = reinterpret_cast<const float*>(
+          output_base + y * output->GetPitch(plane));
+      for (int x = 0; x < width; ++x) {
+        const auto index = static_cast<std::size_t>(y * width + x);
+        const float base_luma = 0.114F * base_b[index] + 0.587F * base_g[index] +
+                                0.299F * base_r[index];
+        const float overlay_luma = 0.114F * overlay_b[index] + 0.587F * overlay_g[index] +
+                                   0.299F * overlay_r[index];
+        const bool selected = test_case.lighten
+                                  ? overlay_luma > base_luma + threshold
+                                  : overlay_luma < base_luma - threshold;
+        const float alpha = selected
+                                ? (overlay_has_alpha ? overlay_alpha[index] * test_case.opacity
+                                                     : test_case.opacity)
+                                : 0.0F;
+        const float expected = base_values[index] +
+                               (overlay_values[index] - base_values[index]) * alpha;
+        ASSERT_TRUE(std::isfinite(output_row[x]))
+            << "case=" << test_case.name << " plane=" << plane << " x=" << x << " y=" << y;
+        EXPECT_NEAR(output_row[x], expected, 1.0e-6F)
+            << "case=" << test_case.name << " plane=" << plane << " x=" << x << " y=" << y;
+      }
+    }
+  }
+  if (base_has_alpha) {
+    const auto base_alpha = read_frame_plane_active<float>(base_frame1, PLANAR_A);
+    const auto overlay_alpha_values = read_frame_plane_active<float>(overlay_frame, PLANAR_A);
+    const auto* output_base = output->GetReadPtr(PLANAR_A);
+    for (int y = 0; y < height; ++y) {
+      const auto* output_row = reinterpret_cast<const float*>(
+          output_base + y * output->GetPitch(PLANAR_A));
+      for (int x = 0; x < width; ++x) {
+        const auto index = static_cast<std::size_t>(y * width + x);
+        const float base_luma = 0.114F * base_b[index] + 0.587F * base_g[index] +
+                                0.299F * base_r[index];
+        const float overlay_luma = 0.114F * overlay_b[index] + 0.587F * overlay_g[index] +
+                                   0.299F * overlay_r[index];
+        const bool selected = test_case.lighten
+                                  ? overlay_luma > base_luma + threshold
+                                  : overlay_luma < base_luma - threshold;
+        const float alpha = selected ? overlay_alpha_values[index] * test_case.opacity : 0.0F;
+        const float expected = base_alpha[index] +
+                               (overlay_alpha_values[index] - base_alpha[index]) * alpha;
+        EXPECT_NEAR(output_row[x], expected, 1.0e-6F)
+            << "case=" << test_case.name << " plane=" << PLANAR_A << " x=" << x
+            << " y=" << y;
+      }
+    }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(base_clip->frame_requests(), std::vector<int>{1});
+  EXPECT_EQ(overlay_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(base_frame1, vi), base_before);
+  EXPECT_EQ(FrameSnapshot::capture(overlay_frame, overlay_vi), overlay_before);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    FormatAndOperation, LayerPlanarRgbFloatLightenDarkenTest,
+    ::testing::Values(
+        LayerPlanarRgbFloatLightenDarkenCase{VideoInfo::CS_RGBPS, VideoInfo::CS_RGBPS, true, 10,
+                                             0.625F, 7, 3,
+                                             "BaseRgbps_OverlayRgbps_Lighten_Width7_Height3_Threshold10"},
+        LayerPlanarRgbFloatLightenDarkenCase{VideoInfo::CS_RGBPS, VideoInfo::CS_RGBPS, false, 10,
+                                             0.625F, 7, 3,
+                                             "BaseRgbps_OverlayRgbps_Darken_Width7_Height3_Threshold10"},
+        LayerPlanarRgbFloatLightenDarkenCase{VideoInfo::CS_RGBPS, VideoInfo::CS_RGBAPS, true, 10,
+                                             0.625F, 7, 3,
+                                             "BaseRgbps_OverlayRgbaps_Lighten_Width7_Height3_Threshold10"},
+        LayerPlanarRgbFloatLightenDarkenCase{VideoInfo::CS_RGBAPS, VideoInfo::CS_RGBAPS, false, 10,
+                                             0.625F, 7, 3,
+                                             "BaseRgbaps_OverlayRgbaps_Darken_Width7_Height3_Threshold10"}),
+    [](const ::testing::TestParamInfo<LayerPlanarRgbFloatLightenDarkenCase>& info) {
+      return info.param.name;
+    });
+
 std::uint16_t layer_mul_u16(std::uint16_t base, std::uint16_t overlay,
                             std::uint16_t mask, std::uint16_t alpha_target) {
   constexpr std::uint64_t max_value = 65535;
