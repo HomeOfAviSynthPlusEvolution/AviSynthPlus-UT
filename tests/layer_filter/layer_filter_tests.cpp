@@ -1551,6 +1551,8 @@ TEST_P(LayerYuvFloatFastTest, AppliesPerPlaneAverageReference) {
   EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
   const PVideoFrame output = filter.GetFrame(1, environment.get());
 
+  const auto base_alpha = vi.IsYUVA() ? read_frame_plane_active<float>(base_frame1, PLANAR_A)
+                                      : std::vector<float>{};
   for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
     const int plane_width = output->GetRowSize(plane) / static_cast<int>(sizeof(float));
     const int plane_height = output->GetHeight(plane);
@@ -1569,6 +1571,10 @@ TEST_P(LayerYuvFloatFastTest, AppliesPerPlaneAverageReference) {
       }
     }
   }
+  if (vi.IsYUVA()) {
+    EXPECT_EQ(read_frame_plane_active<float>(output, PLANAR_A), base_alpha)
+        << "case=" << test_case.name << " destination alpha";
+  }
   EXPECT_NE(output->CheckMemory(), 1);
   EXPECT_EQ(base_clip->frame_requests(), std::vector<int>{1});
   EXPECT_EQ(overlay_clip->frame_requests(), std::vector<int>{0});
@@ -1582,7 +1588,9 @@ INSTANTIATE_TEST_SUITE_P(
         LayerYuvFloatFastCase{VideoInfo::CS_YUV444PS, 7, 3,
                               "Yuv444Ps_Fast_Width7_Height3"},
         LayerYuvFloatFastCase{VideoInfo::CS_YUV420PS, 8, 6,
-                              "Yuv420Ps_Fast_Width8_Height6"}),
+                              "Yuv420Ps_Fast_Width8_Height6"},
+        LayerYuvFloatFastCase{VideoInfo::CS_YUVA420PS, 8, 6,
+                              "Yuva420Ps_Fast_Alpha_Width8_Height6"}),
     [](const ::testing::TestParamInfo<LayerYuvFloatFastCase>& info) {
       return info.param.name;
     });
