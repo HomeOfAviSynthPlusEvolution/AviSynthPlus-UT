@@ -333,6 +333,30 @@ inline std::uint16_t public_clip_integer(double value, int bit_depth) {
       static_cast<std::int64_t>(value), 0, maximum));
 }
 
+inline double public_yuv_to_rgb_alpha_reference(
+    const PublicYuvToRgbCase& test_case, double source_alpha) {
+  if (test_case.source_bit_depth == test_case.target_bit_depth) {
+    return source_alpha;
+  }
+  if (test_case.target_bit_depth == 32) {
+    if (test_case.source_bit_depth == 32) {
+      return source_alpha;
+    }
+    return source_alpha / static_cast<double>(
+                              (std::uint32_t{1} << test_case.source_bit_depth) - 1U);
+  }
+
+  const double source_maximum = test_case.source_bit_depth == 32
+                                    ? 1.0
+                                    : static_cast<double>(
+                                          (std::uint32_t{1} << test_case.source_bit_depth) - 1U);
+  const double target_maximum = static_cast<double>(
+      (std::uint32_t{1} << test_case.target_bit_depth) - 1U);
+  const double normalized = source_alpha / source_maximum;
+  return static_cast<double>(public_clip_integer(
+      std::floor(normalized * target_maximum + 0.5), test_case.target_bit_depth));
+}
+
 inline std::int64_t public_shifted_component(int coefficient_a, int coefficient_b,
                                              int coefficient_c, std::int64_t a,
                                              std::int64_t b, std::int64_t c, int offset) {
@@ -512,8 +536,9 @@ inline void run_public_yuv_to_rgb_case_typed(const PublicYuvToRgbCase& test_case
     const auto* output_alpha = reinterpret_cast<const DestinationT*>(output->GetReadPtr(PLANAR_A));
     for (int y = 0; y < static_cast<int>(test_case.height); ++y) {
       for (int x = 0; x < width; ++x) {
-        EXPECT_EQ(output_alpha[y * output_pitch + x],
-                  static_cast<DestinationT>(source_alpha[y * source_pitch + x]))
+        const auto expected_alpha = public_yuv_to_rgb_alpha_reference(
+            test_case, static_cast<double>(source_alpha[y * source_pitch + x]));
+        EXPECT_EQ(output_alpha[y * output_pitch + x], static_cast<DestinationT>(expected_alpha))
             << test_case.name << " alpha row=" << y << " column=" << x;
       }
     }
@@ -543,9 +568,21 @@ inline void run_public_yuv_to_rgb_case(const PublicYuvToRgbCase& test_case) {
       run_public_yuv_to_rgb_case_typed<std::uint8_t, std::uint16_t>(test_case);
     }
   } else if (test_case.source_bit_depth == 16) {
-    run_public_yuv_to_rgb_case_typed<std::uint16_t, std::uint16_t>(test_case);
+    if (test_case.target_bit_depth == 8) {
+      run_public_yuv_to_rgb_case_typed<std::uint16_t, std::uint8_t>(test_case);
+    } else if (test_case.target_bit_depth == 32) {
+      run_public_yuv_to_rgb_case_typed<std::uint16_t, float>(test_case);
+    } else {
+      run_public_yuv_to_rgb_case_typed<std::uint16_t, std::uint16_t>(test_case);
+    }
   } else {
-    run_public_yuv_to_rgb_case_typed<float, float>(test_case);
+    if (test_case.target_bit_depth == 32) {
+      run_public_yuv_to_rgb_case_typed<float, float>(test_case);
+    } else if (test_case.target_bit_depth == 8) {
+      run_public_yuv_to_rgb_case_typed<float, std::uint8_t>(test_case);
+    } else {
+      run_public_yuv_to_rgb_case_typed<float, std::uint16_t>(test_case);
+    }
   }
 }
 

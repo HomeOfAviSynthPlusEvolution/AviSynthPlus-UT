@@ -14,6 +14,9 @@ std::vector<PublicYuvToRgbCase> public_yuv_to_rgb_cases() {
       make_public_yuv_to_rgb_case(AVS_MATRIX_BT2020_NCL, "2020:limited",
                                   VideoInfo::CS_YUVA444P16, 16, 16, -1, -2, false, false, true,
                                   true, 9, 3),
+      make_public_yuv_to_rgb_case(AVS_MATRIX_BT2020_NCL, "2020:limited",
+                                  VideoInfo::CS_YUVA444P16, 16, 10, 10, -2, false, false, true,
+                                  true, 11, 3),
       make_public_yuv_to_rgb_case(AVS_MATRIX_BT709, "709:full", VideoInfo::CS_YUV444PS, 32, 32,
                                   -1, -1, true, true, true, false, 7, 2),
   };
