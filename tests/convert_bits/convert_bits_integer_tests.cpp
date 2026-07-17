@@ -32,6 +32,9 @@ std::vector<ConvertBitsIntegerCase> convert_bits_integer_cases() {
       cases, IntegerStorage::UInt16ToUInt8, 10, 8, 128, 96, "65ab473e92272d50", 0xF30F2406U);
   add_convert_bits_integer_variants<std::uint16_t, std::uint16_t, true, true, false>(
       cases, IntegerStorage::UInt16ToUInt16, 12, 10, 128, 128, "d43bec624eaf2b0d", 0xF30F2407U);
+  add_convert_bits_integer_variants<std::uint16_t, std::uint8_t, false, true, false>(
+      cases, IntegerStorage::UInt16ToUInt8, 14, 8, 96, 64, "e29f426768ae7380", 0xF30B2410U, 29, 7,
+      32);
   return cases;
 }
 

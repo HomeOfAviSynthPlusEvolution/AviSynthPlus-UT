@@ -17,6 +17,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <iostream>
 #include <limits>
 #include <ostream>
 #include <sstream>
@@ -47,6 +48,7 @@ struct ConvertBitsIntegerCase {
   std::string expected_hash;
   std::uint32_t seed{};
   std::string name;
+  std::size_t output_padding_protected_from{};
 };
 
 inline void PrintTo(const ConvertBitsIntegerCase& test_case, std::ostream* stream) {
@@ -87,11 +89,11 @@ inline ConvertBitsIntegerCase make_convert_bits_integer_case(
     IntegerStorage storage, bool chroma, bool source_full, bool target_full, int source_bit_depth,
     int target_bit_depth, std::size_t width, std::size_t height, std::size_t source_pitch,
     std::size_t target_pitch, Variant<ConvertBitsIntegerFunc> variant, std::string expected_hash,
-    std::uint32_t seed = 0) {
+    std::uint32_t seed = 0, std::size_t output_padding_protected_from = 0) {
   ConvertBitsIntegerCase result{
       storage, chroma, source_full,  target_full,  source_bit_depth,   target_bit_depth,
       width,   height, source_pitch, target_pitch, std::move(variant), std::move(expected_hash),
-      seed, {}};
+      seed, {}, output_padding_protected_from};
   std::ostringstream stream;
   stream << (chroma ? "Chroma" : "Luma") << "_Src" << source_bit_depth
          << (source_full ? "Full" : "Limited") << "_Dst" << target_bit_depth
@@ -230,7 +232,23 @@ void run_convert_bits_integer_case_typed(const ConvertBitsIntegerCase& test_case
   EXPECT_TRUE(source.active_matches(source_snapshot)) << test_case.name << " modified the source";
   EXPECT_TRUE(source.memory_intact()) << test_case.name;
   EXPECT_TRUE(expected.memory_intact()) << test_case.name;
-  EXPECT_TRUE(actual.memory_intact()) << test_case.name;
+  EXPECT_TRUE(actual.guards_intact()) << test_case.name << " output guards";
+  const auto active_row_bytes = test_case.width * sizeof(Target);
+  const auto protected_from = test_case.output_padding_protected_from == 0
+                                  ? active_row_bytes
+                                  : test_case.output_padding_protected_from;
+  const bool permitted_tail_write =
+      protected_from > active_row_bytes && !actual.padding_intact() &&
+      actual.padding_intact_from(protected_from);
+  if (permitted_tail_write) {
+    std::cout << "[INFO] " << test_case.name
+              << " modified output padding within the permitted SIMD tail"
+              << " (active_row_bytes=" << active_row_bytes
+              << ", protected_from_byte=" << protected_from << ")\n";
+  }
+  EXPECT_TRUE(actual.padding_intact_from(protected_from))
+      << test_case.name << " modified output padding after the permitted SIMD tail boundary "
+      << protected_from;
 }
 
 inline void run_convert_bits_integer_case(const ConvertBitsIntegerCase& test_case) {
@@ -255,23 +273,23 @@ void add_convert_bits_integer_variants(std::vector<ConvertBitsIntegerCase>& case
                                        IntegerStorage storage, int source_bit_depth,
                                        int target_bit_depth, std::size_t source_pitch,
                                        std::size_t target_pitch, const char* expected_hash,
-                                       std::uint32_t seed = 0) {
-  constexpr std::size_t width = 32;
-  constexpr std::size_t height = 5;
+                                       std::uint32_t seed = 0, std::size_t width = 32,
+                                       std::size_t height = 5,
+                                       std::size_t output_padding_protected_from = 0) {
   cases.push_back(make_convert_bits_integer_case(
       storage, Chroma, SourceFull, TargetFull, source_bit_depth, target_bit_depth, width, height,
       source_pitch, target_pitch,
       Variant<ConvertBitsIntegerFunc>{
           "sse41", convert_uint_sse41<Source, Target, Chroma, SourceFull, TargetFull>,
           IsaRequirement::Sse41},
-      expected_hash, seed));
+      expected_hash, seed, output_padding_protected_from));
   cases.push_back(make_convert_bits_integer_case(
       storage, Chroma, SourceFull, TargetFull, source_bit_depth, target_bit_depth, width, height,
       source_pitch, target_pitch,
       Variant<ConvertBitsIntegerFunc>{
           "avx2", convert_uint_avx2<Source, Target, Chroma, SourceFull, TargetFull>,
           IsaRequirement::Avx2},
-      expected_hash, seed));
+      expected_hash, seed, output_padding_protected_from));
 }
 
 }  // namespace avsut::test
