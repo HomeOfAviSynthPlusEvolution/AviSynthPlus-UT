@@ -8,6 +8,7 @@
 #include "layer_packed_blend_test_helpers.h"
 #include "layer_planarrgb_add_test_helpers.h"
 #include "layer_planarrgb_lighten_darken_test_helpers.h"
+#include "layer_planarrgb_lighten_darken_float_test_helpers.h"
 #include "layer_planarrgb_mul_test_helpers.h"
 #include "layer_planarrgb_mul_float_test_helpers.h"
 #include "layer_rgb32_add_test_helpers.h"
@@ -1171,6 +1172,52 @@ TEST_P(LayerPlanarRgbMulFloatKernels, MatchesIndependentReference) {
 INSTANTIATE_TEST_SUITE_P(
     Kernels, LayerPlanarRgbMulFloatKernels, ::testing::ValuesIn(layer_planarrgb_mul_float_cases()),
     [](const ::testing::TestParamInfo<LayerPlanarRgbMulFloatCase>& info) {
+      return info.param.name;
+    });
+
+std::vector<LayerPlanarRgbLightenDarkenFloatCase>
+layer_planarrgb_lighten_darken_float_cases() {
+  constexpr std::size_t width = 7;
+  constexpr std::size_t height = 3;
+  constexpr std::size_t destination_pitch = 32;
+  constexpr std::size_t overlay_pitch = 48;
+  constexpr std::size_t mask_pitch = 32;
+  constexpr float opacity = 0.37F;
+  constexpr float threshold = 0.05F;
+  std::vector<LayerPlanarRgbLightenDarkenFloatCase> cases;
+  for (const bool lighten : {true, false}) {
+    for (const auto& alpha_case : {
+             std::tuple<bool, bool, std::size_t>{false, false, 0},
+             std::tuple<bool, bool, std::size_t>{true, false, mask_pitch},
+             std::tuple<bool, bool, std::size_t>{true, true, mask_pitch}}) {
+      const auto [has_alpha, blend_alpha, case_mask_pitch] = alpha_case;
+      cases.push_back(make_layer_planarrgb_lighten_darken_float_case(
+          lighten, has_alpha, blend_alpha, width, height, destination_pitch, overlay_pitch,
+          case_mask_pitch, opacity, "37Pct", threshold, "0p05"));
+    }
+  }
+  return cases;
+}
+
+class LayerPlanarRgbLightenDarkenFloatKernels
+    : public ::testing::TestWithParam<LayerPlanarRgbLightenDarkenFloatCase> {};
+
+TEST_P(LayerPlanarRgbLightenDarkenFloatKernels, MatchesIndependentReference) {
+  const auto& test_case = GetParam();
+  if (!test_case.variant.function) {
+    GTEST_SKIP() << "upstream did not provide " << test_case.variant.name
+                 << " float planar RGB lighten/darken function";
+  }
+  if (!variant_supported(test_case.variant, CpuFeatures::detect())) {
+    GTEST_SKIP() << "host does not support " << test_case.variant.name;
+  }
+  run_layer_planarrgb_lighten_darken_float_case(test_case);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Kernels, LayerPlanarRgbLightenDarkenFloatKernels,
+    ::testing::ValuesIn(layer_planarrgb_lighten_darken_float_cases()),
+    [](const ::testing::TestParamInfo<LayerPlanarRgbLightenDarkenFloatCase>& info) {
       return info.param.name;
     });
 
