@@ -1,5 +1,6 @@
 add_executable(convert_planar_tests
   convert_yuy2_tests.cpp
+  convert_to_planar_tests.cpp
   convert_yv24_rgb_tests.cpp
   convert_yuv444_rgb_tests.cpp
   convert_rgb_to_yuv444_tests.cpp
