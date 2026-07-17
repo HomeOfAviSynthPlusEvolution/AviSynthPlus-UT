@@ -404,7 +404,13 @@ inline void run_public_rgb_to_yuv444_color_case(const PublicRgbToYuv444Case& tes
   } else if (test_case.source_bit_depth == 16) {
     run_public_rgb_to_yuv444_color_case_typed<std::uint16_t, std::uint16_t>(test_case);
   } else {
-    run_public_rgb_to_yuv444_color_case_typed<float, float>(test_case);
+    if (test_case.target_bit_depth == 32) {
+      run_public_rgb_to_yuv444_color_case_typed<float, float>(test_case);
+    } else if (test_case.target_bit_depth == 8) {
+      run_public_rgb_to_yuv444_color_case_typed<float, std::uint8_t>(test_case);
+    } else {
+      run_public_rgb_to_yuv444_color_case_typed<float, std::uint16_t>(test_case);
+    }
   }
 }
 
