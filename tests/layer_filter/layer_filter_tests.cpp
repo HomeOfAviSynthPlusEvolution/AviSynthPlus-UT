@@ -1285,6 +1285,7 @@ INSTANTIATE_TEST_SUITE_P(
 struct LayerYuvFloatMulCase {
   int pixel_type;
   int placement;
+  bool use_chroma;
   float opacity;
   int width;
   int height;
@@ -1326,7 +1327,9 @@ void expect_layer_yuv_float_mul_reference(const LayerYuvFloatMulCase& test_case,
       for (int x = 0; x < plane_width; ++x) {
         const auto index = static_cast<std::size_t>(y * plane_width + x);
         const float base_value = base_values[index];
-        const float overlay_value = overlay_values[index];
+        const float overlay_value = chroma && !test_case.use_chroma
+                                         ? 0.0F
+                                         : overlay_values[index];
         const float target = chroma ? overlay_value : overlay_value * base_value;
         const float alpha = alpha_at(x, y, chroma) * test_case.opacity;
         const float expected = base_value + (target - base_value) * alpha;
@@ -1362,7 +1365,8 @@ TEST_P(LayerYuvFloatMulTest, AppliesProductBlendAcrossPlacementAndAlpha) {
   const PClip base(base_clip);
   const PClip overlay(overlay_clip);
 
-  Layer filter(base, overlay, nullptr, "Mul", -1, 0, 0, 0, true, test_case.opacity,
+  Layer filter(base, overlay, nullptr, "Mul", -1, 0, 0, 0, test_case.use_chroma,
+               test_case.opacity,
                test_case.placement, environment.get());
   EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
   const PVideoFrame output = filter.GetFrame(1, environment.get());
@@ -1378,16 +1382,20 @@ TEST_P(LayerYuvFloatMulTest, AppliesProductBlendAcrossPlacementAndAlpha) {
 INSTANTIATE_TEST_SUITE_P(
     FormatAndPlacement, LayerYuvFloatMulTest,
     ::testing::Values(
-        LayerYuvFloatMulCase{VideoInfo::CS_YUV444PS, PLACEMENT_MPEG2, 0.625F, 7, 3,
-                             "Yuv444Ps_Mul_Width7_Height3_Opacity625"},
-        LayerYuvFloatMulCase{VideoInfo::CS_YUV420PS, PLACEMENT_MPEG1, 0.625F, 8, 6,
-                             "Yuv420Ps_Mul_Mpeg1_Width8_Height6_Opacity625"},
-        LayerYuvFloatMulCase{VideoInfo::CS_YUV420PS, PLACEMENT_MPEG2, 0.625F, 8, 6,
-                             "Yuv420Ps_Mul_Mpeg2_Width8_Height6_Opacity625"},
-        LayerYuvFloatMulCase{VideoInfo::CS_YUV420PS, PLACEMENT_TOPLEFT, 0.625F, 8, 6,
-                             "Yuv420Ps_Mul_TopLeft_Width8_Height6_Opacity625"},
-        LayerYuvFloatMulCase{VideoInfo::CS_YUVA420PS, PLACEMENT_MPEG2, 0.625F, 8, 6,
-                             "Yuva420Ps_Mul_Mpeg2_Alpha_Width8_Height6_Opacity625"}),
+        LayerYuvFloatMulCase{VideoInfo::CS_YUV444PS, PLACEMENT_MPEG2, true, 0.625F, 7, 3,
+                             "Yuv444Ps_Mul_UseChroma_Width7_Height3_Opacity625"},
+        LayerYuvFloatMulCase{VideoInfo::CS_YUV420PS, PLACEMENT_MPEG1, true, 0.625F, 8, 6,
+                             "Yuv420Ps_Mul_UseChroma_Mpeg1_Width8_Height6_Opacity625"},
+        LayerYuvFloatMulCase{VideoInfo::CS_YUV420PS, PLACEMENT_MPEG2, true, 0.625F, 8, 6,
+                             "Yuv420Ps_Mul_UseChroma_Mpeg2_Width8_Height6_Opacity625"},
+        LayerYuvFloatMulCase{VideoInfo::CS_YUV420PS, PLACEMENT_TOPLEFT, true, 0.625F, 8, 6,
+                             "Yuv420Ps_Mul_UseChroma_TopLeft_Width8_Height6_Opacity625"},
+        LayerYuvFloatMulCase{VideoInfo::CS_YUVA420PS, PLACEMENT_MPEG2, true, 0.625F, 8, 6,
+                             "Yuva420Ps_Mul_UseChroma_Mpeg2_Alpha_Width8_Height6_Opacity625"},
+        LayerYuvFloatMulCase{VideoInfo::CS_YUV444PS, PLACEMENT_MPEG2, false, 0.625F, 7, 3,
+                             "Yuv444Ps_Mul_NeutralChroma_Width7_Height3_Opacity625"},
+        LayerYuvFloatMulCase{VideoInfo::CS_YUV420PS, PLACEMENT_MPEG2, false, 0.625F, 8, 6,
+                             "Yuv420Ps_Mul_NeutralChroma_Mpeg2_Width8_Height6_Opacity625"}),
     [](const ::testing::TestParamInfo<LayerYuvFloatMulCase>& info) {
       return info.param.name;
     });
