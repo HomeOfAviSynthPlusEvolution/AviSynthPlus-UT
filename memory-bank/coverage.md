@@ -175,6 +175,7 @@ submodule checkout cannot build `AvsCore` reliably.
 | `FlipHorizontal` | Public horizontal flip filter | Public `FlipHorizontal` class for 8-bit YV24, YV12, BGR24, BGR64, and 16-bit planar RGB | Direct constructors with independent per-row reversal references across full-resolution, subsampled, packed bottom-up, and planar GBR planes; YUVA420 double-flip restoration invariant; source full-pitch immutability, cache hints, frame requests, and output memory checks |
 | `Crop` | Public crop filter | Public `Crop` class for 8-bit YV24, YV12, YV16, YUVA420, BGR24, and 16-bit planar RGB | Direct constructors with explicit subrectangles; independent luma/chroma and alpha coordinate references, Mod2 subsampled offsets, packed logical rows, `_ChromaLocation`/`_ColorRange`/`_FieldBased` preservation on planar subframes, output geometry, source full-pitch immutability, frame requests, and output memory checks |
 | `AddBorders` | Public border-padding filter | Public `AddBorders` class for 8-bit YV24, YV12, YUVA420, BGR24, BGR64, and 16-bit planar RGB with explicit colors | Direct constructors with fixed left/top/right/bottom borders; independent interior copy and per-plane color references covering subsampled geometry, alpha, packed 8/16-bit scaling, and planar GBR color mapping; source full-pitch immutability, cache hints, frame requests, and output memory checks. Transient resampling remains uncovered |
+| `Exprfilter` | Public expression filter arithmetic, planar format routing, and LUT initialization | Public `Exprfilter` direct construction for seeded YV24 8-bit, RGBAP16, and Y8 `lut_x` cases; scalar C, Vector-C, SSE2, and AVX2 JIT variants where supported | Fixed-seed non-vector-width plane arithmetic with spatial coordinates, GBR/alpha order and 16-bit stores, one-dimensional LUT construction followed by a later frame request, source full-pitch immutability, cache-hint responses, strict frame requests, and output memory checks. Relative addressing, float square-root domain behavior, and finding-only format-override cases remain in `finding.B10` |
 | `Field topology` | Public field separation, weaving, and patterned selection | Public `SeparateFields`, `DoubleWeaveFields`, `DoubleWeaveFrames`, and `SelectEvery` classes for short YV12/YV24 sequences; `Weave` behavior through the public `DoubleWeaveFields` plus `SelectEvery` composition | Direct constructors with explicit TFF/BFF metadata, field-row extraction, adjacent-field and adjacent-frame interleaving, frame-rate/count updates, patterned frame selection, source request traces, source full-pitch immutability, cache hints, and output memory checks. The final advertised frame of both `DoubleWeave` implementations remains an expected red because the current upstream code requests a past-end child frame. |
 
 ## Finding Test Coverage
@@ -231,6 +232,13 @@ submodule checkout cannot build `AvsCore` reliably.
   expected red with a strict out-of-range source clip; the `Weave`-equivalent
   even-frame composition remains within range because it selects only even
   double-weave frames.
+- The public `Exprfilter` B10 finding cases retain expected reds on the current
+  upstream revision: the Vector-C relative-row expression ignores the
+  previous-row offset, the RGB(A)-to-YUVA format override maps the processed
+  planes in the wrong order, and the SSE2 JIT returns zero instead of preserving
+  NaN for negative float `sqrt`. The scalar/reference paths in these cases
+  still establish the intended contracts; the ordinary `Exprfilter` target
+  covers separate seeded arithmetic, planar RGB16 routing, and `lut_x` paths.
 - The upstream `calculate_sad_sse2<true>` packed RGB32 implementation has a
   scalar-tail indexing bug when the byte row size is not a multiple of 16. Its
   tail loop starts at the first packed tail pixel but advances by four while
