@@ -26,6 +26,7 @@ constexpr int kSourceWidth = 8;
 constexpr int kSourceHeight = 4;
 constexpr int kYv12Width = 8;
 constexpr int kYv12Height = 6;
+constexpr int kInterlacedYv12Height = 8;
 
 VideoInfo yv16_video_info() {
   return make_video_info(VideoInfoSpec{kSourceWidth, kSourceHeight, VideoInfo::CS_YV16, 1, 25, 1});
@@ -781,6 +782,63 @@ TEST(ConvertToPlanarGeneric, DownsamplesYv24ToYv12WithTopLeftPointFilter) {
   EXPECT_EQ(get_frame_property_int(environment.get(), output, "_FieldBased"),
             std::optional<int>{AVS_FIELD_TOP});
   const std::vector<int> expected_requests{0, 0, 0};
+  EXPECT_EQ(source_clip_impl->frame_requests(), expected_requests);
+  EXPECT_NE(source_frame->CheckMemory(), 1);
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(FrameSnapshot::capture(source_frame, source_vi), source_before);
+}
+
+TEST(ConvertToPlanarGeneric, PreservesInterlacedYv12WithMatchingPointPlacement) {
+  AviSynthEnvironment environment;
+  const auto source_vi = make_video_info(VideoInfoSpec{
+      kYv12Width, kInterlacedYv12Height, VideoInfo::CS_YV12, 1, 25, 1});
+  PVideoFrame source_frame = environment.get()->NewVideoFrame(source_vi);
+  fill_yuv8_source(source_frame);
+  set_frame_property_int(environment.get(), source_frame, "_ChromaLocation", AVS_CHROMA_LEFT);
+  set_frame_property_int(environment.get(), source_frame, "_ColorRange", AVS_COLORRANGE_FULL);
+  set_frame_property_int(environment.get(), source_frame, "_FieldBased", AVS_FIELD_TOP);
+  const auto source_before = FrameSnapshot::capture(source_frame, source_vi);
+  auto* source_clip_impl = new StaticFrameClip(source_vi, source_frame);
+  const PClip source(source_clip_impl);
+
+  const AVSValue point_resampler("point");
+  const AVSValue no_parameter;
+  ConvertToPlanarGeneric filter(source, VideoInfo::CS_YV12, true, AVS_CHROMA_LEFT,
+                                point_resampler, no_parameter, no_parameter, no_parameter,
+                                AVS_CHROMA_LEFT, environment.get());
+
+  ASSERT_EQ(filter.GetVideoInfo().pixel_type, VideoInfo::CS_YV12);
+  ASSERT_EQ(filter.GetVideoInfo().width, kYv12Width);
+  ASSERT_EQ(filter.GetVideoInfo().height, kInterlacedYv12Height);
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+  ASSERT_EQ(output->GetRowSize(PLANAR_Y), kYv12Width);
+  ASSERT_EQ(output->GetRowSize(PLANAR_U), kYv12Width / 2);
+  ASSERT_EQ(output->GetRowSize(PLANAR_V), kYv12Width / 2);
+  ASSERT_EQ(output->GetHeight(PLANAR_U), kInterlacedYv12Height / 2);
+  ASSERT_EQ(output->GetHeight(PLANAR_V), kInterlacedYv12Height / 2);
+
+  for (int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    const int width = output->GetRowSize(plane);
+    const int height = output->GetHeight(plane);
+    for (int y = 0; y < height; ++y) {
+      const auto* source_row = source_frame->GetReadPtr(plane) +
+                               y * source_frame->GetPitch(plane);
+      const auto* output_row = output->GetReadPtr(plane) + y * output->GetPitch(plane);
+      for (int x = 0; x < width; ++x) {
+        EXPECT_EQ(output_row[x], source_row[x])
+            << "plane=" << plane << " row=" << y << " column=" << x;
+      }
+    }
+  }
+
+  EXPECT_EQ(get_frame_property_int(environment.get(), output, "_ChromaLocation"),
+            std::optional<int>{AVS_CHROMA_LEFT});
+  EXPECT_EQ(get_frame_property_int(environment.get(), output, "_ColorRange"),
+            std::optional<int>{AVS_COLORRANGE_FULL});
+  EXPECT_EQ(get_frame_property_int(environment.get(), output, "_FieldBased"),
+            std::optional<int>{AVS_FIELD_TOP});
+  const std::vector<int> expected_requests{0, 0, 0, 0, 0};
   EXPECT_EQ(source_clip_impl->frame_requests(), expected_requests);
   EXPECT_NE(source_frame->CheckMemory(), 1);
   EXPECT_NE(output->CheckMemory(), 1);
