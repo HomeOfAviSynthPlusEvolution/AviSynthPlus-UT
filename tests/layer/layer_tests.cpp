@@ -18,6 +18,7 @@
 #include "layer_rgb32_mul_test_helpers.h"
 #include "layer_rgb32_subtract_test_helpers.h"
 #include "layer_yuv_mul_test_helpers.h"
+#include "layer_yuv_mul_float_test_helpers.h"
 #include "layer_yuy2_fast_test_helpers.h"
 
 #include "support/cpu_features.h"
@@ -239,6 +240,50 @@ TEST_P(LayerYuvMulKernels, MatchesIndependentReference) {
 
 INSTANTIATE_TEST_SUITE_P(Kernels, LayerYuvMulKernels, ::testing::ValuesIn(layer_yuv_mul_cases()),
                          [](const ::testing::TestParamInfo<LayerYuvMulCase>& info) {
+                           return info.param.name;
+                         });
+
+std::vector<LayerYuvMulFloatCase> layer_yuv_mul_float_cases() {
+  constexpr int colorspace = 420;
+  constexpr int placement = PLACEMENT_MPEG2;
+  constexpr std::size_t width_pixels = 7;
+  constexpr std::size_t height_pixels = 3;
+  constexpr std::size_t destination_pitch = 32;
+  constexpr std::size_t overlay_pitch = 48;
+  constexpr float opacity = 0.37F;
+  return {
+      make_layer_yuv_mul_float_case("Yv12", false, false, colorspace, placement, width_pixels,
+                                    height_pixels, destination_pitch, overlay_pitch, 0, opacity,
+                                    "37Pct"),
+      make_layer_yuv_mul_float_case("Yv12", false, true, colorspace, placement, width_pixels,
+                                    height_pixels, destination_pitch, overlay_pitch, 40, opacity,
+                                    "37Pct"),
+      make_layer_yuv_mul_float_case("Yv12", true, false, colorspace, placement, width_pixels,
+                                    height_pixels, destination_pitch, overlay_pitch, 0, opacity,
+                                    "37Pct"),
+      make_layer_yuv_mul_float_case("Yv12", true, true, colorspace, placement, width_pixels,
+                                    height_pixels, destination_pitch, overlay_pitch, 64, opacity,
+                                    "37Pct"),
+  };
+}
+
+class LayerYuvMulFloatKernels : public ::testing::TestWithParam<LayerYuvMulFloatCase> {};
+
+TEST_P(LayerYuvMulFloatKernels, MatchesIndependentReference) {
+  const auto& test_case = GetParam();
+  if (!test_case.variant.function) {
+    GTEST_SKIP() << "upstream did not provide " << test_case.variant.name
+                 << " float Layer YUV multiply function";
+  }
+  if (!variant_supported(test_case.variant, CpuFeatures::detect())) {
+    GTEST_SKIP() << "host does not support " << test_case.variant.name;
+  }
+  run_layer_yuv_mul_float_case(test_case);
+}
+
+INSTANTIATE_TEST_SUITE_P(Kernels, LayerYuvMulFloatKernels,
+                         ::testing::ValuesIn(layer_yuv_mul_float_cases()),
+                         [](const ::testing::TestParamInfo<LayerYuvMulFloatCase>& info) {
                            return info.param.name;
                          });
 
