@@ -7,6 +7,7 @@
 #include "layer_mask_test_helpers.h"
 #include "layer_packed_blend_test_helpers.h"
 #include "layer_planarrgb_add_test_helpers.h"
+#include "layer_planarrgb_add_float_test_helpers.h"
 #include "layer_planarrgb_lighten_darken_test_helpers.h"
 #include "layer_planarrgb_lighten_darken_float_test_helpers.h"
 #include "layer_planarrgb_mul_test_helpers.h"
@@ -1218,6 +1219,48 @@ INSTANTIATE_TEST_SUITE_P(
     Kernels, LayerPlanarRgbLightenDarkenFloatKernels,
     ::testing::ValuesIn(layer_planarrgb_lighten_darken_float_cases()),
     [](const ::testing::TestParamInfo<LayerPlanarRgbLightenDarkenFloatCase>& info) {
+      return info.param.name;
+    });
+
+std::vector<LayerPlanarRgbAddFloatCase> layer_planarrgb_add_float_cases() {
+  constexpr std::size_t width = 7;
+  constexpr std::size_t height = 3;
+  constexpr std::size_t destination_pitch = 32;
+  constexpr std::size_t overlay_pitch = 48;
+  constexpr std::size_t mask_pitch = 32;
+  constexpr float opacity = 0.37F;
+  std::vector<LayerPlanarRgbAddFloatCase> cases;
+  for (const bool chroma : {false, true}) {
+    for (const auto& alpha_case : {
+             std::tuple<bool, bool, std::size_t>{false, false, 0},
+             std::tuple<bool, bool, std::size_t>{true, false, mask_pitch},
+             std::tuple<bool, bool, std::size_t>{true, true, mask_pitch}}) {
+      const auto [has_alpha, blend_alpha, case_mask_pitch] = alpha_case;
+      cases.push_back(make_layer_planarrgb_add_float_case(
+          chroma, has_alpha, blend_alpha, width, height, destination_pitch, overlay_pitch,
+          case_mask_pitch, opacity, "37Pct"));
+    }
+  }
+  return cases;
+}
+
+class LayerPlanarRgbAddFloatKernels : public ::testing::TestWithParam<LayerPlanarRgbAddFloatCase> {};
+
+TEST_P(LayerPlanarRgbAddFloatKernels, MatchesIndependentReference) {
+  const auto& test_case = GetParam();
+  if (!test_case.variant.function) {
+    GTEST_SKIP() << "upstream did not provide " << test_case.variant.name
+                 << " float planar RGB add function";
+  }
+  if (!variant_supported(test_case.variant, CpuFeatures::detect())) {
+    GTEST_SKIP() << "host does not support " << test_case.variant.name;
+  }
+  run_layer_planarrgb_add_float_case(test_case);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Kernels, LayerPlanarRgbAddFloatKernels, ::testing::ValuesIn(layer_planarrgb_add_float_cases()),
+    [](const ::testing::TestParamInfo<LayerPlanarRgbAddFloatCase>& info) {
       return info.param.name;
     });
 
