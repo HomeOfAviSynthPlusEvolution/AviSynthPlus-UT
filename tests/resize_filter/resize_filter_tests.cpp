@@ -43,7 +43,7 @@ struct TriangleTap {
   int coefficient;
 };
 
-enum class ExtraResizeKernel { MitchellNetravali, Lanczos3, Spline36 };
+enum class ExtraResizeKernel { MitchellNetravali, Lanczos3, Spline36, Sinc4 };
 
 double mitchell_netravali_value(double value) {
   constexpr double b = 1.0 / 3.0;
@@ -90,6 +90,16 @@ double spline36_value(double value) {
   return 0.0;
 }
 
+double sinc4_value(double value) {
+  constexpr double pi = 3.14159265358979323846;
+  value = std::abs(value);
+  if (value > 0.000001) {
+    value *= pi;
+    return std::sin(value) / value;
+  }
+  return 1.0;
+}
+
 double extra_resize_kernel_value(ExtraResizeKernel kernel, double value) {
   switch (kernel) {
     case ExtraResizeKernel::MitchellNetravali:
@@ -98,12 +108,17 @@ double extra_resize_kernel_value(ExtraResizeKernel kernel, double value) {
       return lanczos3_value(value);
     case ExtraResizeKernel::Spline36:
       return spline36_value(value);
+    case ExtraResizeKernel::Sinc4:
+      return sinc4_value(value);
   }
   return 0.0;
 }
 
 double extra_resize_kernel_support(ExtraResizeKernel kernel) {
-  return kernel == ExtraResizeKernel::MitchellNetravali ? 2.0 : 3.0;
+  if (kernel == ExtraResizeKernel::MitchellNetravali) {
+    return 2.0;
+  }
+  return kernel == ExtraResizeKernel::Sinc4 ? 4.0 : 3.0;
 }
 
 std::vector<TriangleTap> extra_resize_taps(ExtraResizeKernel kernel, int source_size,
@@ -650,6 +665,9 @@ void run_extra_resize_case(const ExtraResizeCase& test_case) {
     case ExtraResizeKernel::Spline36:
       filter_function = std::make_unique<Spline36Filter>();
       break;
+    case ExtraResizeKernel::Sinc4:
+      filter_function = std::make_unique<SincFilter>(4);
+      break;
   }
   if (horizontal) {
     FilteredResizeH filter(clip, 0.0, static_cast<double>(source_width), target_width,
@@ -707,7 +725,11 @@ INSTANTIATE_TEST_SUITE_P(
         ExtraResizeCase{ExtraResizeKernel::Spline36, ResizeDirection::Horizontal,
                         "Spline36Horizontal"},
         ExtraResizeCase{ExtraResizeKernel::Spline36, ResizeDirection::Vertical,
-                        "Spline36Vertical"}),
+                        "Spline36Vertical"},
+        ExtraResizeCase{ExtraResizeKernel::Sinc4, ResizeDirection::Horizontal,
+                        "Sinc4Horizontal"},
+        ExtraResizeCase{ExtraResizeKernel::Sinc4, ResizeDirection::Vertical,
+                        "Sinc4Vertical"}),
     [](const ::testing::TestParamInfo<ExtraResizeCase>& info) { return info.param.name; });
 
 struct Spline36Rgb16Case {
