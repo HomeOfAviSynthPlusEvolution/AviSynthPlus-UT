@@ -13,6 +13,10 @@ std::vector<PublicRgbToYuv444Case> public_rgb_to_yuv444_cases() {
                                      "709:limited", true, false, true, false, 11, 3),
       make_public_rgb_to_yuv444_case(VideoInfo::CS_RGBAP16, 16, 16, AVS_MATRIX_BT2020_NCL,
                                      "2020:full", false, true, false, true, 9, 3),
+      make_public_rgb_to_yuv444_case(VideoInfo::CS_RGBPS, 32, 32, AVS_MATRIX_BT709,
+                                     "709:full", true, true, true, false, 13, 3),
+      make_public_rgb_to_yuv444_case(VideoInfo::CS_RGBAPS, 32, 32, AVS_MATRIX_BT709,
+                                     "709:full", true, true, false, true, 13, 3),
   };
 }
 

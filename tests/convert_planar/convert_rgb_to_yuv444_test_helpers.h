@@ -290,7 +290,8 @@ inline void expect_public_rgb_to_yuv444_color_output(
           static_cast<double>(actual_u[y * destination_pitch + x]),
           static_cast<double>(actual_v[y * destination_pitch + x])};
       for (std::size_t plane = 0; plane < expected_values.size(); ++plane) {
-        EXPECT_LE(std::abs(actual_values[plane] - expected_values[plane]), 1.0)
+        const double tolerance = test_case.target_bit_depth == 32 ? 1.0e-5 : 1.0;
+        EXPECT_LE(std::abs(actual_values[plane] - expected_values[plane]), tolerance)
             << test_case.name << " plane=" << plane << " row=" << y << " column=" << x
             << " expected=" << expected_values[plane]
             << " actual=" << actual_values[plane];
@@ -374,8 +375,10 @@ inline void run_public_rgb_to_yuv444_color_case(const PublicRgbToYuv444Case& tes
     } else {
       run_public_rgb_to_yuv444_color_case_typed<std::uint8_t, std::uint16_t>(test_case);
     }
-  } else {
+  } else if (test_case.source_bit_depth == 16) {
     run_public_rgb_to_yuv444_color_case_typed<std::uint16_t, std::uint16_t>(test_case);
+  } else {
+    run_public_rgb_to_yuv444_color_case_typed<float, float>(test_case);
   }
 }
 
