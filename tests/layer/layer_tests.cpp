@@ -7,6 +7,7 @@
 #include "layer_mask_test_helpers.h"
 #include "layer_packed_blend_test_helpers.h"
 #include "layer_planarrgb_add_test_helpers.h"
+#include "layer_planarrgb_lighten_darken_test_helpers.h"
 #include "layer_planarrgb_mul_test_helpers.h"
 #include "layer_rgb32_add_test_helpers.h"
 #include "layer_rgb32_fast_test_helpers.h"
@@ -19,6 +20,7 @@
 #include "support/cpu_features.h"
 
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -1046,6 +1048,87 @@ INSTANTIATE_TEST_SUITE_P(Kernels, LayerPlanarRgbMulKernels,
                          [](const ::testing::TestParamInfo<LayerPlanarRgbMulCase>& info) {
                            return info.param.name;
                          });
+
+std::vector<LayerPlanarRgbLightenDarkenCase> layer_planarrgb_lighten_darken_cases() {
+  constexpr std::size_t width_8 = 13;
+  constexpr std::size_t height_8 = 5;
+  constexpr std::size_t destination_pitch_8 = 64;
+  constexpr std::size_t overlay_pitch_8 = 80;
+  constexpr std::size_t mask_pitch_8 = 64;
+  constexpr int opacity_8 = 173;
+  constexpr int threshold_8 = 5;
+  constexpr std::uint32_t seed_8 = 0xF30F2701U;
+  constexpr std::array<const char*, 6> expected_hashes_8{
+      "d33bfa57a0ccd32b", "30cef31c41f99edc", "12e881b2fdfcd8af",
+      "063b67c29df51430", "d9cd18d9fcf683af", "31d7f46c31e68b6e"};
+  constexpr std::size_t width_16 = 19;
+  constexpr std::size_t height_16 = 3;
+  constexpr std::size_t destination_pitch_16 = 96;
+  constexpr std::size_t overlay_pitch_16 = 112;
+  constexpr std::size_t mask_pitch_16 = 96;
+  constexpr int opacity_16 = 39321;
+  constexpr int threshold_16 = 1024;
+  constexpr std::uint32_t seed_16 = 0xF30F2702U;
+  constexpr std::array<const char*, 6> expected_hashes_16{
+      "3904d7f20cf3229d", "b3fe8ee978f1cb1b", "6d157cb630a939b0",
+      "85c55acf49cc1fff", "bd3640c18e728de2", "767a931cf4887977"};
+  std::vector<LayerPlanarRgbLightenDarkenCase> cases;
+  std::size_t hash_index = 0;
+  for (const auto mode : {LayerPlanarRgbLightenDarkenMode::Lighten,
+                          LayerPlanarRgbLightenDarkenMode::Darken}) {
+    for (const auto& alpha_case : {
+             std::tuple<bool, bool, std::size_t>{false, false, 0},
+             std::tuple<bool, bool, std::size_t>{true, false, mask_pitch_8},
+             std::tuple<bool, bool, std::size_t>{true, true, mask_pitch_8}}) {
+      const auto [has_alpha, blend_alpha, mask_pitch] = alpha_case;
+      cases.push_back(make_layer_planarrgb_lighten_darken_case(
+          mode, has_alpha, blend_alpha, 8, width_8, height_8, destination_pitch_8,
+          overlay_pitch_8, mask_pitch, opacity_8, "Partial173", threshold_8, "5", seed_8,
+          expected_hashes_8[hash_index++]));
+    }
+  }
+  hash_index = 0;
+  for (const auto mode : {LayerPlanarRgbLightenDarkenMode::Lighten,
+                          LayerPlanarRgbLightenDarkenMode::Darken}) {
+    for (const auto& alpha_case : {
+             std::tuple<bool, bool, std::size_t>{false, false, 0},
+             std::tuple<bool, bool, std::size_t>{true, false, mask_pitch_16},
+             std::tuple<bool, bool, std::size_t>{true, true, mask_pitch_16}}) {
+      const auto [has_alpha, blend_alpha, mask_pitch] = alpha_case;
+      cases.push_back(make_layer_planarrgb_lighten_darken_case(
+          mode, has_alpha, blend_alpha, 16, width_16, height_16, destination_pitch_16,
+          overlay_pitch_16, mask_pitch, opacity_16, "Partial39321", threshold_16, "1024", seed_16,
+          expected_hashes_16[hash_index++]));
+    }
+  }
+  return cases;
+}
+
+class LayerPlanarRgbLightenDarkenKernels
+    : public ::testing::TestWithParam<LayerPlanarRgbLightenDarkenCase> {};
+
+TEST_P(LayerPlanarRgbLightenDarkenKernels, MatchesIndependentReference) {
+  const auto& test_case = GetParam();
+  if (!test_case.variant.function) {
+    GTEST_SKIP() << "upstream did not provide " << test_case.variant.name
+                 << " planar RGB lighten/darken function";
+  }
+  if (!variant_supported(test_case.variant, CpuFeatures::detect())) {
+    GTEST_SKIP() << "host does not support " << test_case.variant.name;
+  }
+  if (test_case.bits_per_pixel == 8) {
+    run_layer_planarrgb_lighten_darken_case<std::uint8_t>(test_case);
+  } else {
+    run_layer_planarrgb_lighten_darken_case<std::uint16_t>(test_case);
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Kernels, LayerPlanarRgbLightenDarkenKernels,
+    ::testing::ValuesIn(layer_planarrgb_lighten_darken_cases()),
+    [](const ::testing::TestParamInfo<LayerPlanarRgbLightenDarkenCase>& info) {
+      return info.param.name;
+    });
 
 }  // namespace
 }  // namespace avsut::test
