@@ -182,6 +182,7 @@ submodule checkout cannot build `AvsCore` reliably.
 | `Field topology` | Public field separation, weaving, and patterned selection | Public `SeparateFields`, `DoubleWeaveFields`, `DoubleWeaveFrames`, and `SelectEvery` classes for short YV12/YV24 sequences; `Weave` behavior through the public `DoubleWeaveFields` plus `SelectEvery` composition | Direct constructors with explicit TFF/BFF metadata, field-row extraction, adjacent-field and adjacent-frame interleaving, frame-rate/count updates, patterned frame selection, source request traces, source full-pitch immutability, cache hints, and output memory checks. The final advertised frame of both `DoubleWeave` implementations remains an expected red because the current upstream code requests a past-end child frame. |
 
 | `Layer` | Public float YUV `Mul` product composition | `YUV444PS`, `YUV420PS`, and `YUVA420PS` through the direct `Layer` constructor | Independent per-plane product/overlay references across MPEG-1, MPEG-2, and TopLeft placement; overlay-alpha mask averaging, base-alpha preservation, source immutability, cache hints, frame requests, and output memory checks |
+| `Layer` | Public float YUV `Add` weighted composition | `YUV444PS`, `YUV420PS`, and `YUVA420PS` through the direct `Layer` constructor | Independent weighted and alpha-masked references across MPEG-1, MPEG-2, and TopLeft placement; overlay-alpha mask averaging, base-alpha preservation, source immutability, cache hints, frame requests, and output memory checks. The YUVA420PS MPEG-2 alpha case retains an expected red for an upstream float mask-row bug |
 
 ## Finding Test Coverage
 
@@ -286,6 +287,12 @@ submodule checkout cannot build `AvsCore` reliably.
   treats it as a per-pixel blend weight. The
   `layer_filter.FormatAndOperation/LayerYuvFloatLightenDarkenTest.AppliesThresholdBlendWithIndependentPlacementReference/Yuva420Ps_Lighten_Mpeg1_Alpha_Width8_Height6_Threshold10`
   case retains this expected red; the no-alpha float YUV placement cases pass.
+- The public `Layer` float YUV Add YUVA420PS MPEG-2 chroma path uses the AVX2
+  `MASK420_MPEG2` float mask-row preparation. Its scalar tail adds `4` before
+  multiplying by `0.125`, carrying integer rounding into the float formula and
+  making every effective chroma mask `0.5` too large. The
+  `layer_filter.FormatAndPlacement/LayerYuvFloatAddTest.AppliesWeightedBlendAcrossPlacementAndAlpha/Yuva420Ps_Add_Mpeg2_Alpha_Width8_Height6_Opacity625`
+  case retains this expected red; the YUV444PS and no-alpha YUV420PS cases pass.
 - AVX-512 `GetAlphaRect` is Windows/GDI-only and remains outside the current
   unit-test boundary.
 - AVX-512 resize implementations that are disabled or non-production are not
