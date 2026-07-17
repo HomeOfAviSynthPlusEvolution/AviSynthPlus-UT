@@ -12,6 +12,7 @@
 #include "layer_rgb32_lighten_darken_test_helpers.h"
 #include "layer_rgb32_mul_test_helpers.h"
 #include "layer_rgb32_subtract_test_helpers.h"
+#include "layer_yuv_mul_test_helpers.h"
 #include "layer_yuy2_fast_test_helpers.h"
 
 #include "support/cpu_features.h"
@@ -191,6 +192,47 @@ TEST_P(LayerYuvAddKernels, MatchesPlacementAwareReference) {
 
 INSTANTIATE_TEST_SUITE_P(Kernels, LayerYuvAddKernels, ::testing::ValuesIn(layer_yuv_add_cases()),
                          [](const ::testing::TestParamInfo<LayerYuvAddCase>& info) {
+                           return info.param.name;
+                         });
+
+std::vector<LayerYuvMulCase> layer_yuv_mul_cases() {
+  constexpr int bits_per_pixel = 16;
+  constexpr int placement = PLACEMENT_MPEG2;
+  constexpr std::size_t width_pixels = 15;
+  constexpr std::size_t height_pixels = 7;
+  constexpr std::size_t destination_pitch = 64;
+  constexpr std::size_t overlay_pitch = 80;
+  constexpr std::size_t mask_pitch = 96;
+  constexpr int opacity = 39321;
+  constexpr std::uint32_t seed = 0xF30F2501U;
+  const Variant<LayerYuvMulFunction> variant{
+      "avx2", layer_yuv_mul_avx2_function(false, 420, placement, bits_per_pixel),
+      IsaRequirement::Avx2};
+  const Variant<LayerYuvMulFunction> chroma_variant{
+      "avx2", layer_yuv_mul_avx2_function(true, 420, placement, bits_per_pixel),
+      IsaRequirement::Avx2};
+  return {
+      make_layer_yuv_mul_case("Yv12", false, 420, placement, bits_per_pixel, width_pixels,
+                              height_pixels, destination_pitch, overlay_pitch, mask_pitch,
+                              opacity, "Partial39321", variant, "f032e558e3ee6fb2", seed),
+      make_layer_yuv_mul_case("Yv12", true, 420, placement, bits_per_pixel, width_pixels,
+                              height_pixels, destination_pitch, overlay_pitch, mask_pitch,
+                              opacity, "Partial39321", chroma_variant, "6b7025922faffa2b", seed),
+  };
+}
+
+class LayerYuvMulKernels : public ::testing::TestWithParam<LayerYuvMulCase> {};
+
+TEST_P(LayerYuvMulKernels, MatchesIndependentReference) {
+  const auto& test_case = GetParam();
+  if (!variant_supported(test_case.variant, CpuFeatures::detect())) {
+    GTEST_SKIP() << "host does not support " << test_case.variant.name;
+  }
+  run_layer_yuv_mul_case<std::uint16_t>(test_case);
+}
+
+INSTANTIATE_TEST_SUITE_P(Kernels, LayerYuvMulKernels, ::testing::ValuesIn(layer_yuv_mul_cases()),
+                         [](const ::testing::TestParamInfo<LayerYuvMulCase>& info) {
                            return info.param.name;
                          });
 

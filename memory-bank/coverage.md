@@ -59,6 +59,7 @@ submodule checkout cannot build `AvsCore` reliably.
 | `Focus` | Planar horizontal and vertical three-tap blur/sharpen for 8-/16-bit and float samples, plus packed RGB32/RGB64 and YUY2 horizontal kernels | Planar 8-bit SSE2 and AVX2; planar 16-bit SSE2, SSE4.1, and AVX2; planar float SSE2; RGB32 SSE2; RGB64 SSE2 and SSE4.1; YUY2 SSE2 | Fixed boundary/ramp or finite-anchor inputs plus fixed-seed integer dimensions with non-integral horizontal tails, odd-height vertical rows, and distinct pitches; independent edge-replicating fixed-point or floating-point reference; vector-tail coverage; integer active-output hashes, float ULP/absolute comparison, row padding, guards, source immutability, and line-buffer checks |
 | `Focus` | TemporalSoften planar thresholded frame accumulation | 8-bit SSE2 and SSSE3; 10-/16-bit SSE2 and SSE4.1 | Fixed threshold-edge and average-anchor inputs; independent round-to-nearest-even frame-average reference; 3-frame divisors for 8-bit and full-range 16-bit cases; active-output hashes, source immutability, row padding, and allocation guards. Public scalar counterparts are file-local. |
 | `Layer` | YUV masked add through placement-aware Layer SIMD getters | 8- and 16-bit SSE4.1 and AVX2 wrappers, with scalar masked-merge baseline | Fixed boundary-value inputs plus a fixed-seed MASK420_MPEG2 8-bit partial-opacity case with non-integral width; independent MASK444/MASK420/MASK422 placement reference including MPEG1/MPEG2/TopLeft; full and partial opacity; active-output hashes, input immutability, padding, and guard checks |
+| `Layer` | YUV multiply per-plane blend | 16-bit AVX2 wrapper for YV12 luma `MASK444` and chroma `MASK420_MPEG2` paths with overlay alpha | Fixed-seed width-15/height-7 output planes with distinct destination, overlay, and alpha-mask pitches; independent integer mask-average, opacity-scaling, luma-product, and chroma-target reference; active-output hashes, overlay/mask immutability, row padding, and allocation guard checks. The public scalar getter is file-local, so this is independent-reference AVX2-only coverage |
 | `Layer` | RGB32 mask luma-to-alpha | SSE2 and AVX2 | Fixed RGB32 channel anchors with a non-integral SIMD width; independent Rec.601 15-bit luma reference; exact output hash, alpha input immutability, row padding, and allocation guard checks. Public scalar counterpart is file-local. |
 | `Layer` | RGB32 color-key alpha masking | SSE2 and AVX2 | Fixed color and per-channel tolerance boundary anchors with a non-integral SIMD width; independent inclusive-distance reference; active-output hash, row padding, and allocation guard checks. Public scalar counterpart is file-local. |
 | `Layer` | RGB32 simple average blend | SSE2 and AVX2 | Fixed boundary-value packed bytes with distinct destination and overlay pitches; independent rounded byte average; SIMD main block plus scalar tail, active-output hash, input immutability, row padding, and allocation guard checks. Public scalar counterpart is file-local. |
@@ -265,6 +266,15 @@ submodule checkout cannot build `AvsCore` reliably.
   regression also retains an expected red: `rgbadjust_read_conditional` is
   called even when the requested `conditional` argument is false, so a matching
   global variable is still applied instead of being ignored.
+- The upstream `layer_yuv_mul_c` partial-opacity branch drops the alpha mask
+  for integer YUV multiply. Its `has_alpha=true` outer specialization calls
+  `layer_yuv_mul_c_inner` with `has_alpha=false` when `opacity_i` is below the
+  maximum, so both luma `MASK444` and chroma `MASK420_MPEG2` use only the global
+  opacity. The F30 cases
+  `Yv12_Luma_Mask444_Mpeg2_Bpp16_Width15_Height7_DstPitch64_OverlayPitch80_MaskWidth15_MaskHeight7_MaskPitch96_OpacityPartial39321_SeedF30F2501_PatternFixedRandom_VariantAvx2`
+  and
+  `Yv12_Chroma_Mask420Mpeg2_Mpeg2_Bpp16_Width15_Height7_DstPitch64_OverlayPitch80_MaskWidth30_MaskHeight14_MaskPitch96_OpacityPartial39321_SeedF30F2501_PatternFixedRandom_VariantAvx2`
+  retain this expected red against independent luma/chroma references.
 - AVX-512 `GetAlphaRect` is Windows/GDI-only and remains outside the current
   unit-test boundary.
 - AVX-512 resize implementations that are disabled or non-production are not
