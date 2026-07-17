@@ -263,6 +263,30 @@ inline std::uint32_t public_rgb_to_yuv444_round_and_clip(double value, int bit_d
       rounded, 0, static_cast<std::int64_t>(maximum)));
 }
 
+inline double public_rgb_to_yuv444_alpha_reference(
+    const PublicRgbToYuv444Case& test_case, double source_alpha) {
+  if (test_case.source_bit_depth == test_case.target_bit_depth) {
+    return source_alpha;
+  }
+  if (test_case.target_bit_depth == 32) {
+    if (test_case.source_bit_depth == 32) {
+      return source_alpha;
+    }
+    const double source_maximum = static_cast<double>(
+        (std::uint32_t{1} << test_case.source_bit_depth) - 1U);
+    return source_alpha / source_maximum;
+  }
+
+  const double target_maximum = static_cast<double>(
+      (std::uint32_t{1} << test_case.target_bit_depth) - 1U);
+  const double normalized = test_case.source_bit_depth == 32
+                                ? source_alpha
+                                : source_alpha / static_cast<double>(
+                                      (std::uint32_t{1} << test_case.source_bit_depth) - 1U);
+  return static_cast<double>(public_rgb_to_yuv444_round_and_clip(
+      normalized * target_maximum, test_case.target_bit_depth));
+}
+
 template <typename SourceT, typename DestinationT>
 inline void expect_public_rgb_to_yuv444_color_output(
     const PVideoFrame& source, const PVideoFrame& output,
@@ -344,7 +368,9 @@ inline void run_public_rgb_to_yuv444_color_case_typed(
     const auto* output_alpha = reinterpret_cast<const DestinationT*>(output->GetReadPtr(PLANAR_A));
     for (int y = 0; y < static_cast<int>(test_case.height); ++y) {
       for (int x = 0; x < static_cast<int>(test_case.width); ++x) {
-        EXPECT_EQ(output_alpha[y * output_pitch + x], source_alpha[y * source_pitch + x])
+        const auto expected_alpha = public_rgb_to_yuv444_alpha_reference(
+            test_case, static_cast<double>(source_alpha[y * source_pitch + x]));
+        EXPECT_EQ(output_alpha[y * output_pitch + x], static_cast<DestinationT>(expected_alpha))
             << test_case.name << " alpha row=" << y << " column=" << x;
       }
     }
