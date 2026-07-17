@@ -1282,6 +1282,116 @@ INSTANTIATE_TEST_SUITE_P(
       return info.param.name;
     });
 
+struct LayerYuvFloatMulCase {
+  int pixel_type;
+  int placement;
+  float opacity;
+  int width;
+  int height;
+  const char* name;
+};
+
+void PrintTo(const LayerYuvFloatMulCase& test_case, std::ostream* stream) {
+  *stream << test_case.name;
+}
+
+void expect_layer_yuv_float_mul_reference(const LayerYuvFloatMulCase& test_case,
+                                          const VideoInfo& vi, const PVideoFrame& base,
+                                          const PVideoFrame& overlay, const PVideoFrame& output) {
+  const bool has_alpha = vi.IsYUVA();
+  const auto base_alpha = has_alpha ? read_frame_plane_active<float>(base, PLANAR_A)
+                                    : std::vector<float>{};
+  const auto overlay_alpha = has_alpha ? read_frame_plane_active<float>(overlay, PLANAR_A)
+                                       : std::vector<float>{};
+  const int luma_width = base->GetRowSize(PLANAR_Y) / static_cast<int>(sizeof(float));
+  const bool subsampled = vi.Is420();
+  const auto alpha_at = [&](int x, int y, bool chroma) {
+    if (!has_alpha)
+      return 1.0F;
+    return chroma && subsampled
+               ? layer_yuv_float_effective_subsampled(overlay_alpha, luma_width, x, y,
+                                                       test_case.placement)
+                  : overlay_alpha[static_cast<std::size_t>(y * luma_width + x)];
+  };
+
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    const int plane_width = output->GetRowSize(plane) / static_cast<int>(sizeof(float));
+    const int plane_height = output->GetHeight(plane);
+    const bool chroma = plane != PLANAR_Y;
+    const auto base_values = read_frame_plane_active<float>(base, plane);
+    const auto overlay_values = read_frame_plane_active<float>(overlay, plane);
+    for (int y = 0; y < plane_height; ++y) {
+      const auto* output_row = reinterpret_cast<const float*>(
+          output->GetReadPtr(plane) + y * output->GetPitch(plane));
+      for (int x = 0; x < plane_width; ++x) {
+        const auto index = static_cast<std::size_t>(y * plane_width + x);
+        const float base_value = base_values[index];
+        const float overlay_value = overlay_values[index];
+        const float target = chroma ? overlay_value : overlay_value * base_value;
+        const float alpha = alpha_at(x, y, chroma) * test_case.opacity;
+        const float expected = base_value + (target - base_value) * alpha;
+        ASSERT_TRUE(std::isfinite(output_row[x]))
+            << "case=" << test_case.name << " plane=" << plane << " x=" << x << " y=" << y;
+        EXPECT_NEAR(output_row[x], expected, 1.0e-6F)
+            << "case=" << test_case.name << " plane=" << plane << " x=" << x << " y=" << y;
+      }
+    }
+  }
+  if (has_alpha) {
+    EXPECT_EQ(read_frame_plane_active<float>(output, PLANAR_A), base_alpha)
+        << "case=" << test_case.name << " destination alpha";
+  }
+}
+
+class LayerYuvFloatMulTest : public ::testing::TestWithParam<LayerYuvFloatMulCase> {};
+
+TEST_P(LayerYuvFloatMulTest, AppliesProductBlendAcrossPlacementAndAlpha) {
+  const auto& test_case = GetParam();
+  AviSynthEnvironment environment;
+  const auto vi = make_video_info(VideoInfoSpec{test_case.width, test_case.height,
+                                                test_case.pixel_type, 2, 25, 1});
+  const auto overlay_vi = make_video_info(VideoInfoSpec{test_case.width, test_case.height,
+                                                        test_case.pixel_type, 1, 25, 1});
+  auto base_frame0 = make_layer_yuv_float_frame(environment, vi, false, 0);
+  auto base_frame1 = make_layer_yuv_float_frame(environment, vi, false, 1);
+  auto overlay_frame = make_layer_yuv_float_frame(environment, overlay_vi, true, 0);
+  const auto base_before = FrameSnapshot::capture(base_frame1, vi);
+  const auto overlay_before = FrameSnapshot::capture(overlay_frame, overlay_vi);
+  auto* base_clip = new FrameSequenceClip(vi, {base_frame0, base_frame1});
+  auto* overlay_clip = new StaticFrameClip(overlay_vi, overlay_frame);
+  const PClip base(base_clip);
+  const PClip overlay(overlay_clip);
+
+  Layer filter(base, overlay, nullptr, "Mul", -1, 0, 0, 0, true, test_case.opacity,
+               test_case.placement, environment.get());
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(1, environment.get());
+
+  expect_layer_yuv_float_mul_reference(test_case, vi, base_frame1, overlay_frame, output);
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(base_clip->frame_requests(), std::vector<int>{1});
+  EXPECT_EQ(overlay_clip->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(base_frame1, vi), base_before);
+  EXPECT_EQ(FrameSnapshot::capture(overlay_frame, overlay_vi), overlay_before);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    FormatAndPlacement, LayerYuvFloatMulTest,
+    ::testing::Values(
+        LayerYuvFloatMulCase{VideoInfo::CS_YUV444PS, PLACEMENT_MPEG2, 0.625F, 7, 3,
+                             "Yuv444Ps_Mul_Width7_Height3_Opacity625"},
+        LayerYuvFloatMulCase{VideoInfo::CS_YUV420PS, PLACEMENT_MPEG1, 0.625F, 8, 6,
+                             "Yuv420Ps_Mul_Mpeg1_Width8_Height6_Opacity625"},
+        LayerYuvFloatMulCase{VideoInfo::CS_YUV420PS, PLACEMENT_MPEG2, 0.625F, 8, 6,
+                             "Yuv420Ps_Mul_Mpeg2_Width8_Height6_Opacity625"},
+        LayerYuvFloatMulCase{VideoInfo::CS_YUV420PS, PLACEMENT_TOPLEFT, 0.625F, 8, 6,
+                             "Yuv420Ps_Mul_TopLeft_Width8_Height6_Opacity625"},
+        LayerYuvFloatMulCase{VideoInfo::CS_YUVA420PS, PLACEMENT_MPEG2, 0.625F, 8, 6,
+                             "Yuva420Ps_Mul_Mpeg2_Alpha_Width8_Height6_Opacity625"}),
+    [](const ::testing::TestParamInfo<LayerYuvFloatMulCase>& info) {
+      return info.param.name;
+    });
+
 std::uint16_t layer_mul_u16(std::uint16_t base, std::uint16_t overlay,
                             std::uint16_t mask, std::uint16_t alpha_target) {
   constexpr std::uint64_t max_value = 65535;
