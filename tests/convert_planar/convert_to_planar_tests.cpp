@@ -56,16 +56,41 @@ void fill_y8_source(PVideoFrame& frame) {
                                   [](int x, int y) { return 9 + x * 23 + y * 31; });
 }
 
-struct BilinearTap {
+struct ResamplingTap {
   int source_index;
   int coefficient;
 };
 
-std::vector<BilinearTap> bilinear_taps(int source_size, double crop_start, double crop_size,
-                                       int target_size, int target_index) {
+double triangle_kernel(double distance) {
+  return distance < 1.0 ? 1.0 - distance : 0.0;
+}
+
+double mitchell_netravali_kernel(double distance) {
+  constexpr double b = 1.0 / 3.0;
+  constexpr double c = 1.0 / 3.0;
+  constexpr double p0 = (6.0 - 2.0 * b) / 6.0;
+  constexpr double p2 = (-18.0 + 12.0 * b + 6.0 * c) / 6.0;
+  constexpr double p3 = (12.0 - 9.0 * b - 6.0 * c) / 6.0;
+  constexpr double q0 = (8.0 * b + 24.0 * c) / 6.0;
+  constexpr double q1 = (-12.0 * b - 48.0 * c) / 6.0;
+  constexpr double q2 = (6.0 * b + 30.0 * c) / 6.0;
+  constexpr double q3 = (-b - 6.0 * c) / 6.0;
+  distance = std::abs(distance);
+  return distance < 1.0
+             ? p0 + distance * distance * (p2 + distance * p3)
+             : distance < 2.0
+                   ? q0 + distance * (q1 + distance * (q2 + distance * q3))
+                   : 0.0;
+}
+
+using ResamplingKernel = double (*)(double);
+
+std::vector<ResamplingTap> resampling_taps(int source_size, double crop_start, double crop_size,
+                                           int target_size, int target_index, double support,
+                                           ResamplingKernel kernel) {
   constexpr int scale = 1 << 14;
   const double source_step = crop_size / static_cast<double>(target_size);
-  const double filter_support = std::max(source_step, 1.0);
+  const double filter_support = support * std::max(source_step, 1.0);
   const int filter_size = std::max(static_cast<int>(std::ceil(filter_support * 2.0)), 1);
   const int last_source = source_size - 1;
   const double position = crop_start + source_step * 0.5 - 0.5 +
@@ -76,8 +101,9 @@ std::vector<BilinearTap> bilinear_taps(int source_size, double crop_start, doubl
   raw_coefficients.reserve(static_cast<std::size_t>(filter_size));
   double total = 0.0;
   for (int tap = 0; tap < filter_size; ++tap) {
-    const double distance = std::abs((position - (start_position + tap)) / filter_support);
-    const double coefficient = distance < 1.0 ? 1.0 - distance : 0.0;
+    const double distance =
+        std::abs((position - (start_position + tap)) / std::max(source_step, 1.0));
+    const double coefficient = kernel(distance);
     raw_coefficients.push_back(coefficient);
     total += coefficient;
   }
@@ -85,7 +111,7 @@ std::vector<BilinearTap> bilinear_taps(int source_size, double crop_start, doubl
     total = 1.0;
   }
 
-  std::vector<BilinearTap> taps;
+  std::vector<ResamplingTap> taps;
   double accumulated = 0.0;
   double previous = 0.0;
   for (int tap = 0; tap < filter_size; ++tap) {
@@ -95,7 +121,7 @@ std::vector<BilinearTap> bilinear_taps(int source_size, double crop_start, doubl
       const double current = previous + accumulated / total;
       const int current_fixed = static_cast<int>(current * scale + 0.5);
       const int previous_fixed = static_cast<int>(previous * scale + 0.5);
-      taps.push_back(BilinearTap{source_index, current_fixed - previous_fixed});
+      taps.push_back(ResamplingTap{source_index, current_fixed - previous_fixed});
       previous = current;
       accumulated = 0.0;
     }
@@ -108,20 +134,35 @@ std::vector<BilinearTap> bilinear_taps(int source_size, double crop_start, doubl
     if (!taps.empty()) {
       taps.back().coefficient += current_fixed - previous_fixed;
     } else {
-      taps.push_back(BilinearTap{std::clamp(start_position, 0, last_source), current_fixed});
+      taps.push_back(ResamplingTap{std::clamp(start_position, 0, last_source), current_fixed});
     }
   }
 
   if (taps.empty()) {
-    taps.push_back(BilinearTap{std::clamp(start_position, 0, last_source), scale});
+    taps.push_back(ResamplingTap{std::clamp(start_position, 0, last_source), scale});
   }
   return taps;
 }
 
-std::vector<std::uint8_t> expected_bilinear_chroma(const PVideoFrame& source, int plane,
+std::vector<ResamplingTap> bilinear_taps(int source_size, double crop_start, double crop_size,
+                                         int target_size, int target_index) {
+  return resampling_taps(source_size, crop_start, crop_size, target_size, target_index, 1.0,
+                         triangle_kernel);
+}
+
+std::vector<ResamplingTap> bicubic_taps(int source_size, double crop_start, double crop_size,
+                                        int target_size, int target_index) {
+  return resampling_taps(source_size, crop_start, crop_size, target_size, target_index, 2.0,
+                         mitchell_netravali_kernel);
+}
+
+using ResamplingTapFactory = std::vector<ResamplingTap> (*)(int, double, double, int, int);
+
+std::vector<std::uint8_t> expected_resampled_chroma(const PVideoFrame& source, int plane,
                                                     int source_width, int source_height,
                                                     int target_width, int target_height,
-                                                    double crop_left, double crop_top) {
+                                                    double crop_left, double crop_top,
+                                                    ResamplingTapFactory make_taps) {
   constexpr int scale_bits = 14;
   std::vector<std::uint8_t> horizontal(
       static_cast<std::size_t>(target_width) * static_cast<std::size_t>(source_height));
@@ -129,7 +170,7 @@ std::vector<std::uint8_t> expected_bilinear_chroma(const PVideoFrame& source, in
     const auto* source_row = source->GetReadPtr(plane) + y * source->GetPitch(plane);
     for (int x = 0; x < target_width; ++x) {
       int result = 1 << (scale_bits - 1);
-      for (const auto& tap : bilinear_taps(source_width, crop_left, source_width, target_width, x)) {
+      for (const auto& tap : make_taps(source_width, crop_left, source_width, target_width, x)) {
         result += source_row[tap.source_index] * tap.coefficient;
       }
       horizontal[static_cast<std::size_t>(y * target_width + x)] = static_cast<std::uint8_t>(
@@ -140,7 +181,7 @@ std::vector<std::uint8_t> expected_bilinear_chroma(const PVideoFrame& source, in
   std::vector<std::uint8_t> expected(
       static_cast<std::size_t>(target_width) * static_cast<std::size_t>(target_height));
   for (int y = 0; y < target_height; ++y) {
-    const auto taps = bilinear_taps(source_height, crop_top, source_height, target_height, y);
+    const auto taps = make_taps(source_height, crop_top, source_height, target_height, y);
     for (int x = 0; x < target_width; ++x) {
       int result = 1 << (scale_bits - 1);
       for (const auto& tap : taps) {
@@ -152,6 +193,22 @@ std::vector<std::uint8_t> expected_bilinear_chroma(const PVideoFrame& source, in
     }
   }
   return expected;
+}
+
+std::vector<std::uint8_t> expected_bilinear_chroma(const PVideoFrame& source, int plane,
+                                                    int source_width, int source_height,
+                                                    int target_width, int target_height,
+                                                    double crop_left, double crop_top) {
+  return expected_resampled_chroma(source, plane, source_width, source_height, target_width,
+                                   target_height, crop_left, crop_top, bilinear_taps);
+}
+
+std::vector<std::uint8_t> expected_bicubic_chroma(const PVideoFrame& source, int plane,
+                                                   int source_width, int source_height,
+                                                   int target_width, int target_height,
+                                                   double crop_left, double crop_top) {
+  return expected_resampled_chroma(source, plane, source_width, source_height, target_width,
+                                   target_height, crop_left, crop_top, bicubic_taps);
 }
 
 TEST(ConvertToPlanarGeneric, UpsamplesYv16ChromaWithPointFilterAndCopiesProperties) {
@@ -308,6 +365,67 @@ TEST(ConvertToPlanarGeneric, UpsamplesYv12ChromaWithBilinearTopLeftPlacement) {
       source_frame, PLANAR_U, kYv12Width / 2, kYv12Height / 2, kYv12Width, kYv12Height, 0.25,
       0.25);
   const auto expected_v = expected_bilinear_chroma(
+      source_frame, PLANAR_V, kYv12Width / 2, kYv12Height / 2, kYv12Width, kYv12Height, 0.25,
+      0.25);
+  for (int y = 0; y < kYv12Height; ++y) {
+    const auto* source_y =
+        source_frame->GetReadPtr(PLANAR_Y) + y * source_frame->GetPitch(PLANAR_Y);
+    const auto* output_y = output->GetReadPtr(PLANAR_Y) + y * output->GetPitch(PLANAR_Y);
+    const auto* output_u = output->GetReadPtr(PLANAR_U) + y * output->GetPitch(PLANAR_U);
+    const auto* output_v = output->GetReadPtr(PLANAR_V) + y * output->GetPitch(PLANAR_V);
+    for (int x = 0; x < kYv12Width; ++x) {
+      const auto index = static_cast<std::size_t>(y * kYv12Width + x);
+      EXPECT_EQ(output_y[x], source_y[x]) << "plane=Y row=" << y << " column=" << x;
+      EXPECT_EQ(output_u[x], expected_u[index]) << "plane=U row=" << y << " column=" << x;
+      EXPECT_EQ(output_v[x], expected_v[index]) << "plane=V row=" << y << " column=" << x;
+    }
+  }
+
+  EXPECT_FALSE(get_frame_property_int(environment.get(), output, "_ChromaLocation").has_value());
+  EXPECT_EQ(get_frame_property_int(environment.get(), output, "_ColorRange"),
+            std::optional<int>{AVS_COLORRANGE_FULL});
+  EXPECT_EQ(get_frame_property_int(environment.get(), output, "_FieldBased"),
+            std::optional<int>{AVS_FIELD_TOP});
+  const std::vector<int> expected_requests{0, 0, 0};
+  EXPECT_EQ(source_clip_impl->frame_requests(), expected_requests);
+  EXPECT_NE(source_frame->CheckMemory(), 1);
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(FrameSnapshot::capture(source_frame, source_vi), source_before);
+}
+
+TEST(ConvertToPlanarGeneric, UpsamplesYv12ChromaWithDefaultBicubicResampler) {
+  AviSynthEnvironment environment;
+  const auto source_vi = yv12_video_info();
+  PVideoFrame source_frame = environment.get()->NewVideoFrame(source_vi);
+  fill_yuv8_source(source_frame);
+  set_frame_property_int(environment.get(), source_frame, "_ChromaLocation", AVS_CHROMA_TOP_LEFT);
+  set_frame_property_int(environment.get(), source_frame, "_ColorRange", AVS_COLORRANGE_FULL);
+  set_frame_property_int(environment.get(), source_frame, "_FieldBased", AVS_FIELD_TOP);
+  const auto source_before = FrameSnapshot::capture(source_frame, source_vi);
+  auto* source_clip_impl = new StaticFrameClip(source_vi, source_frame);
+  const PClip source(source_clip_impl);
+
+  const AVSValue no_parameter;
+  ConvertToPlanarGeneric filter(source, VideoInfo::CS_YV24, false, AVS_CHROMA_TOP_LEFT,
+                                no_parameter, no_parameter, no_parameter, no_parameter,
+                                AVS_CHROMA_UNUSED, environment.get());
+
+  ASSERT_EQ(filter.GetVideoInfo().pixel_type, VideoInfo::CS_YV24);
+  ASSERT_EQ(filter.GetVideoInfo().width, kYv12Width);
+  ASSERT_EQ(filter.GetVideoInfo().height, kYv12Height);
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+  ASSERT_EQ(output->GetRowSize(PLANAR_Y), kYv12Width);
+  ASSERT_EQ(output->GetRowSize(PLANAR_U), kYv12Width);
+  ASSERT_EQ(output->GetRowSize(PLANAR_V), kYv12Width);
+  ASSERT_EQ(output->GetHeight(PLANAR_U), kYv12Height);
+  ASSERT_EQ(output->GetHeight(PLANAR_V), kYv12Height);
+
+  const auto expected_u = expected_bicubic_chroma(
+      source_frame, PLANAR_U, kYv12Width / 2, kYv12Height / 2, kYv12Width, kYv12Height, 0.25,
+      0.25);
+  const auto expected_v = expected_bicubic_chroma(
       source_frame, PLANAR_V, kYv12Width / 2, kYv12Height / 2, kYv12Width, kYv12Height, 0.25,
       0.25);
   for (int y = 0; y < kYv12Height; ++y) {
