@@ -967,4 +967,226 @@ INSTANTIATE_TEST_SUITE_P(
                       OverlayMultiplyCase{0.5F, 128, "Yv24_Width5_Height3_Multiply_OpacityHalf"}),
     [](const ::testing::TestParamInfo<OverlayMultiplyCase>& info) { return info.param.name; });
 
+enum class OverlaySpecialOperation { Difference, Exclusion, SoftLight, HardLight };
+
+struct OverlaySpecialCase {
+  OverlaySpecialOperation operation;
+  float opacity;
+  int opacity_fixed;
+  const char* name;
+};
+
+void PrintTo(const OverlaySpecialCase& test_case, std::ostream* stream) {
+  *stream << test_case.name;
+}
+
+const char* overlay_special_mode(OverlaySpecialOperation operation) {
+  switch (operation) {
+    case OverlaySpecialOperation::Difference:
+      return "Difference";
+    case OverlaySpecialOperation::Exclusion:
+      return "Exclusion";
+    case OverlaySpecialOperation::SoftLight:
+      return "SoftLight";
+    case OverlaySpecialOperation::HardLight:
+      return "HardLight";
+  }
+  return "Difference";
+}
+
+std::vector<PVideoFrame> make_yuv_special_frames(AviSynthEnvironment& environment,
+                                                 const VideoInfo& vi, bool overlay) {
+  // Include pairs that force Y over-bright and under-dark UV compensation.
+  constexpr std::array<std::uint8_t, 5> kBaseY{0, 64, 128, 200, 255};
+  constexpr std::array<std::uint8_t, 5> kOverlayY{255, 200, 128, 40, 0};
+  constexpr std::array<std::uint8_t, 5> kBaseU{16, 64, 128, 192, 240};
+  constexpr std::array<std::uint8_t, 5> kOverlayU{240, 192, 128, 64, 16};
+  constexpr std::array<std::uint8_t, 5> kBaseV{240, 192, 128, 64, 16};
+  constexpr std::array<std::uint8_t, 5> kOverlayV{16, 64, 128, 192, 240};
+  if (vi.pixel_type != VideoInfo::CS_YV24 || vi.width != 5 || vi.height != 3) {
+    throw std::invalid_argument("unexpected YUV special-mode test geometry");
+  }
+
+  const auto& y_values = overlay ? kOverlayY : kBaseY;
+  const auto& u_values = overlay ? kOverlayU : kBaseU;
+  const auto& v_values = overlay ? kOverlayV : kBaseV;
+  std::vector<PVideoFrame> frames;
+  for (int frame_index = 0; frame_index < vi.num_frames; ++frame_index) {
+    PVideoFrame frame = environment.get()->NewVideoFrame(vi);
+    for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+      fill_plane_full_pitch(frame, overlay ? 0x27 : 0xd8, plane);
+      write_frame_plane<std::uint8_t>(frame, plane, [&](int x, int y) {
+        const auto& values = plane == PLANAR_Y ? y_values : plane == PLANAR_U ? u_values : v_values;
+        return clamp_u8(static_cast<int>(values[static_cast<std::size_t>(x)]) + y + frame_index);
+      });
+    }
+    frames.push_back(frame);
+  }
+  return frames;
+}
+
+void apply_y_uv_compensation(int& y_value, int& u_value, int& v_value) {
+  constexpr int half = 128;
+  constexpr int max_value = 255;
+  constexpr int pixel_range = 256;
+  constexpr int over32 = 32;
+  constexpr int shift = 5;
+  if (y_value > max_value) {
+    const int multiplier = std::max(0, pixel_range + over32 - y_value);
+    u_value = ((u_value * multiplier) + (half * (over32 - multiplier))) >> shift;
+    v_value = ((v_value * multiplier) + (half * (over32 - multiplier))) >> shift;
+    y_value = max_value;
+  } else if (y_value < 0) {
+    const int multiplier = std::min(-y_value, over32);
+    u_value = ((u_value * (over32 - multiplier)) + (half * multiplier)) >> shift;
+    v_value = ((v_value * (over32 - multiplier)) + (half * multiplier)) >> shift;
+    y_value = 0;
+  }
+  u_value = std::clamp(u_value, 0, max_value);
+  v_value = std::clamp(v_value, 0, max_value);
+}
+
+void reference_special_pixel(OverlaySpecialOperation operation, int opacity_fixed,
+                             std::uint8_t base_y, std::uint8_t base_u, std::uint8_t base_v,
+                             std::uint8_t ov_y, std::uint8_t ov_u, std::uint8_t ov_v,
+                             std::uint8_t& out_y, std::uint8_t& out_u, std::uint8_t& out_v) {
+  constexpr int half = 128;
+  constexpr int max_value = 255;
+  constexpr int xor_mask = 255;
+  constexpr int mask_shift = 8;
+  int y_value = 0;
+  int u_value = 0;
+  int v_value = 0;
+  switch (operation) {
+    case OverlaySpecialOperation::Difference:
+      y_value = std::abs(static_cast<int>(base_y) - static_cast<int>(ov_y)) + half;
+      u_value = std::abs(static_cast<int>(base_u) - static_cast<int>(ov_u)) + half;
+      v_value = std::abs(static_cast<int>(base_v) - static_cast<int>(ov_v)) + half;
+      break;
+    case OverlaySpecialOperation::Exclusion: {
+      const int ov = ov_y;
+      y_value =
+          static_cast<int>((((base_y ^ xor_mask) * ov) + ((ov ^ xor_mask) * base_y)) >> mask_shift);
+      u_value =
+          static_cast<int>((((base_u ^ xor_mask) * ov) + ((ov ^ xor_mask) * base_u)) >> mask_shift);
+      v_value =
+          static_cast<int>((((base_v ^ xor_mask) * ov) + ((ov ^ xor_mask) * base_v)) >> mask_shift);
+      break;
+    }
+    case OverlaySpecialOperation::SoftLight:
+      y_value = static_cast<int>(base_y) + static_cast<int>(ov_y) - half;
+      u_value = static_cast<int>(base_u) + static_cast<int>(ov_u) - half;
+      v_value = static_cast<int>(base_v) + static_cast<int>(ov_v) - half;
+      break;
+    case OverlaySpecialOperation::HardLight:
+      y_value = static_cast<int>(base_y) + static_cast<int>(ov_y) * 2 - half * 2;
+      u_value = static_cast<int>(base_u) + static_cast<int>(ov_u) - half;
+      v_value = static_cast<int>(base_v) + static_cast<int>(ov_v) - half;
+      break;
+  }
+
+  if (opacity_fixed != 256) {
+    const int inv_opacity = 256 - opacity_fixed;
+    y_value = ((y_value * opacity_fixed) + (inv_opacity * base_y)) >> 8;
+    u_value = ((u_value * opacity_fixed) + (inv_opacity * base_u)) >> 8;
+    v_value = ((v_value * opacity_fixed) + (inv_opacity * base_v)) >> 8;
+  }
+
+  apply_y_uv_compensation(y_value, u_value, v_value);
+  out_y = static_cast<std::uint8_t>(y_value);
+  out_u = static_cast<std::uint8_t>(u_value);
+  out_v = static_cast<std::uint8_t>(v_value);
+}
+
+void expect_yuv_special_reference(const OverlaySpecialCase& test_case,
+                                  const PVideoFrame& base_frame, const PVideoFrame& overlay_frame,
+                                  const PVideoFrame& output) {
+  const int y_pitch = output->GetPitch(PLANAR_Y);
+  const int u_pitch = output->GetPitch(PLANAR_U);
+  const int v_pitch = output->GetPitch(PLANAR_V);
+  const int base_y_pitch = base_frame->GetPitch(PLANAR_Y);
+  const int base_u_pitch = base_frame->GetPitch(PLANAR_U);
+  const int base_v_pitch = base_frame->GetPitch(PLANAR_V);
+  const int ov_y_pitch = overlay_frame->GetPitch(PLANAR_Y);
+  const int ov_u_pitch = overlay_frame->GetPitch(PLANAR_U);
+  const int ov_v_pitch = overlay_frame->GetPitch(PLANAR_V);
+  const auto* out_y = output->GetReadPtr(PLANAR_Y);
+  const auto* out_u = output->GetReadPtr(PLANAR_U);
+  const auto* out_v = output->GetReadPtr(PLANAR_V);
+  const auto* base_y = base_frame->GetReadPtr(PLANAR_Y);
+  const auto* base_u = base_frame->GetReadPtr(PLANAR_U);
+  const auto* base_v = base_frame->GetReadPtr(PLANAR_V);
+  const auto* ov_y = overlay_frame->GetReadPtr(PLANAR_Y);
+  const auto* ov_u = overlay_frame->GetReadPtr(PLANAR_U);
+  const auto* ov_v = overlay_frame->GetReadPtr(PLANAR_V);
+
+  for (int y = 0; y < 3; ++y) {
+    for (int x = 0; x < 5; ++x) {
+      std::uint8_t expected_y = 0;
+      std::uint8_t expected_u = 0;
+      std::uint8_t expected_v = 0;
+      reference_special_pixel(
+          test_case.operation, test_case.opacity_fixed, base_y[x + y * base_y_pitch],
+          base_u[x + y * base_u_pitch], base_v[x + y * base_v_pitch], ov_y[x + y * ov_y_pitch],
+          ov_u[x + y * ov_u_pitch], ov_v[x + y * ov_v_pitch], expected_y, expected_u, expected_v);
+      EXPECT_EQ(out_y[x + y * y_pitch], expected_y)
+          << "mode=" << test_case.name << " x=" << x << " y=" << y << " plane=Y";
+      EXPECT_EQ(out_u[x + y * u_pitch], expected_u)
+          << "mode=" << test_case.name << " x=" << x << " y=" << y << " plane=U";
+      EXPECT_EQ(out_v[x + y * v_pitch], expected_v)
+          << "mode=" << test_case.name << " x=" << x << " y=" << y << " plane=V";
+    }
+  }
+}
+
+class OverlayFilterSpecialTest : public ::testing::TestWithParam<OverlaySpecialCase> {};
+
+TEST_P(OverlayFilterSpecialTest, MatchesIndependentSpecialModeReference) {
+  const auto& test_case = GetParam();
+  AviSynthEnvironment environment;
+  const auto vi = make_video_info(VideoInfoSpec{5, 3, VideoInfo::CS_YV24, 2, 25, 1});
+  auto base_frames = make_yuv_special_frames(environment, vi, false);
+  auto overlay_frames = make_yuv_special_frames(environment, vi, true);
+  const auto base_before = FrameSnapshot::capture(base_frames[1], vi);
+  const auto overlay_before = FrameSnapshot::capture(overlay_frames[1], vi);
+  auto* base_impl = new FrameSequenceClip(vi, base_frames);
+  auto* overlay_impl = new FrameSequenceClip(vi, overlay_frames);
+  const PClip base(base_impl);
+  const PClip overlay(overlay_impl);
+
+  auto args = make_overlay_args(base, overlay, PClip(), overlay_special_mode(test_case.operation));
+  args[5] = test_case.opacity;
+  Overlay filter(base, AVSValue(args.data(), static_cast<int>(args.size())), environment.get());
+  EXPECT_EQ(filter.GetVideoInfo().pixel_type, vi.pixel_type);
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(1, environment.get());
+
+  expect_yuv_special_reference(test_case, base_frames[1], overlay_frames[1], output);
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(base_impl->frame_requests(), std::vector<int>{1});
+  EXPECT_EQ(overlay_impl->frame_requests(), std::vector<int>{1});
+  EXPECT_EQ(FrameSnapshot::capture(base_frames[1], vi), base_before);
+  EXPECT_EQ(FrameSnapshot::capture(overlay_frames[1], vi), overlay_before);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    SpecialCases, OverlayFilterSpecialTest,
+    ::testing::Values(OverlaySpecialCase{OverlaySpecialOperation::Difference, 1.0F, 256,
+                                         "Yv24_Width5_Height3_Difference_OpacityFull"},
+                      OverlaySpecialCase{OverlaySpecialOperation::Difference, 0.5F, 128,
+                                         "Yv24_Width5_Height3_Difference_OpacityHalf"},
+                      OverlaySpecialCase{OverlaySpecialOperation::Exclusion, 1.0F, 256,
+                                         "Yv24_Width5_Height3_Exclusion_OpacityFull"},
+                      OverlaySpecialCase{OverlaySpecialOperation::Exclusion, 0.5F, 128,
+                                         "Yv24_Width5_Height3_Exclusion_OpacityHalf"},
+                      OverlaySpecialCase{OverlaySpecialOperation::SoftLight, 1.0F, 256,
+                                         "Yv24_Width5_Height3_SoftLight_OpacityFull"},
+                      OverlaySpecialCase{OverlaySpecialOperation::SoftLight, 0.5F, 128,
+                                         "Yv24_Width5_Height3_SoftLight_OpacityHalf"},
+                      OverlaySpecialCase{OverlaySpecialOperation::HardLight, 1.0F, 256,
+                                         "Yv24_Width5_Height3_HardLight_OpacityFull"},
+                      OverlaySpecialCase{OverlaySpecialOperation::HardLight, 0.5F, 128,
+                                         "Yv24_Width5_Height3_HardLight_OpacityHalf"}),
+    [](const ::testing::TestParamInfo<OverlaySpecialCase>& info) { return info.param.name; });
+
 }  // namespace
