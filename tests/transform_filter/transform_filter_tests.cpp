@@ -9,6 +9,16 @@
 #undef AVS_UNUSED
 #undef AVSUT_TRANSFORM_FILTER_UNDEF_AVS_UNUSED
 #endif
+
+#ifndef AVS_UNUSED
+#define AVS_UNUSED(x) (void)(x)
+#define AVSUT_COMBINE_FILTER_UNDEF_AVS_UNUSED
+#endif
+#include "filters/combine.h"
+#ifdef AVSUT_COMBINE_FILTER_UNDEF_AVS_UNUSED
+#undef AVS_UNUSED
+#undef AVSUT_COMBINE_FILTER_UNDEF_AVS_UNUSED
+#endif
 #include "convert/convert_helper.h"
 
 #include "support/video_filter_test_support.h"
@@ -24,6 +34,7 @@ namespace {
 
 using avsut::test::AviSynthEnvironment;
 using avsut::test::fill_plane_full_pitch;
+using avsut::test::FrameSequenceClip;
 using avsut::test::FrameSnapshot;
 using avsut::test::get_frame_property_int;
 using avsut::test::make_video_info;
@@ -60,15 +71,15 @@ void expect_flipped_plane(const PVideoFrame& source, const PVideoFrame& output, 
   const int source_pitch = source->GetPitch(plane);
   const int output_pitch = output->GetPitch(plane);
   for (int y = 0; y < source_height; ++y) {
-    const auto* source_row = reinterpret_cast<const Pixel*>(source->GetReadPtr(plane) +
-                                                            y * source_pitch);
-    const auto* output_row = reinterpret_cast<const Pixel*>(output->GetReadPtr(plane) +
-                                                            y * output_pitch);
+    const auto* source_row =
+        reinterpret_cast<const Pixel*>(source->GetReadPtr(plane) + y * source_pitch);
+    const auto* output_row =
+        reinterpret_cast<const Pixel*>(output->GetReadPtr(plane) + y * output_pitch);
     for (int x = 0; x < source_width; ++x) {
       const int source_x = vertical ? x : source_width - 1 - x;
       const int source_y = vertical ? source_height - 1 - y : y;
-      const auto* expected_row = reinterpret_cast<const Pixel*>(
-          source->GetReadPtr(plane) + source_y * source_pitch);
+      const auto* expected_row =
+          reinterpret_cast<const Pixel*>(source->GetReadPtr(plane) + source_y * source_pitch);
       EXPECT_EQ(output_row[x], expected_row[source_x])
           << "plane=" << plane << " x=" << x << " y=" << y;
     }
@@ -76,8 +87,8 @@ void expect_flipped_plane(const PVideoFrame& source, const PVideoFrame& output, 
 }
 
 template <typename Pixel>
-void expect_cropped_plane(const PVideoFrame& source, const PVideoFrame& output, int plane,
-                          int left, int top, int xsub, int ysub) {
+void expect_cropped_plane(const PVideoFrame& source, const PVideoFrame& output, int plane, int left,
+                          int top, int xsub, int ysub) {
   const int plane_left = left >> xsub;
   const int plane_top = top >> ysub;
   const int output_width = output->GetRowSize(plane) / static_cast<int>(sizeof(Pixel));
@@ -85,10 +96,10 @@ void expect_cropped_plane(const PVideoFrame& source, const PVideoFrame& output, 
   const int source_pitch = source->GetPitch(plane);
   const int output_pitch = output->GetPitch(plane);
   for (int y = 0; y < output_height; ++y) {
-    const auto* output_row = reinterpret_cast<const Pixel*>(output->GetReadPtr(plane) +
-                                                            y * output_pitch);
-    const auto* source_row = reinterpret_cast<const Pixel*>(
-        source->GetReadPtr(plane) + (plane_top + y) * source_pitch);
+    const auto* output_row =
+        reinterpret_cast<const Pixel*>(output->GetReadPtr(plane) + y * output_pitch);
+    const auto* source_row =
+        reinterpret_cast<const Pixel*>(source->GetReadPtr(plane) + (plane_top + y) * source_pitch);
     for (int x = 0; x < output_width; ++x) {
       EXPECT_EQ(output_row[x], source_row[plane_left + x])
           << "plane=" << plane << " x=" << x << " y=" << y;
@@ -97,16 +108,15 @@ void expect_cropped_plane(const PVideoFrame& source, const PVideoFrame& output, 
 }
 
 template <typename Pixel>
-Pixel read_packed_logical(const PVideoFrame& frame, int x, int y, int component,
-                          int components) {
+Pixel read_packed_logical(const PVideoFrame& frame, int x, int y, int component, int components) {
   const int raw_y = frame->GetHeight() - 1 - y;
   const auto* row = reinterpret_cast<const Pixel*>(frame->GetReadPtr() + raw_y * frame->GetPitch());
   return row[x * components + component];
 }
 
 template <typename Pixel>
-void expect_cropped_packed(const PVideoFrame& source, const PVideoFrame& output, int left,
-                           int top, int width, int height, int components) {
+void expect_cropped_packed(const PVideoFrame& source, const PVideoFrame& output, int left, int top,
+                           int width, int height, int components) {
   const int source_width = source->GetRowSize() / (components * static_cast<int>(sizeof(Pixel)));
   const int source_height = source->GetHeight();
   const int output_width = output->GetRowSize() / (components * static_cast<int>(sizeof(Pixel)));
@@ -153,8 +163,8 @@ void fill_packed_pattern(PVideoFrame& frame, int components, Pixel base) {
     const int x = component / components;
     const int channel = component % components;
     const int logical_y = height - 1 - raw_y;
-    return static_cast<Pixel>(static_cast<std::uint32_t>(base) + x * 1701U +
-                              logical_y * 2901U + channel * 4301U);
+    return static_cast<Pixel>(static_cast<std::uint32_t>(base) + x * 1701U + logical_y * 2901U +
+                              channel * 4301U);
   });
 }
 
@@ -175,26 +185,25 @@ void expect_bordered_plane(const PVideoFrame& source, const PVideoFrame& output,
   const int source_pitch = source->GetPitch(plane);
   const int output_pitch = output->GetPitch(plane);
   for (int y = 0; y < output_height; ++y) {
-    const auto* output_row = reinterpret_cast<const Pixel*>(output->GetReadPtr(plane) +
-                                                            y * output_pitch);
+    const auto* output_row =
+        reinterpret_cast<const Pixel*>(output->GetReadPtr(plane) + y * output_pitch);
     for (int x = 0; x < output_width; ++x) {
       const bool inside = y >= plane_top && y < plane_top + source_height && x >= plane_left &&
                           x < plane_left + source_width;
       Pixel expected = border;
       if (inside) {
-        const auto* source_row = reinterpret_cast<const Pixel*>(
-            source->GetReadPtr(plane) + (y - plane_top) * source_pitch);
+        const auto* source_row = reinterpret_cast<const Pixel*>(source->GetReadPtr(plane) +
+                                                                (y - plane_top) * source_pitch);
         expected = source_row[x - plane_left];
       }
-      EXPECT_EQ(output_row[x], expected)
-          << "plane=" << plane << " x=" << x << " y=" << y;
+      EXPECT_EQ(output_row[x], expected) << "plane=" << plane << " x=" << x << " y=" << y;
     }
   }
 }
 
 template <typename Pixel>
-void expect_bordered_packed(const PVideoFrame& source, const PVideoFrame& output, int left,
-                            int top, int right, int bottom, int components,
+void expect_bordered_packed(const PVideoFrame& source, const PVideoFrame& output, int left, int top,
+                            int right, int bottom, int components,
                             const std::array<Pixel, 4>& border) {
   const int source_width = source->GetRowSize() / (components * static_cast<int>(sizeof(Pixel)));
   const int source_height = source->GetHeight();
@@ -204,13 +213,12 @@ void expect_bordered_packed(const PVideoFrame& source, const PVideoFrame& output
   ASSERT_EQ(output_height, source_height + top + bottom);
   for (int y = 0; y < output_height; ++y) {
     for (int x = 0; x < output_width; ++x) {
-      const bool inside = y >= top && y < top + source_height && x >= left &&
-                          x < left + source_width;
+      const bool inside =
+          y >= top && y < top + source_height && x >= left && x < left + source_width;
       for (int component = 0; component < components; ++component) {
-        const Pixel expected = inside
-                                   ? read_packed_logical<Pixel>(source, x - left, y - top,
-                                                                 component, components)
-                                   : border[static_cast<std::size_t>(component)];
+        const Pixel expected =
+            inside ? read_packed_logical<Pixel>(source, x - left, y - top, component, components)
+                   : border[static_cast<std::size_t>(component)];
         EXPECT_EQ(read_packed_logical<Pixel>(output, x, y, component, components), expected)
             << "component=" << component << " x=" << x << " y=" << y;
       }
@@ -342,8 +350,7 @@ TEST(CropFilter, PreservesChromaRangeAndFieldPropertiesOnSubframe) {
 
   for (const auto& property : std::array<std::pair<const char*, int>, 3>{
            std::pair{"_ChromaLocation", AVS_CHROMA_LEFT},
-           std::pair{"_ColorRange", AVS_COLORRANGE_FULL},
-           std::pair{"_FieldBased", 1}}) {
+           std::pair{"_ColorRange", AVS_COLORRANGE_FULL}, std::pair{"_FieldBased", 1}}) {
     const auto actual = get_frame_property_int(environment.get(), output, property.first);
     ASSERT_TRUE(actual.has_value()) << property.first;
     EXPECT_EQ(*actual, property.second) << property.first;
@@ -417,9 +424,8 @@ TEST_P(FlipYuv420Test, FlipsSubsampledYv12AcrossEveryPlane) {
   PVideoFrame source = environment.get()->NewVideoFrame(vi);
   for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
     fill_plane_full_pitch(source, static_cast<std::uint8_t>(0x31 + plane * 0x11), plane);
-    write_frame_plane<std::uint8_t>(source, plane, [plane](int x, int y) {
-      return 5 + plane * 37 + x * 17 + y * 29;
-    });
+    write_frame_plane<std::uint8_t>(
+        source, plane, [plane](int x, int y) { return 5 + plane * 37 + x * 17 + y * 29; });
   }
   const auto source_before = FrameSnapshot::capture(source, vi);
   auto* source_clip = new StaticFrameClip(vi, source);
@@ -456,9 +462,8 @@ TEST(FlipFilter, FlipsYuva420AlphaWithTheFullResolutionPlanes) {
   PVideoFrame source = environment.get()->NewVideoFrame(vi);
   for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V, PLANAR_A}) {
     fill_plane_full_pitch(source, static_cast<std::uint8_t>(0x41 + plane * 0x13), plane);
-    write_frame_plane<std::uint8_t>(source, plane, [plane](int x, int y) {
-      return 7 + plane * 41 + x * 11 + y * 23;
-    });
+    write_frame_plane<std::uint8_t>(
+        source, plane, [plane](int x, int y) { return 7 + plane * 41 + x * 11 + y * 23; });
   }
   const auto source_before = FrameSnapshot::capture(source, vi);
   auto* source_clip = new StaticFrameClip(vi, source);
@@ -485,9 +490,8 @@ TEST(FlipFilter, DoubleHorizontalFlipRestoresYuva420ActivePlanes) {
   PVideoFrame source = environment.get()->NewVideoFrame(vi);
   for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V, PLANAR_A}) {
     fill_plane_full_pitch(source, static_cast<std::uint8_t>(0x52 + plane * 0x17), plane);
-    write_frame_plane<std::uint8_t>(source, plane, [plane](int x, int y) {
-      return 11 + plane * 37 + x * 13 + y * 29;
-    });
+    write_frame_plane<std::uint8_t>(
+        source, plane, [plane](int x, int y) { return 11 + plane * 37 + x * 13 + y * 29; });
   }
   const auto source_before = FrameSnapshot::capture(source, vi);
   auto* source_clip_impl = new StaticFrameClip(vi, source);
@@ -551,9 +555,7 @@ TEST_P(PackedFlipFilterTest, FlipsPackedBgrRowsAndPixels) {
   EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
 }
 
-void PrintTo(const PackedFlipCase& test_case, std::ostream* stream) {
-  *stream << test_case.name;
-}
+void PrintTo(const PackedFlipCase& test_case, std::ostream* stream) { *stream << test_case.name; }
 
 INSTANTIATE_TEST_SUITE_P(
     Formats, PackedFlipFilterTest,
@@ -571,9 +573,8 @@ TEST(FlipFilter, FlipsPlanarRgb16GbrPlanesHorizontally) {
   PVideoFrame source = environment.get()->NewVideoFrame(vi);
   for (const int plane : {PLANAR_G, PLANAR_B, PLANAR_R}) {
     fill_plane_full_pitch(source, static_cast<std::uint8_t>(0x92 + plane * 0x11), plane);
-    write_frame_plane<std::uint16_t>(source, plane, [plane](int x, int y) {
-      return 1000 + plane * 7001 + x * 401 + y * 503;
-    });
+    write_frame_plane<std::uint16_t>(
+        source, plane, [plane](int x, int y) { return 1000 + plane * 7001 + x * 401 + y * 503; });
   }
   const auto source_before = FrameSnapshot::capture(source, vi);
   auto* source_clip = new StaticFrameClip(vi, source);
@@ -603,9 +604,8 @@ TEST(CropFilter, ReturnsRequestedYv12SubrectangleWithScaledChromaOffsets) {
   PVideoFrame source = environment.get()->NewVideoFrame(vi);
   for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
     fill_plane_full_pitch(source, static_cast<std::uint8_t>(0x22 + plane * 0x17), plane);
-    write_frame_plane<std::uint8_t>(source, plane, [plane](int x, int y) {
-      return 3 + plane * 43 + x * 17 + y * 29;
-    });
+    write_frame_plane<std::uint8_t>(
+        source, plane, [plane](int x, int y) { return 3 + plane * 43 + x * 17 + y * 29; });
   }
   const auto source_before = FrameSnapshot::capture(source, vi);
   auto* source_clip = new StaticFrameClip(vi, source);
@@ -638,9 +638,8 @@ TEST(CropFilter, ReturnsRequestedYv16SubrectangleWithHorizontalChromaOffset) {
   PVideoFrame source = environment.get()->NewVideoFrame(vi);
   for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
     fill_plane_full_pitch(source, static_cast<std::uint8_t>(0x32 + plane * 0x13), plane);
-    write_frame_plane<std::uint8_t>(source, plane, [plane](int x, int y) {
-      return 11 + plane * 31 + x * 19 + y * 23;
-    });
+    write_frame_plane<std::uint8_t>(
+        source, plane, [plane](int x, int y) { return 11 + plane * 31 + x * 19 + y * 23; });
   }
   const auto source_before = FrameSnapshot::capture(source, vi);
   auto* source_clip = new StaticFrameClip(vi, source);
@@ -672,9 +671,8 @@ TEST(CropFilter, ReturnsRequestedYuva420SubrectangleAndAlpha) {
   PVideoFrame source = environment.get()->NewVideoFrame(vi);
   for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V, PLANAR_A}) {
     fill_plane_full_pitch(source, static_cast<std::uint8_t>(0x42 + plane * 0x11), plane);
-    write_frame_plane<std::uint8_t>(source, plane, [plane](int x, int y) {
-      return 7 + plane * 41 + x * 13 + y * 17;
-    });
+    write_frame_plane<std::uint8_t>(
+        source, plane, [plane](int x, int y) { return 7 + plane * 41 + x * 13 + y * 17; });
   }
   const auto source_before = FrameSnapshot::capture(source, vi);
   auto* source_clip = new StaticFrameClip(vi, source);
@@ -732,9 +730,8 @@ TEST(CropFilter, ReturnsRequestedPlanarRgb16Subrectangle) {
   PVideoFrame source = environment.get()->NewVideoFrame(vi);
   for (const int plane : {PLANAR_G, PLANAR_B, PLANAR_R}) {
     fill_plane_full_pitch(source, static_cast<std::uint8_t>(0x82 + plane * 0x13), plane);
-    write_frame_plane<std::uint16_t>(source, plane, [plane](int x, int y) {
-      return 1000 + plane * 5001 + x * 701 + y * 307;
-    });
+    write_frame_plane<std::uint16_t>(
+        source, plane, [plane](int x, int y) { return 1000 + plane * 5001 + x * 701 + y * 307; });
   }
   const auto source_before = FrameSnapshot::capture(source, vi);
   auto* source_clip = new StaticFrameClip(vi, source);
@@ -764,9 +761,8 @@ TEST(AddBordersFilter, AddsYuvBordersToYv12WithSubsampledGeometry) {
   PVideoFrame source = environment.get()->NewVideoFrame(vi);
   for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
     fill_plane_full_pitch(source, static_cast<std::uint8_t>(0x91 + plane * 0x11), plane);
-    write_frame_plane<std::uint8_t>(source, plane, [plane](int x, int y) {
-      return 7 + plane * 31 + x * 13 + y * 19;
-    });
+    write_frame_plane<std::uint8_t>(
+        source, plane, [plane](int x, int y) { return 7 + plane * 31 + x * 13 + y * 19; });
   }
   const auto source_before = FrameSnapshot::capture(source, vi);
   auto* source_clip = new StaticFrameClip(vi, source);
@@ -800,9 +796,8 @@ TEST(AddBordersFilter, AddsYuva420BordersIncludingAlpha) {
   PVideoFrame source = environment.get()->NewVideoFrame(vi);
   for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V, PLANAR_A}) {
     fill_plane_full_pitch(source, static_cast<std::uint8_t>(0x51 + plane * 0x13), plane);
-    write_frame_plane<std::uint8_t>(source, plane, [plane](int x, int y) {
-      return 11 + plane * 37 + x * 17 + y * 23;
-    });
+    write_frame_plane<std::uint8_t>(
+        source, plane, [plane](int x, int y) { return 11 + plane * 37 + x * 17 + y * 23; });
   }
   const auto source_before = FrameSnapshot::capture(source, vi);
   auto* source_clip = new StaticFrameClip(vi, source);
@@ -896,9 +891,8 @@ TEST(AddBordersFilter, AddsPlanarRgb16BordersInGbrPlaneOrder) {
   PVideoFrame source = environment.get()->NewVideoFrame(vi);
   for (const int plane : {PLANAR_G, PLANAR_B, PLANAR_R}) {
     fill_plane_full_pitch(source, static_cast<std::uint8_t>(0xc3 + plane * 0x11), plane);
-    write_frame_plane<std::uint16_t>(source, plane, [plane](int x, int y) {
-      return 2000 + plane * 5001 + x * 701 + y * 307;
-    });
+    write_frame_plane<std::uint16_t>(
+        source, plane, [plane](int x, int y) { return 2000 + plane * 5001 + x * 701 + y * 307; });
   }
   const auto source_before = FrameSnapshot::capture(source, vi);
   auto* source_clip = new StaticFrameClip(vi, source);
@@ -911,14 +905,139 @@ TEST(AddBordersFilter, AddsPlanarRgb16BordersInGbrPlaneOrder) {
     return static_cast<std::uint16_t>((static_cast<unsigned>(value) * 65535U) / 255U);
   };
   expect_bordered_plane<std::uint16_t>(source, output, PLANAR_G, left, top, right, bottom, 0, 0,
-                                      scale(0x22));
+                                       scale(0x22));
   expect_bordered_plane<std::uint16_t>(source, output, PLANAR_B, left, top, right, bottom, 0, 0,
-                                      scale(0x33));
+                                       scale(0x33));
   expect_bordered_plane<std::uint16_t>(source, output, PLANAR_R, left, top, right, bottom, 0, 0,
-                                      scale(0x11));
+                                       scale(0x11));
   EXPECT_NE(output->CheckMemory(), 1);
   EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
   EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+TEST(StackFilter, StacksYv24VerticallyFromTwoSources) {
+  AviSynthEnvironment environment;
+  constexpr int width = 4;
+  constexpr int top_height = 3;
+  constexpr int bottom_height = 2;
+  const auto top_vi =
+      make_video_info(VideoInfoSpec{width, top_height, VideoInfo::CS_YV24, 1, 25, 1});
+  const auto bottom_vi =
+      make_video_info(VideoInfoSpec{width, bottom_height, VideoInfo::CS_YV24, 1, 25, 1});
+  PVideoFrame top = environment.get()->NewVideoFrame(top_vi);
+  PVideoFrame bottom = environment.get()->NewVideoFrame(bottom_vi);
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    fill_plane_full_pitch(top, 0xc0, plane);
+    fill_plane_full_pitch(bottom, 0xd0, plane);
+    write_frame_plane<std::uint8_t>(top, plane, [plane](int x, int y) {
+      return static_cast<std::uint8_t>(10 + plane * 20 + y * 7 + x);
+    });
+    write_frame_plane<std::uint8_t>(bottom, plane, [plane](int x, int y) {
+      return static_cast<std::uint8_t>(90 + plane * 11 + y * 5 + x * 2);
+    });
+  }
+  const auto top_before = FrameSnapshot::capture(top, top_vi);
+  const auto bottom_before = FrameSnapshot::capture(bottom, bottom_vi);
+  auto* top_impl = new StaticFrameClip(top_vi, top);
+  auto* bottom_impl = new StaticFrameClip(bottom_vi, bottom);
+  const PClip top_clip(top_impl);
+  const PClip bottom_clip(bottom_impl);
+
+  StackVertical filter(std::vector<PClip>{top_clip, bottom_clip}, environment.get());
+  EXPECT_EQ(filter.GetVideoInfo().width, width);
+  EXPECT_EQ(filter.GetVideoInfo().height, top_height + bottom_height);
+  EXPECT_EQ(filter.GetVideoInfo().num_frames, 1);
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    const int pitch = output->GetPitch(plane);
+    const auto* out = output->GetReadPtr(plane);
+    const int top_pitch = top->GetPitch(plane);
+    const int bottom_pitch = bottom->GetPitch(plane);
+    const auto* top_ptr = top->GetReadPtr(plane);
+    const auto* bottom_ptr = bottom->GetReadPtr(plane);
+    const int plane_width = top->GetRowSize(plane);
+    for (int y = 0; y < top_height; ++y) {
+      for (int x = 0; x < plane_width; ++x) {
+        EXPECT_EQ(out[x + y * pitch], top_ptr[x + y * top_pitch])
+            << "plane=" << plane << " top x=" << x << " y=" << y;
+      }
+    }
+    for (int y = 0; y < bottom_height; ++y) {
+      for (int x = 0; x < plane_width; ++x) {
+        EXPECT_EQ(out[x + (y + top_height) * pitch], bottom_ptr[x + y * bottom_pitch])
+            << "plane=" << plane << " bottom x=" << x << " y=" << y;
+      }
+    }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(top_impl->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(bottom_impl->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(top, top_vi), top_before);
+  EXPECT_EQ(FrameSnapshot::capture(bottom, bottom_vi), bottom_before);
+}
+
+TEST(StackFilter, StacksYv24HorizontallyFromTwoSources) {
+  AviSynthEnvironment environment;
+  constexpr int left_width = 3;
+  constexpr int right_width = 2;
+  constexpr int height = 4;
+  const auto left_vi =
+      make_video_info(VideoInfoSpec{left_width, height, VideoInfo::CS_YV24, 1, 25, 1});
+  const auto right_vi =
+      make_video_info(VideoInfoSpec{right_width, height, VideoInfo::CS_YV24, 1, 25, 1});
+  PVideoFrame left = environment.get()->NewVideoFrame(left_vi);
+  PVideoFrame right = environment.get()->NewVideoFrame(right_vi);
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    fill_plane_full_pitch(left, 0xa1, plane);
+    fill_plane_full_pitch(right, 0xb2, plane);
+    write_frame_plane<std::uint8_t>(left, plane, [plane](int x, int y) {
+      return static_cast<std::uint8_t>(5 + plane * 13 + y * 9 + x * 4);
+    });
+    write_frame_plane<std::uint8_t>(right, plane, [plane](int x, int y) {
+      return static_cast<std::uint8_t>(55 + plane * 7 + y * 3 + x * 6);
+    });
+  }
+  const auto left_before = FrameSnapshot::capture(left, left_vi);
+  const auto right_before = FrameSnapshot::capture(right, right_vi);
+  auto* left_impl = new StaticFrameClip(left_vi, left);
+  auto* right_impl = new StaticFrameClip(right_vi, right);
+  const PClip left_clip(left_impl);
+  const PClip right_clip(right_impl);
+
+  StackHorizontal filter(std::vector<PClip>{left_clip, right_clip}, environment.get());
+  EXPECT_EQ(filter.GetVideoInfo().width, left_width + right_width);
+  EXPECT_EQ(filter.GetVideoInfo().height, height);
+  EXPECT_EQ(filter.GetVideoInfo().num_frames, 1);
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    const int pitch = output->GetPitch(plane);
+    const auto* out = output->GetReadPtr(plane);
+    const int left_pitch = left->GetPitch(plane);
+    const int right_pitch = right->GetPitch(plane);
+    const auto* left_ptr = left->GetReadPtr(plane);
+    const auto* right_ptr = right->GetReadPtr(plane);
+    const int left_plane_width = left->GetRowSize(plane);
+    const int right_plane_width = right->GetRowSize(plane);
+    for (int y = 0; y < height; ++y) {
+      for (int x = 0; x < left_plane_width; ++x) {
+        EXPECT_EQ(out[x + y * pitch], left_ptr[x + y * left_pitch])
+            << "plane=" << plane << " left x=" << x << " y=" << y;
+      }
+      for (int x = 0; x < right_plane_width; ++x) {
+        EXPECT_EQ(out[x + left_plane_width + y * pitch], right_ptr[x + y * right_pitch])
+            << "plane=" << plane << " right x=" << x << " y=" << y;
+      }
+    }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(left_impl->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(right_impl->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(left, left_vi), left_before);
+  EXPECT_EQ(FrameSnapshot::capture(right, right_vi), right_before);
 }
 
 }  // namespace

@@ -531,4 +531,67 @@ TEST(EditFrameFilter, DuplicatesSelectedFrameAndShiftsLaterRequests) {
   }
 }
 
+TEST(EditFrameFilter, InterleavesTwoSourcesInAlternatingOrder) {
+  AviSynthEnvironment environment;
+  constexpr int width = 5;
+  constexpr int height = 4;
+  // Use equal lengths so the advertised timeline stays within both children.
+  const auto left_vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_YV24, 2, 25, 1});
+  const auto right_vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_YV24, 2, 25, 1});
+  auto left_frames = make_field_source_frames(environment, left_vi, left_vi.num_frames);
+  auto right_frames = make_field_source_frames(environment, right_vi, right_vi.num_frames);
+  // Offset the second clip pattern so source identity is unambiguous.
+  for (int frame_index = 0; frame_index < right_vi.num_frames; ++frame_index) {
+    for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+      write_frame_plane<std::uint8_t>(
+          right_frames[static_cast<std::size_t>(frame_index)], plane,
+          [plane, frame_index](int x, int y) {
+            return static_cast<std::uint8_t>(101 + plane * 17 + frame_index * 43 + y * 11 + x * 3);
+          });
+    }
+  }
+  std::vector<FrameSnapshot> left_snapshots;
+  std::vector<FrameSnapshot> right_snapshots;
+  for (const auto& frame : left_frames) {
+    left_snapshots.push_back(FrameSnapshot::capture(frame, left_vi));
+  }
+  for (const auto& frame : right_frames) {
+    right_snapshots.push_back(FrameSnapshot::capture(frame, right_vi));
+  }
+  auto* left_impl = new FrameSequenceClip(left_vi, left_frames);
+  auto* right_impl = new FrameSequenceClip(right_vi, right_frames);
+  const PClip left(left_impl);
+  const PClip right(right_impl);
+
+  std::vector<PClip> children{left, right};
+  Interleave filter(std::move(children), environment.get());
+  const auto& output_vi = filter.GetVideoInfo();
+  // (2-1)*2+1 = 3, then max with (2-1)*2+1+1 = 4 frames, FPS*2.
+  EXPECT_EQ(output_vi.num_frames, 4);
+  EXPECT_EQ(output_vi.fps_numerator, 50U);
+  EXPECT_EQ(output_vi.fps_denominator, 1U);
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  EXPECT_EQ(filter.SetCacheHints(CACHE_DONT_CACHE_ME, 0), 1);
+
+  // n % 2 selects the child; n / 2 selects the child frame.
+  const std::vector<std::pair<int, int>> expected{{0, 0}, {1, 0}, {0, 1}, {1, 1}};
+  for (int n = 0; n < output_vi.num_frames; ++n) {
+    const auto& entry = expected[static_cast<std::size_t>(n)];
+    const PVideoFrame output = filter.GetFrame(n, environment.get());
+    const auto& source_frames = entry.first == 0 ? left_frames : right_frames;
+    expect_frame_equal(output, source_frames[static_cast<std::size_t>(entry.second)], "Yv24");
+    EXPECT_NE(output->CheckMemory(), 1) << "output_frame=" << n;
+  }
+
+  EXPECT_EQ(left_impl->frame_requests(), (std::vector<int>{0, 1}));
+  EXPECT_EQ(right_impl->frame_requests(), (std::vector<int>{0, 1}));
+  for (std::size_t i = 0; i < left_frames.size(); ++i) {
+    EXPECT_EQ(FrameSnapshot::capture(left_frames[i], left_vi), left_snapshots[i]) << "left=" << i;
+  }
+  for (std::size_t i = 0; i < right_frames.size(); ++i) {
+    EXPECT_EQ(FrameSnapshot::capture(right_frames[i], right_vi), right_snapshots[i])
+        << "right=" << i;
+  }
+}
+
 }  // namespace
