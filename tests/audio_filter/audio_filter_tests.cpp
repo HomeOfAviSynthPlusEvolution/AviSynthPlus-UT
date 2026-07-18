@@ -15,6 +15,7 @@
 #endif
 
 #include "support/audio_test_helpers.h"
+#include "support/video_filter_test_support.h"
 #include "support/avisynth_environment.h"
 
 #include <gtest/gtest.h>
@@ -37,10 +38,15 @@ using avsut::test::expect_audio_requests;
 using avsut::test::expect_audio_source_unchanged;
 using avsut::test::expect_exact_audio;
 using avsut::test::expect_float_audio;
+using avsut::test::fill_plane_full_pitch;
+using avsut::test::FrameSequenceClip;
+using avsut::test::FrameSnapshot;
 using avsut::test::GuardedAudioBuffer;
 using avsut::test::make_audio_bytes;
 using avsut::test::make_audio_video_info;
+using avsut::test::make_video_info;
 using avsut::test::read_audio_sample;
+using avsut::test::VideoInfoSpec;
 
 int amplify_int16_reference(std::int16_t sample, int factor) {
   const auto scaled = (static_cast<std::int64_t>(sample) * factor + 65536) >> 17;
@@ -687,6 +693,58 @@ TEST(ResampleAudioFilter, ProducesContinuousSigned16OutputAcrossChunkedRequests)
   EXPECT_TRUE(actual.memory_intact());
   EXPECT_FALSE(one_shot_source->audio_requests().empty());
   EXPECT_FALSE(chunked_source->audio_requests().empty());
+}
+
+TEST(NormalizeFilter, ShowsAmplifyFactorOnVideoFrameAfterPeakScan) {
+  AviSynthEnvironment environment;
+  // Video-plus-audio clip: showvalues overlays text only after the peak scan.
+  auto video = make_video_info(VideoInfoSpec{64, 32, VideoInfo::CS_YV12, 2, 25, 1});
+  video.audio_samples_per_second = 48000;
+  video.sample_type = SAMPLE_FLOAT;
+  video.nchannels = 1;
+  video.num_audio_samples = 4;
+  video.SetChannelMask(false, 0);
+
+  PVideoFrame frame0 = environment.get()->NewVideoFrame(video);
+  PVideoFrame frame1 = environment.get()->NewVideoFrame(video);
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    fill_plane_full_pitch(frame0, plane == PLANAR_Y ? 0x20 : 0x80, plane);
+    fill_plane_full_pitch(frame1, plane == PLANAR_Y ? 0x20 : 0x80, plane);
+  }
+  const auto frame0_before = FrameSnapshot::capture(frame0, video);
+  const auto frame1_before = FrameSnapshot::capture(frame1, video);
+
+  // Peak at sample 2 maps to frame 1 for 48000 Hz / 25 fps (1920 samples/frame).
+  // Use a short clip with explicit sample-to-frame mapping via FramesFromAudioSamples.
+  const std::vector<float> samples{0.25F, -0.5F, 0.5F, 0.125F};
+  // Ensure FramesFromAudioSamples(peak_index) is well-defined for this fixture.
+  auto* source_clip = new avsut::test::FrameSequenceClip(
+      video, std::vector<PVideoFrame>{frame0, frame1}, make_audio_bytes(samples));
+  const PClip source(source_clip);
+
+  Normalize filter(source, 1.0F, true);
+  EXPECT_EQ(filter.GetVideoInfo().HasVideo(), true);
+  EXPECT_EQ(filter.GetVideoInfo().HasAudio(), true);
+
+  // Before any GetAudio, GetFrame reports the pending-scan message path.
+  const PVideoFrame pending = filter.GetFrame(0, environment.get());
+  EXPECT_NE(pending->CheckMemory(), 1);
+  EXPECT_FALSE(FrameSnapshot::capture(pending, video) == frame0_before);
+
+  GuardedAudioBuffer output(filter.GetVideoInfo().BytesFromAudioSamples(4), 64, 64, 1);
+  filter.GetAudio(output.data(), 0, 4, environment.get());
+  // Peak magnitude is 0.5, so factor becomes 1.0 / 0.5 = 2.0.
+  expect_float_audio(output, {0.5F, -1.0F, 1.0F, 0.25F}, 1e-6F);
+
+  const PVideoFrame annotated = filter.GetFrame(0, environment.get());
+  EXPECT_NE(annotated->CheckMemory(), 1);
+  EXPECT_FALSE(FrameSnapshot::capture(annotated, video) == frame0_before);
+  // After the peak scan the overlay text differs from the pending message.
+  EXPECT_FALSE(FrameSnapshot::capture(annotated, video) == FrameSnapshot::capture(pending, video));
+  // Source frames remain intact; Normalize annotates a writable copy.
+  EXPECT_EQ(FrameSnapshot::capture(frame0, video), frame0_before);
+  EXPECT_EQ(FrameSnapshot::capture(frame1, video), frame1_before);
+  EXPECT_FALSE(source_clip->audio_requests().empty());
 }
 
 }  // namespace
