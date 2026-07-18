@@ -839,4 +839,132 @@ INSTANTIATE_TEST_SUITE_P(
                                            "Yv24_Width5_Height3_Darken_OpacityHalf"}),
     [](const ::testing::TestParamInfo<OverlayThresholdCase>& info) { return info.param.name; });
 
+struct OverlayMultiplyCase {
+  float opacity;
+  int opacity_fixed;
+  const char* name;
+};
+
+void PrintTo(const OverlayMultiplyCase& test_case, std::ostream* stream) {
+  *stream << test_case.name;
+}
+
+std::vector<PVideoFrame> make_yuv_multiply_frames(AviSynthEnvironment& environment,
+                                                  const VideoInfo& vi, bool overlay) {
+  constexpr std::array<std::uint8_t, 5> kBaseY{0, 64, 128, 192, 255};
+  constexpr std::array<std::uint8_t, 5> kOverlayY{255, 192, 128, 64, 0};
+  constexpr std::array<std::uint8_t, 5> kBaseU{16, 64, 128, 192, 240};
+  constexpr std::array<std::uint8_t, 5> kOverlayU{240, 192, 128, 64, 16};
+  constexpr std::array<std::uint8_t, 5> kBaseV{240, 192, 128, 64, 16};
+  constexpr std::array<std::uint8_t, 5> kOverlayV{16, 64, 128, 192, 240};
+  if (vi.pixel_type != VideoInfo::CS_YV24 || vi.width != 5 || vi.height != 3) {
+    throw std::invalid_argument("unexpected YUV multiply test geometry");
+  }
+
+  const auto& y_values = overlay ? kOverlayY : kBaseY;
+  const auto& u_values = overlay ? kOverlayU : kBaseU;
+  const auto& v_values = overlay ? kOverlayV : kBaseV;
+  std::vector<PVideoFrame> frames;
+  for (int frame_index = 0; frame_index < vi.num_frames; ++frame_index) {
+    PVideoFrame frame = environment.get()->NewVideoFrame(vi);
+    for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+      fill_plane_full_pitch(frame, overlay ? 0x33 : 0xcc, plane);
+      write_frame_plane<std::uint8_t>(frame, plane, [&](int x, int y) {
+        const auto& values = plane == PLANAR_Y ? y_values : plane == PLANAR_U ? u_values : v_values;
+        return clamp_u8(static_cast<int>(values[static_cast<std::size_t>(x)]) + y + frame_index);
+      });
+    }
+    frames.push_back(frame);
+  }
+  return frames;
+}
+
+std::uint8_t reference_multiply_y(std::uint8_t base, std::uint8_t overlay, float opacity) {
+  constexpr float factor = 1.0F / 255.0F;
+  const float common_factor = 1.0F + (static_cast<float>(overlay) * factor - 1.0F) * opacity;
+  return static_cast<std::uint8_t>(
+      std::clamp(static_cast<int>(static_cast<float>(base) * common_factor + 0.5F), 0, 255));
+}
+
+std::uint8_t reference_multiply_chroma(std::uint8_t base, std::uint8_t overlay_y, float opacity) {
+  constexpr float factor = 1.0F / 255.0F;
+  constexpr float half = 128.0F;
+  const float common_factor = 1.0F + (static_cast<float>(overlay_y) * factor - 1.0F) * opacity;
+  return static_cast<std::uint8_t>(std::clamp(
+      static_cast<int>((static_cast<float>(base) - half) * common_factor + half + 0.5F), 0, 255));
+}
+
+void expect_yuv_multiply_reference(const OverlayMultiplyCase& test_case,
+                                   const PVideoFrame& base_frame, const PVideoFrame& overlay_frame,
+                                   const PVideoFrame& output) {
+  const int y_pitch = output->GetPitch(PLANAR_Y);
+  const int u_pitch = output->GetPitch(PLANAR_U);
+  const int v_pitch = output->GetPitch(PLANAR_V);
+  const int base_y_pitch = base_frame->GetPitch(PLANAR_Y);
+  const int base_u_pitch = base_frame->GetPitch(PLANAR_U);
+  const int base_v_pitch = base_frame->GetPitch(PLANAR_V);
+  const int ov_y_pitch = overlay_frame->GetPitch(PLANAR_Y);
+  const auto* out_y = output->GetReadPtr(PLANAR_Y);
+  const auto* out_u = output->GetReadPtr(PLANAR_U);
+  const auto* out_v = output->GetReadPtr(PLANAR_V);
+  const auto* base_y = base_frame->GetReadPtr(PLANAR_Y);
+  const auto* base_u = base_frame->GetReadPtr(PLANAR_U);
+  const auto* base_v = base_frame->GetReadPtr(PLANAR_V);
+  const auto* ov_y = overlay_frame->GetReadPtr(PLANAR_Y);
+
+  for (int y = 0; y < 3; ++y) {
+    for (int x = 0; x < 5; ++x) {
+      const std::uint8_t by = base_y[x + y * base_y_pitch];
+      const std::uint8_t oy = ov_y[x + y * ov_y_pitch];
+      const auto expected_y = reference_multiply_y(by, oy, test_case.opacity);
+      const auto expected_u =
+          reference_multiply_chroma(base_u[x + y * base_u_pitch], oy, test_case.opacity);
+      const auto expected_v =
+          reference_multiply_chroma(base_v[x + y * base_v_pitch], oy, test_case.opacity);
+      EXPECT_EQ(out_y[x + y * y_pitch], expected_y)
+          << "mode=" << test_case.name << " x=" << x << " y=" << y << " plane=Y";
+      EXPECT_EQ(out_u[x + y * u_pitch], expected_u)
+          << "mode=" << test_case.name << " x=" << x << " y=" << y << " plane=U";
+      EXPECT_EQ(out_v[x + y * v_pitch], expected_v)
+          << "mode=" << test_case.name << " x=" << x << " y=" << y << " plane=V";
+    }
+  }
+}
+
+class OverlayFilterMultiplyTest : public ::testing::TestWithParam<OverlayMultiplyCase> {};
+
+TEST_P(OverlayFilterMultiplyTest, MatchesIndependentLumaDrivenMultiplyReference) {
+  const auto& test_case = GetParam();
+  AviSynthEnvironment environment;
+  const auto vi = make_video_info(VideoInfoSpec{5, 3, VideoInfo::CS_YV24, 2, 25, 1});
+  auto base_frames = make_yuv_multiply_frames(environment, vi, false);
+  auto overlay_frames = make_yuv_multiply_frames(environment, vi, true);
+  const auto base_before = FrameSnapshot::capture(base_frames[1], vi);
+  const auto overlay_before = FrameSnapshot::capture(overlay_frames[1], vi);
+  auto* base_impl = new FrameSequenceClip(vi, base_frames);
+  auto* overlay_impl = new FrameSequenceClip(vi, overlay_frames);
+  const PClip base(base_impl);
+  const PClip overlay(overlay_impl);
+
+  auto args = make_overlay_args(base, overlay, PClip(), "Multiply");
+  args[5] = test_case.opacity;
+  Overlay filter(base, AVSValue(args.data(), static_cast<int>(args.size())), environment.get());
+  EXPECT_EQ(filter.GetVideoInfo().pixel_type, vi.pixel_type);
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  const PVideoFrame output = filter.GetFrame(1, environment.get());
+
+  expect_yuv_multiply_reference(test_case, base_frames[1], overlay_frames[1], output);
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(base_impl->frame_requests(), std::vector<int>{1});
+  EXPECT_EQ(overlay_impl->frame_requests(), std::vector<int>{1});
+  EXPECT_EQ(FrameSnapshot::capture(base_frames[1], vi), base_before);
+  EXPECT_EQ(FrameSnapshot::capture(overlay_frames[1], vi), overlay_before);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    MultiplyCases, OverlayFilterMultiplyTest,
+    ::testing::Values(OverlayMultiplyCase{1.0F, 256, "Yv24_Width5_Height3_Multiply_OpacityFull"},
+                      OverlayMultiplyCase{0.5F, 128, "Yv24_Width5_Height3_Multiply_OpacityHalf"}),
+    [](const ::testing::TestParamInfo<OverlayMultiplyCase>& info) { return info.param.name; });
+
 }  // namespace
