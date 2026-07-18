@@ -10,6 +10,7 @@
 #undef AVSUT_HISTOGRAM_UNDEF_AVS_UNUSED
 #endif
 
+#include "support/audio_sequence_clip.h"
 #include "support/video_filter_test_support.h"
 
 #include <gtest/gtest.h>
@@ -18,13 +19,19 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <limits>
+#include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace {
 
+using avsut::test::AudioRequest;
 using avsut::test::AviSynthEnvironment;
+using avsut::test::CacheHintRequest;
 using avsut::test::fill_plane_full_pitch;
 using avsut::test::FrameSnapshot;
+using avsut::test::make_audio_bytes;
 using avsut::test::make_video_info;
 using avsut::test::StaticFrameClip;
 using avsut::test::VideoInfoSpec;
@@ -161,8 +168,7 @@ void write_yv24_levels_source(PVideoFrame& frame) {
       {{12, 13, 14, 14}},
       {{15, 16, 17, 18}},
   }};
-  const auto write_values = [](PVideoFrame& target, int plane,
-                               const auto& values) {
+  const auto write_values = [](PVideoFrame& target, int plane, const auto& values) {
     const int pitch = target->GetPitch(plane);
     for (int y = 0; y < static_cast<int>(values.size()); ++y) {
       auto* row = target->GetWritePtr(plane) + y * pitch;
@@ -189,8 +195,8 @@ TEST(Histogram, DrawsLevelsForEachYuvPlaneBesideKeptSource) {
   AviSynthEnvironment environment;
   constexpr int source_width = 4;
   constexpr int source_height = 2;
-  const auto vi = make_video_info(
-      VideoInfoSpec{source_width, source_height, VideoInfo::CS_YV24, 1, 25, 1});
+  const auto vi =
+      make_video_info(VideoInfoSpec{source_width, source_height, VideoInfo::CS_YV24, 1, 25, 1});
   PVideoFrame source = environment.get()->NewVideoFrame(vi);
   write_yv24_levels_source(source);
   const auto source_before = FrameSnapshot::capture(source, vi);
@@ -225,11 +231,11 @@ TEST(Histogram, DrawsLevelsForEachYuvPlaneBesideKeptSource) {
     EXPECT_EQ(output_y[(last_row - 1) * output_pitch + source_width + value], 16)
         << "baseline=" << baseline << " value=" << value;
   };
-  expect_bar(64, 0, 34);    // One Y sample, maximum population is two.
-  expect_bar(64, 1, 2);     // Two Y samples reach the full bar height.
-  expect_bar(144, 2, 82);   // Two U samples reach the full bar height.
+  expect_bar(64, 0, 34);   // One Y sample, maximum population is two.
+  expect_bar(64, 1, 2);    // Two Y samples reach the full bar height.
+  expect_bar(144, 2, 82);  // Two U samples reach the full bar height.
   expect_bar(144, 3, 114);
-  expect_bar(224, 12, 194); // One V sample at the V baseline.
+  expect_bar(224, 12, 194);  // One V sample at the V baseline.
   EXPECT_NE(output->CheckMemory(), 1);
   EXPECT_EQ(source_clip->frame_requests(), std::vector<int>({0, 0}));
   EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
@@ -239,8 +245,7 @@ TEST(Histogram, PlotsSubsampledChromaInColorMode) {
   AviSynthEnvironment environment;
   constexpr int width = 4;
   constexpr int height = 4;
-  const auto vi = make_video_info(
-      VideoInfoSpec{width, height, VideoInfo::CS_YV12, 1, 25, 1});
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_YV12, 1, 25, 1});
   PVideoFrame source = environment.get()->NewVideoFrame(vi);
   fill_plane_full_pitch(source, 0x51, PLANAR_Y);
   fill_plane_full_pitch(source, 0x62, PLANAR_U);
@@ -297,8 +302,7 @@ TEST(Histogram, PlotsSamplesInColor2VectorscopeWithGraticule) {
   AviSynthEnvironment environment;
   constexpr int width = 4;
   constexpr int height = 4;
-  const auto vi = make_video_info(
-      VideoInfoSpec{width, height, VideoInfo::CS_YV12, 1, 25, 1});
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_YV12, 1, 25, 1});
   PVideoFrame source = environment.get()->NewVideoFrame(vi);
   fill_plane_full_pitch(source, 0x41, PLANAR_Y);
   fill_plane_full_pitch(source, 0x52, PLANAR_U);
@@ -336,8 +340,8 @@ TEST(Histogram, PlotsSamplesInColor2VectorscopeWithGraticule) {
   auto params = no_color_overlays();
   params.graticule_type = histogram_color2_params::GRATICULE_ON;
 
-  Histogram filter(clip, Histogram::ModeColor2, AVSValue(), 8, false, false, nullptr,
-                   params, environment.get());
+  Histogram filter(clip, Histogram::ModeColor2, AVSValue(), 8, false, false, nullptr, params,
+                   environment.get());
   const auto& output_vi = filter.GetVideoInfo();
   EXPECT_EQ(output_vi.width, 256);
   EXPECT_EQ(output_vi.height, 256);
@@ -384,8 +388,7 @@ TEST(Histogram, AmplifiesLumaAndRestoresNeutralChromaAndAlpha) {
   AviSynthEnvironment environment;
   constexpr int width = 4;
   constexpr int height = 4;
-  const auto vi = make_video_info(
-      VideoInfoSpec{width, height, VideoInfo::CS_YUVA420, 1, 25, 1});
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_YUVA420, 1, 25, 1});
   PVideoFrame source = environment.get()->NewVideoFrame(vi);
   for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V, PLANAR_A}) {
     fill_plane_full_pitch(source, static_cast<std::uint8_t>(0x80 + plane * 13), plane);
@@ -478,6 +481,298 @@ TEST(Histogram, RejectsColor2ForGreyscaleAfterPropertyProbe) {
       AvisynthError);
   EXPECT_EQ(source_clip->frame_requests(), std::vector<int>{0});
   EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+void attach_audio(VideoInfo& video_info, int sample_rate, int sample_type, int channels,
+                  std::int64_t sample_count) {
+  video_info.audio_samples_per_second = sample_rate;
+  video_info.sample_type = sample_type;
+  video_info.nchannels = channels;
+  video_info.num_audio_samples = sample_count;
+  video_info.SetChannelMask(false, 0);
+}
+
+void mix_luma_reference(std::uint8_t& pixel, int value, int alpha) {
+  pixel = static_cast<std::uint8_t>(pixel + (((value - static_cast<int>(pixel)) * alpha) >> 8));
+}
+
+struct AudioLevelMetrics {
+  int max_square{};
+  std::int64_t rms_square_sum{};
+  double peak_db{96.0};
+  double rms_db{96.0};
+  int y_pos{};
+  int y_mid{};
+  bool clipped{};
+};
+
+AudioLevelMetrics audio_level_metrics(const std::vector<std::int16_t>& frame_samples, int channel,
+                                      int channels, int sample_count, int bar_height) {
+  AudioLevelMetrics metrics{};
+  for (int index = channel; index < sample_count * channels; index += channels) {
+    const int sample = frame_samples[static_cast<std::size_t>(index)];
+    const int square = sample * sample;
+    metrics.rms_square_sum += square;
+    metrics.max_square = std::max(metrics.max_square, square);
+  }
+  metrics.clipped = metrics.max_square >= 32767 * 32767;
+  if (metrics.max_square > 0) {
+    metrics.peak_db = -8.685889638 / 2.0 *
+                      std::log(static_cast<double>(metrics.max_square) / (32768.0 * 32768.0));
+  }
+  const std::int64_t mean_square = metrics.rms_square_sum / sample_count;
+  if (mean_square > 0) {
+    metrics.rms_db =
+        -8.685889638 / 2.0 * std::log(static_cast<double>(mean_square) / (32768.0 * 32768.0));
+  }
+  metrics.y_pos = static_cast<int>((static_cast<double>(bar_height) * metrics.peak_db) / 96.0);
+  metrics.y_mid = static_cast<int>((static_cast<double>(bar_height) * metrics.rms_db) / 96.0);
+  return metrics;
+}
+
+int audio_levels_bar_width(int frame_width, int channels) {
+  int bar_w = 60;
+  int total_width = (1 + channels * 2) * bar_w;
+  if (total_width > frame_width) {
+    bar_w = ((frame_width / (1 + channels * 2)) / 4) * 4;
+  }
+  return bar_w;
+}
+
+// Avoid the AudioLevels dotted-line x pattern: upstream paints when (x & 12) == 0.
+int audio_levels_probe_x(int x_pos, int x_end) {
+  for (int x = x_pos; x < x_end; ++x) {
+    if ((x & 12) != 0) {
+      return x;
+    }
+  }
+  throw std::logic_error("no safe AudioLevels probe x inside bar");
+}
+
+TEST(Histogram, DrawsAudioLevelsBarsFromPerFrameInt16PeaksAndRms) {
+  AviSynthEnvironment environment;
+  // Wide enough for two 60-pixel meter columns without shrinking bar_w.
+  auto vi = make_video_info(VideoInfoSpec{320, 120, VideoInfo::CS_YV12, 1, 25, 1});
+  constexpr int sample_rate = 48000;
+  constexpr int channels = 2;
+  attach_audio(vi, sample_rate, SAMPLE_INT16, channels, 0);
+  const int samples_per_frame = static_cast<int>(vi.AudioSamplesFromFrames(1));
+  ASSERT_EQ(samples_per_frame, 1920);
+  vi.num_audio_samples = samples_per_frame;
+
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(source, 0x40, PLANAR_Y);
+  fill_plane_full_pitch(source, 0x80, PLANAR_U);
+  fill_plane_full_pitch(source, 0x80, PLANAR_V);
+  const auto source_before = FrameSnapshot::capture(source, vi);
+
+  std::vector<std::int16_t> samples(static_cast<std::size_t>(samples_per_frame) * channels, 0);
+  samples[0] = 32767;
+  samples[1] = 16384;
+  auto* source_clip = new StaticFrameClip(vi, source, make_audio_bytes(samples));
+  const PClip clip(source_clip);
+
+  Histogram filter(clip, Histogram::ModeAudioLevels, AVSValue(), 8, true, true, nullptr,
+                   classic_params(), environment.get());
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  ASSERT_FALSE(source_clip->cache_hint_requests().empty());
+  const CacheHintRequest expected_audio_cache{CACHE_AUDIO, 4096 * 1024};
+  EXPECT_EQ(source_clip->cache_hint_requests().front(), expected_audio_cache);
+
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+  ASSERT_EQ(output->GetRowSize(PLANAR_Y), vi.width);
+  ASSERT_EQ(output->GetHeight(PLANAR_Y), vi.height);
+
+  const int bar_w = audio_levels_bar_width(vi.width, channels);
+  ASSERT_EQ(bar_w, 60);
+  const auto left = audio_level_metrics(samples, 0, channels, samples_per_frame, vi.height);
+  const auto right = audio_level_metrics(samples, 1, channels, samples_per_frame, vi.height);
+  ASSERT_TRUE(left.clipped);
+  ASSERT_FALSE(right.clipped);
+  ASSERT_EQ(left.y_pos, 0);
+  ASSERT_GT(right.y_pos, 0);
+  ASSERT_GT(left.y_mid, left.y_pos + 2);
+  ASSERT_GT(right.y_mid, right.y_pos + 2);
+
+  const int y_pitch = output->GetPitch(PLANAR_Y);
+  const int uv_pitch = output->GetPitch(PLANAR_U);
+  const auto* y_base = output->GetReadPtr(PLANAR_Y);
+  const auto* u_base = output->GetReadPtr(PLANAR_U);
+  const auto* v_base = output->GetReadPtr(PLANAR_V);
+
+  auto expect_luma_bar = [&](int channel, const AudioLevelMetrics& metrics, int x, int y) {
+    std::uint8_t expected = 0x40;
+    if (y >= metrics.y_pos && y < metrics.y_mid) {
+      mix_luma_reference(expected, metrics.clipped ? 78 : 90, metrics.clipped ? 96 : 128);
+    } else if (y >= metrics.y_mid && y < vi.height) {
+      mix_luma_reference(expected, metrics.clipped ? 216 : 137, metrics.clipped ? 160 : 128);
+    }
+    EXPECT_EQ(y_base[x + y * y_pitch], expected)
+        << "channel=" << channel << " x=" << x << " y=" << y << " y_pos=" << metrics.y_pos
+        << " y_mid=" << metrics.y_mid;
+  };
+
+  auto expect_chroma_bar = [&](int channel, const AudioLevelMetrics& metrics, int uv_x, int uv_y) {
+    const int uv_y_pos = metrics.y_pos >> 1;
+    const int uv_y_mid = metrics.y_mid >> 1;
+    std::uint8_t expected_u = 0x80;
+    std::uint8_t expected_v = 0x80;
+    if (uv_y >= uv_y_pos && uv_y < uv_y_mid) {
+      expected_u = static_cast<std::uint8_t>(metrics.clipped ? 92 : 212);
+      expected_v = static_cast<std::uint8_t>(metrics.clipped ? 233 : 114);
+    } else if (uv_y >= uv_y_mid) {
+      expected_u = static_cast<std::uint8_t>(metrics.clipped ? 44 : 58);
+      expected_v = static_cast<std::uint8_t>(metrics.clipped ? 142 : 40);
+    }
+    const int index = uv_x + uv_y * uv_pitch;
+    EXPECT_EQ(u_base[index], expected_u)
+        << "channel=" << channel << " uv_x=" << uv_x << " uv_y=" << uv_y;
+    EXPECT_EQ(v_base[index], expected_v)
+        << "channel=" << channel << " uv_x=" << uv_x << " uv_y=" << uv_y;
+  };
+
+  for (const auto& entry : {std::make_pair(0, left), std::make_pair(1, right)}) {
+    const int channel = entry.first;
+    const AudioLevelMetrics& metrics = entry.second;
+    const int x_pos = ((channel * 2) + 1) * bar_w + 8;
+    const int x_end = x_pos + bar_w - 8;
+    const int probe_x = audio_levels_probe_x(x_pos, x_end);
+    // Leave the bottom DrawString band and the top dB labels alone.
+    const int usable_top = 24;
+    const int usable_bottom = vi.height - 40;
+    const int rms_y = std::max(metrics.y_mid + 1, (metrics.y_mid + usable_bottom) / 2);
+    ASSERT_GE(rms_y, metrics.y_mid);
+    ASSERT_LT(rms_y, usable_bottom);
+    expect_luma_bar(channel, metrics, probe_x, rms_y);
+
+    const int peak_span = std::max(1, metrics.y_mid - metrics.y_pos);
+    const int peak_y = metrics.y_pos + peak_span / 3;
+    if (peak_y >= usable_top && peak_y < metrics.y_mid) {
+      expect_luma_bar(channel, metrics, probe_x, peak_y);
+    }
+
+    const int uv_x_pos = x_pos >> 1;
+    const int uv_x_end = x_end >> 1;
+    const int uv_probe_x = uv_x_pos + std::max(1, (uv_x_end - uv_x_pos) / 2);
+    const int uv_rms_y =
+        (metrics.y_mid >> 1) + std::max(1, ((usable_bottom >> 1) - (metrics.y_mid >> 1)) / 2);
+    if (uv_rms_y < (usable_bottom >> 1)) {
+      expect_chroma_bar(channel, metrics, uv_probe_x, uv_rms_y);
+    }
+    const int uv_peak_y =
+        (metrics.y_pos >> 1) + std::max(0, ((metrics.y_mid >> 1) - (metrics.y_pos >> 1)) / 3);
+    if (uv_peak_y >= (usable_top >> 1) && uv_peak_y < (metrics.y_mid >> 1)) {
+      expect_chroma_bar(channel, metrics, uv_probe_x, uv_peak_y);
+    }
+  }
+
+  // Far-right column is outside the meter and the dB text columns.
+  EXPECT_EQ(y_base[(vi.width - 1) + (vi.height / 2) * y_pitch], 0x40);
+  EXPECT_NE(output->CheckMemory(), 1);
+  // Constructor property probe plus GetFrame request.
+  EXPECT_EQ(source_clip->frame_requests(), (std::vector<int>({0, 0})));
+  EXPECT_EQ(source_clip->audio_requests(), (std::vector<AudioRequest>{{0, samples_per_frame}}));
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+TEST(Histogram, DrawsStereoY8LissajousFromInterleavedInt16Pairs) {
+  AviSynthEnvironment environment;
+  // 50 Hz audio with 25 fps gives exactly two samples per frame, so the Stereo
+  // plot executes a single supersampled segment.
+  auto vi = make_video_info(VideoInfoSpec{8, 8, VideoInfo::CS_Y8, 1, 25, 1});
+  constexpr int sample_rate = 50;
+  constexpr int channels = 2;
+  attach_audio(vi, sample_rate, SAMPLE_INT16, channels, 0);
+  const int samples_per_frame = static_cast<int>(vi.AudioSamplesFromFrames(1));
+  ASSERT_EQ(samples_per_frame, 2);
+  vi.num_audio_samples = samples_per_frame;
+
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(source, 0xaa, PLANAR_Y);
+  const auto source_before = FrameSnapshot::capture(source, vi);
+
+  // Off-axis L/R values that avoid the 16-pixel crosshair lattice.
+  constexpr std::int16_t left = 3000;
+  constexpr std::int16_t right = -1000;
+  std::vector<std::int16_t> samples{left, right, left, right};
+  auto* source_clip = new StaticFrameClip(vi, source, make_audio_bytes(samples));
+  const PClip clip(source_clip);
+
+  Histogram filter(clip, Histogram::ModeStereoY8, AVSValue(), 8, false, false, nullptr,
+                   classic_params(), environment.get());
+  EXPECT_EQ(filter.GetVideoInfo().width, 512);
+  EXPECT_EQ(filter.GetVideoInfo().height, 512);
+  EXPECT_TRUE(filter.GetVideoInfo().IsY8());
+  EXPECT_EQ(filter.GetVideoInfo().AudioChannels(), 2);
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  ASSERT_FALSE(source_clip->cache_hint_requests().empty());
+  const CacheHintRequest expected_audio_cache{CACHE_AUDIO, 4096 * 1024};
+  EXPECT_EQ(source_clip->cache_hint_requests().front(), expected_audio_cache);
+
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+  ASSERT_EQ(output->GetRowSize(PLANAR_Y), 512);
+  ASSERT_EQ(output->GetHeight(PLANAR_Y), 512);
+  const int pitch = output->GetPitch(PLANAR_Y);
+  ASSERT_EQ(pitch, 512);
+  const auto* plane = output->GetReadPtr(PLANAR_Y);
+  auto pixel_at = [&](int x, int y) { return plane[x + y * pitch]; };
+
+  // Independent coordinate for the equal-endpoint supersampled segment.
+  const int expected_x = 256 + (((static_cast<int>(left) - static_cast<int>(right)) * 8) >> 11);
+  const int expected_y = 256 + (((static_cast<int>(left) + static_cast<int>(right)) * 8) >> 11);
+  ASSERT_NE(expected_x % 16, 0);
+  ASSERT_NE(expected_y % 16, 0);
+
+  // The plot brightens the Lissajous coordinate and leaves neighbors black.
+  EXPECT_GT(pixel_at(expected_x, expected_y), 16);
+  EXPECT_LE(pixel_at(expected_x, expected_y), 235);
+  EXPECT_EQ(pixel_at(0, 0), 16);
+  EXPECT_EQ(pixel_at(0, 256), 235);
+  EXPECT_EQ(pixel_at(256, 0), 235);
+  EXPECT_EQ(pixel_at(expected_x + 1, expected_y), 16);
+  EXPECT_EQ(pixel_at(expected_x, expected_y + 1), 16);
+
+  EXPECT_NE(output->CheckMemory(), 1);
+  // Construction may probe frame 0 for matrix/color-range properties.
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>({0}));
+  EXPECT_EQ(source_clip->audio_requests(), (std::vector<AudioRequest>{{0, samples_per_frame}}));
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+TEST(Histogram, RejectsStereoWithoutTwoAudioChannels) {
+  AviSynthEnvironment environment;
+  auto mono = make_video_info(VideoInfoSpec{8, 8, VideoInfo::CS_Y8, 1, 25, 1});
+  attach_audio(mono, 48000, SAMPLE_INT16, 1, 1920);
+  PVideoFrame mono_frame = environment.get()->NewVideoFrame(mono);
+  fill_plane_full_pitch(mono_frame, 0x11, PLANAR_Y);
+  const auto mono_before = FrameSnapshot::capture(mono_frame, mono);
+  std::vector<std::int16_t> mono_samples(1920, 1000);
+  auto* mono_clip = new StaticFrameClip(mono, mono_frame, make_audio_bytes(mono_samples));
+  const PClip mono_source(mono_clip);
+  EXPECT_THROW(
+      {
+        Histogram filter(mono_source, Histogram::ModeStereo, AVSValue(), 8, false, false, nullptr,
+                         classic_params(), environment.get());
+      },
+      AvisynthError);
+  // Construction may probe frame 0 for matrix/color-range properties before rejecting.
+  EXPECT_EQ(mono_clip->frame_requests(), std::vector<int>({0}));
+  EXPECT_EQ(FrameSnapshot::capture(mono_frame, mono), mono_before);
+
+  auto silent = make_video_info(VideoInfoSpec{8, 8, VideoInfo::CS_Y8, 1, 25, 1});
+  PVideoFrame silent_frame = environment.get()->NewVideoFrame(silent);
+  fill_plane_full_pitch(silent_frame, 0x22, PLANAR_Y);
+  const auto silent_before = FrameSnapshot::capture(silent_frame, silent);
+  auto* silent_clip = new StaticFrameClip(silent, silent_frame);
+  const PClip silent_source(silent_clip);
+  EXPECT_THROW(
+      {
+        Histogram filter(silent_source, Histogram::ModeStereoY8, AVSValue(), 8, false, false,
+                         nullptr, classic_params(), environment.get());
+      },
+      AvisynthError);
+  EXPECT_EQ(silent_clip->frame_requests(), std::vector<int>({0}));
+  EXPECT_EQ(FrameSnapshot::capture(silent_frame, silent), silent_before);
 }
 
 }  // namespace

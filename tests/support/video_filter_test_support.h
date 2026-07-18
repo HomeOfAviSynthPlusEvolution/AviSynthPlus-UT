@@ -1,5 +1,6 @@
 #pragma once
 
+#include "support/audio_sequence_clip.h"
 #include "support/avisynth_environment.h"
 
 #include <avisynth.h>
@@ -73,8 +74,7 @@ inline FramePlaneGeometry frame_plane_geometry(const PVideoFrame& frame, int pla
       static_cast<std::size_t>(row_size) % component_size != 0) {
     throw std::invalid_argument("frame plane has invalid typed geometry");
   }
-  return FramePlaneGeometry{row_size / static_cast<int>(component_size), height, row_size,
-                            pitch};
+  return FramePlaneGeometry{row_size / static_cast<int>(component_size), height, row_size, pitch};
 }
 
 template <typename Pixel, typename ValueFunction>
@@ -150,8 +150,9 @@ inline std::vector<int> video_frame_planes(const VideoInfo& video_info) {
 
 class FrameSequenceClip : public IClip {
  public:
-  FrameSequenceClip(VideoInfo video_info, std::vector<PVideoFrame> frames)
-      : video_info_(video_info), frames_(std::move(frames)) {
+  FrameSequenceClip(VideoInfo video_info, std::vector<PVideoFrame> frames,
+                    std::vector<std::uint8_t> audio = {})
+      : video_info_(video_info), frames_(std::move(frames)), audio_(std::move(audio)) {
     if (frames_.empty()) {
       throw std::invalid_argument("frame sequence must not be empty");
     }
@@ -163,6 +164,23 @@ class FrameSequenceClip : public IClip {
       if (!frame) {
         throw std::invalid_argument("frame sequence contains a null frame");
       }
+    }
+    if (video_info_.HasAudio()) {
+      if (video_info_.BytesPerAudioSample() <= 0) {
+        throw std::invalid_argument("audio-enabled video clip must have a valid audio format");
+      }
+      const auto expected_bytes = video_info_.BytesFromAudioSamples(video_info_.num_audio_samples);
+      if (expected_bytes < 0) {
+        throw std::invalid_argument("audio data size does not match video info");
+      }
+      if (audio_.empty()) {
+        // Construction-only fixtures may declare audio without providing payload.
+        audio_.assign(static_cast<std::size_t>(expected_bytes), 0);
+      } else if (audio_.size() != static_cast<std::size_t>(expected_bytes)) {
+        throw std::invalid_argument("audio data size does not match video info");
+      }
+    } else if (!audio_.empty()) {
+      throw std::invalid_argument("audio payload requires HasAudio video info");
     }
   }
 
@@ -178,8 +196,29 @@ class FrameSequenceClip : public IClip {
     return false;
   }
 
-  void __stdcall GetAudio(void*, int64_t, int64_t, IScriptEnvironment*) override {
-    throw std::logic_error("video test clip received an unexpected audio request");
+  void __stdcall GetAudio(void* buffer, std::int64_t start, std::int64_t count,
+                          IScriptEnvironment*) override {
+    if (!video_info_.HasAudio()) {
+      throw std::logic_error("video test clip received an unexpected audio request");
+    }
+    if (count < 0 || start > std::numeric_limits<std::int64_t>::max() - count) {
+      throw std::out_of_range("audio request has invalid bounds");
+    }
+    if (buffer == nullptr && count != 0) {
+      throw std::invalid_argument("audio destination must not be null");
+    }
+    if (start < 0 || start > video_info_.num_audio_samples ||
+        count > video_info_.num_audio_samples - start) {
+      throw std::out_of_range("audio request is outside the clip");
+    }
+
+    audio_requests_.push_back(AudioRequest{start, count});
+    const auto requested_bytes = video_info_.BytesFromAudioSamples(count);
+    if (requested_bytes != 0) {
+      std::memset(buffer, 0, static_cast<std::size_t>(requested_bytes));
+      const auto source_offset = video_info_.BytesFromAudioSamples(start);
+      std::memcpy(buffer, audio_.data() + source_offset, static_cast<std::size_t>(requested_bytes));
+    }
   }
 
   int __stdcall SetCacheHints(int cachehints, int frame_range) override {
@@ -194,6 +233,8 @@ class FrameSequenceClip : public IClip {
   const std::vector<CacheHintRequest>& cache_hint_requests() const noexcept {
     return cache_hint_requests_;
   }
+  const std::vector<AudioRequest>& audio_requests() const noexcept { return audio_requests_; }
+  const std::vector<std::uint8_t>& audio() const noexcept { return audio_; }
 
  protected:
   void validate_frame_index(int n) const {
@@ -205,15 +246,18 @@ class FrameSequenceClip : public IClip {
  private:
   VideoInfo video_info_{};
   std::vector<PVideoFrame> frames_;
+  std::vector<std::uint8_t> audio_;
   std::vector<int> frame_requests_;
   std::vector<int> parity_requests_;
   std::vector<CacheHintRequest> cache_hint_requests_;
+  std::vector<AudioRequest> audio_requests_;
 };
 
 class StaticFrameClip final : public FrameSequenceClip {
  public:
-  StaticFrameClip(VideoInfo video_info, PVideoFrame frame)
-      : FrameSequenceClip(video_info, std::vector<PVideoFrame>{std::move(frame)}) {}
+  StaticFrameClip(VideoInfo video_info, PVideoFrame frame, std::vector<std::uint8_t> audio = {})
+      : FrameSequenceClip(video_info, std::vector<PVideoFrame>{std::move(frame)},
+                          std::move(audio)) {}
 };
 
 struct FramePlaneSnapshot {
