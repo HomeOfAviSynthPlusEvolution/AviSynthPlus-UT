@@ -739,6 +739,92 @@ TEST(Histogram, DrawsStereoY8LissajousFromInterleavedInt16Pairs) {
   EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
 }
 
+TEST(Histogram, DrawsStereoOverlayLissajousOnSourcePanel) {
+  AviSynthEnvironment environment;
+  // keepsource expands a small planar source to at least 512x512 and plots the
+  // stereo Lissajous over a half-brightness copy of the source panel.
+  auto vi = make_video_info(VideoInfoSpec{8, 8, VideoInfo::CS_YV12, 1, 25, 1});
+  constexpr int sample_rate = 50;
+  constexpr int channels = 2;
+  attach_audio(vi, sample_rate, SAMPLE_INT16, channels, 0);
+  const int samples_per_frame = static_cast<int>(vi.AudioSamplesFromFrames(1));
+  ASSERT_EQ(samples_per_frame, 2);
+  vi.num_audio_samples = samples_per_frame;
+
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(source, 0x80, PLANAR_Y);
+  fill_plane_full_pitch(source, 0x90, PLANAR_U);
+  fill_plane_full_pitch(source, 0xa0, PLANAR_V);
+  const auto source_before = FrameSnapshot::capture(source, vi);
+
+  // Off-axis L/R values that avoid the 16-pixel crosshair lattice.
+  constexpr std::int16_t left = 3000;
+  constexpr std::int16_t right = -1000;
+  std::vector<std::int16_t> samples{left, right, left, right};
+  auto* source_clip = new StaticFrameClip(vi, source, make_audio_bytes(samples));
+  const PClip clip(source_clip);
+
+  Histogram filter(clip, Histogram::ModeOverlay, AVSValue(), 8, true, true, nullptr,
+                   classic_params(), environment.get());
+  EXPECT_EQ(filter.GetVideoInfo().width, 512);
+  EXPECT_EQ(filter.GetVideoInfo().height, 512);
+  EXPECT_EQ(filter.GetVideoInfo().pixel_type, VideoInfo::CS_YV12);
+  EXPECT_EQ(filter.GetVideoInfo().AudioChannels(), 2);
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  ASSERT_FALSE(source_clip->cache_hint_requests().empty());
+  const CacheHintRequest expected_audio_cache{CACHE_AUDIO, 4096 * 1024};
+  EXPECT_EQ(source_clip->cache_hint_requests().front(), expected_audio_cache);
+
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+  ASSERT_EQ(output->GetRowSize(PLANAR_Y), 512);
+  ASSERT_EQ(output->GetHeight(PLANAR_Y), 512);
+  const int y_pitch = output->GetPitch(PLANAR_Y);
+  const int uv_pitch = output->GetPitch(PLANAR_U);
+  ASSERT_GE(y_pitch, 512);
+  const auto* y_plane = output->GetReadPtr(PLANAR_Y);
+  const auto* u_plane = output->GetReadPtr(PLANAR_U);
+  const auto* v_plane = output->GetReadPtr(PLANAR_V);
+  auto y_at = [&](int x, int y) { return y_plane[x + y * y_pitch]; };
+  auto u_at = [&](int x, int y) { return u_plane[x + y * uv_pitch]; };
+  auto v_at = [&](int x, int y) { return v_plane[x + y * uv_pitch]; };
+
+  // Independent coordinate for the equal-endpoint supersampled segment.
+  const int expected_x = 256 + (((static_cast<int>(left) - static_cast<int>(right)) * 8) >> 11);
+  const int expected_y = 256 + (((static_cast<int>(left) + static_cast<int>(right)) * 8) >> 11);
+  ASSERT_NE(expected_x % 16, 0);
+  ASSERT_NE(expected_y % 16, 0);
+  ASSERT_GE(expected_x, 8);
+  ASSERT_GE(expected_y, 8);
+
+  // Outside the source panel the cleared TV-black field is halved to 8. Equal
+  // endpoints supersample the same Lissajous coordinate eight times. Each hit
+  // does BYTE(value+48) then min(value, 235), so the wrapped accumulation ends
+  // at 123 rather than staying clamped at 235.
+  EXPECT_EQ(y_at(0, 0), 0x40);
+  EXPECT_EQ(y_at(7, 7), 0x40);
+  EXPECT_EQ(y_at(8, 0), 8);
+  EXPECT_EQ(y_at(0, 8), 8);
+  EXPECT_EQ(y_at(expected_x, expected_y), 123);
+  EXPECT_EQ(y_at(expected_x + 1, expected_y), 8);
+  EXPECT_EQ(y_at(expected_x, expected_y + 1), 8);
+  EXPECT_EQ(y_at(0, 256), 235);
+  EXPECT_EQ(y_at(256, 0), 235);
+
+  // Chroma is copied from the source panel and left neutral outside it.
+  EXPECT_EQ(u_at(0, 0), 0x90);
+  EXPECT_EQ(v_at(0, 0), 0xa0);
+  EXPECT_EQ(u_at(3, 3), 0x90);
+  EXPECT_EQ(v_at(3, 3), 0xa0);
+  EXPECT_EQ(u_at(4, 0), 128);
+  EXPECT_EQ(v_at(0, 4), 128);
+
+  EXPECT_NE(output->CheckMemory(), 1);
+  // Construction may probe frame 0 for matrix/color-range properties.
+  EXPECT_EQ(source_clip->frame_requests(), std::vector<int>({0, 0}));
+  EXPECT_EQ(source_clip->audio_requests(), (std::vector<AudioRequest>{{0, samples_per_frame}}));
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
 TEST(Histogram, RejectsStereoWithoutTwoAudioChannels) {
   AviSynthEnvironment environment;
   auto mono = make_video_info(VideoInfoSpec{8, 8, VideoInfo::CS_Y8, 1, 25, 1});
