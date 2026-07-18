@@ -225,21 +225,19 @@ TEST(TemporalSoftenFilter, AveragesThresholdMatchesAcrossFrameSequence) {
 }
 
 std::vector<PVideoFrame> make_sixteen_bit_temporal_frames(AviSynthEnvironment& environment,
-                                                           const VideoInfo& vi,
-                                                           unsigned luma_threshold,
-                                                           unsigned chroma_threshold) {
+                                                          const VideoInfo& vi,
+                                                          unsigned luma_threshold,
+                                                          unsigned chroma_threshold) {
   std::vector<PVideoFrame> frames;
   for (int frame_index = 0; frame_index < 3; ++frame_index) {
     PVideoFrame frame = environment.get()->NewVideoFrame(vi);
     for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
       fill_plane_full_pitch(frame, static_cast<std::uint8_t>(0x21 + plane * 0x15 + frame_index),
                             plane);
-      const int threshold = static_cast<int>((plane == PLANAR_Y ? luma_threshold
-                                                                 : chroma_threshold) *
-                                             256U);
+      const int threshold =
+          static_cast<int>((plane == PLANAR_Y ? luma_threshold : chroma_threshold) * 256U);
       write_frame_plane<std::uint16_t>(frame, plane, [plane, frame_index, threshold](int x, int y) {
-        const int base = plane == PLANAR_Y ? 18000 + x * 701 + y * 311
-                                           : 30000 + x * 503 + y * 211;
+        const int base = plane == PLANAR_Y ? 18000 + x * 701 + y * 311 : 30000 + x * 503 + y * 211;
         if (frame_index == 0) {
           return base + (((x + y + plane) % 3 == 0) ? threshold : threshold + 256);
         }
@@ -269,10 +267,8 @@ TEST(TemporalSoftenFilter, AveragesThresholdMatchesForSixteenBitYuv422) {
   constexpr int height = 5;
   constexpr unsigned luma_threshold = 10;
   constexpr unsigned chroma_threshold = 7;
-  const auto vi = make_video_info(
-      VideoInfoSpec{width, height, VideoInfo::CS_YUV422P16, 3, 25, 1});
-  auto frames = make_sixteen_bit_temporal_frames(environment, vi, luma_threshold,
-                                                  chroma_threshold);
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_YUV422P16, 3, 25, 1});
+  auto frames = make_sixteen_bit_temporal_frames(environment, vi, luma_threshold, chroma_threshold);
   std::vector<FrameSnapshot> snapshots;
   for (const auto& frame : frames) {
     snapshots.push_back(FrameSnapshot::capture(frame, vi));
@@ -293,13 +289,13 @@ TEST(TemporalSoftenFilter, AveragesThresholdMatchesForSixteenBitYuv422) {
           frames[0]->GetReadPtr(plane) + y * frames[0]->GetPitch(plane));
       const auto* current_row = reinterpret_cast<const std::uint16_t*>(
           frames[1]->GetReadPtr(plane) + y * frames[1]->GetPitch(plane));
-      const auto* next_row = reinterpret_cast<const std::uint16_t*>(
-          frames[2]->GetReadPtr(plane) + y * frames[2]->GetPitch(plane));
-      const auto* output_row = reinterpret_cast<const std::uint16_t*>(
-          output->GetReadPtr(plane) + y * output->GetPitch(plane));
+      const auto* next_row = reinterpret_cast<const std::uint16_t*>(frames[2]->GetReadPtr(plane) +
+                                                                    y * frames[2]->GetPitch(plane));
+      const auto* output_row = reinterpret_cast<const std::uint16_t*>(output->GetReadPtr(plane) +
+                                                                      y * output->GetPitch(plane));
       for (int x = 0; x < plane_width; ++x) {
         EXPECT_EQ(output_row[x], temporal_reference_sixteen(current_row[x], previous_row[x],
-                                                             next_row[x], threshold))
+                                                            next_row[x], threshold))
             << "plane=" << plane << " x=" << x << " y=" << y;
       }
     }
@@ -325,8 +321,8 @@ std::vector<PVideoFrame> make_float_temporal_frames(AviSynthEnvironment& environ
       fill_plane_full_pitch(frame, static_cast<std::uint8_t>(0x61 + plane * 0x11 + frame_index),
                             plane);
       write_frame_plane<float>(frame, plane, [plane, frame_index, threshold](int x, int y) {
-        const float base = plane == PLANAR_Y ? 0.2F + x * 0.07F + y * 0.03F
-                                             : -0.25F + x * 0.04F + y * 0.02F;
+        const float base =
+            plane == PLANAR_Y ? 0.2F + x * 0.07F + y * 0.03F : -0.25F + x * 0.04F + y * 0.02F;
         const float scaled = static_cast<float>(threshold) / 255.0F;
         if (frame_index == 0) {
           return base + (((x + y + plane) % 3 == 0) ? scaled * 0.5F : scaled * 1.5F);
@@ -355,8 +351,7 @@ TEST(TemporalSoftenFilter, AveragesThresholdMatchesForFloatYuv444) {
   constexpr int width = 6;
   constexpr int height = 3;
   constexpr unsigned threshold = 20;
-  const auto vi = make_video_info(
-      VideoInfoSpec{width, height, VideoInfo::CS_YUV444PS, 3, 25, 1});
+  const auto vi = make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_YUV444PS, 3, 25, 1});
   auto frames = make_float_temporal_frames(environment, vi, threshold);
   const auto first_before = FrameSnapshot::capture(frames[0], vi);
   const auto current_before = FrameSnapshot::capture(frames[1], vi);
@@ -371,14 +366,14 @@ TEST(TemporalSoftenFilter, AveragesThresholdMatchesForFloatYuv444) {
     const int plane_width = output->GetRowSize(plane) / static_cast<int>(sizeof(float));
     const int plane_height = output->GetHeight(plane);
     for (int y = 0; y < plane_height; ++y) {
-      const auto* previous_row = reinterpret_cast<const float*>(
-          frames[0]->GetReadPtr(plane) + y * frames[0]->GetPitch(plane));
-      const auto* current_row = reinterpret_cast<const float*>(
-          frames[1]->GetReadPtr(plane) + y * frames[1]->GetPitch(plane));
-      const auto* next_row = reinterpret_cast<const float*>(
-          frames[2]->GetReadPtr(plane) + y * frames[2]->GetPitch(plane));
-      const auto* output_row = reinterpret_cast<const float*>(
-          output->GetReadPtr(plane) + y * output->GetPitch(plane));
+      const auto* previous_row = reinterpret_cast<const float*>(frames[0]->GetReadPtr(plane) +
+                                                                y * frames[0]->GetPitch(plane));
+      const auto* current_row = reinterpret_cast<const float*>(frames[1]->GetReadPtr(plane) +
+                                                               y * frames[1]->GetPitch(plane));
+      const auto* next_row = reinterpret_cast<const float*>(frames[2]->GetReadPtr(plane) +
+                                                            y * frames[2]->GetPitch(plane));
+      const auto* output_row =
+          reinterpret_cast<const float*>(output->GetReadPtr(plane) + y * output->GetPitch(plane));
       for (int x = 0; x < plane_width; ++x) {
         EXPECT_FLOAT_EQ(output_row[x], temporal_reference_float(current_row[x], previous_row[x],
                                                                 next_row[x], threshold))
@@ -391,6 +386,138 @@ TEST(TemporalSoftenFilter, AveragesThresholdMatchesForFloatYuv444) {
   EXPECT_EQ(FrameSnapshot::capture(frames[0], vi), first_before);
   EXPECT_EQ(FrameSnapshot::capture(frames[1], vi), current_before);
   EXPECT_EQ(FrameSnapshot::capture(frames[2], vi), last_before);
+}
+
+std::uint8_t scaled_pixel_clip_u8(int value) {
+  // Matches ScaledPixelClip for 8-bit: ((value + 32768) >> 16) with clamp to 0..255.
+  const int rounded = (value + 32768) >> 16;
+  return static_cast<std::uint8_t>(std::clamp(rounded, 0, 255));
+}
+
+std::vector<std::uint8_t> adjust_focus_v_reference(const PVideoFrame& source, int half_amount) {
+  const int width = source->GetRowSize(PLANAR_Y);
+  const int height = source->GetHeight(PLANAR_Y);
+  const int pitch = source->GetPitch(PLANAR_Y);
+  const auto* src = source->GetReadPtr(PLANAR_Y);
+  const int center_weight = half_amount * 2;
+  const int outer_weight = 32768 - half_amount;
+  std::vector<std::uint8_t> expected(static_cast<std::size_t>(width) * height);
+  auto at = [&](int x, int y) { return static_cast<int>(src[x + y * pitch]); };
+  for (int y = 0; y < height; ++y) {
+    for (int x = 0; x < width; ++x) {
+      const int upper = at(x, y == 0 ? 0 : y - 1);
+      const int center = at(x, y);
+      const int lower = at(x, y + 1 >= height ? y : y + 1);
+      expected[static_cast<std::size_t>(y) * width + static_cast<std::size_t>(x)] =
+          scaled_pixel_clip_u8(center * center_weight + (upper + lower) * outer_weight);
+    }
+  }
+  return expected;
+}
+
+TEST(AdjustFocusFilter, AppliesVerticalThreeTapKernelToY8) {
+  AviSynthEnvironment environment;
+  // Amount 0 => amountd=1, identity; use -1 for a classic 1:2:1 blur (half_amount=16384).
+  constexpr double amount = -1.0;
+  auto vi = make_video_info(VideoInfoSpec{7, 5, VideoInfo::CS_Y8, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  fill_plane_full_pitch(source, 0x33, PLANAR_Y);
+  write_frame_plane<std::uint8_t>(source, PLANAR_Y, [](int x, int y) {
+    return static_cast<std::uint8_t>(20 + y * 37 + x * 11);
+  });
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_impl = new StaticFrameClip(vi, source);
+  const PClip clip(source_impl);
+
+  AdjustFocusV filter(amount, clip);
+  EXPECT_EQ(filter.GetVideoInfo().width, vi.width);
+  EXPECT_EQ(filter.GetVideoInfo().height, vi.height);
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+  const int half_amount = static_cast<int>(32768 * std::pow(2.0, amount) + 0.5);
+  ASSERT_EQ(half_amount, 16384);
+  const auto expected = adjust_focus_v_reference(source, half_amount);
+  const int out_pitch = output->GetPitch(PLANAR_Y);
+  const auto* out = output->GetReadPtr(PLANAR_Y);
+  for (int y = 0; y < vi.height; ++y) {
+    for (int x = 0; x < vi.width; ++x) {
+      EXPECT_EQ(out[x + y * out_pitch],
+                expected[static_cast<std::size_t>(y) * static_cast<std::size_t>(vi.width) +
+                         static_cast<std::size_t>(x)])
+          << "x=" << x << " y=" << y;
+    }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_impl->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
+}
+
+std::vector<std::uint8_t> adjust_focus_h_reference(const PVideoFrame& source, int plane,
+                                                   int half_amount) {
+  const int width = source->GetRowSize(plane);
+  const int height = source->GetHeight(plane);
+  const int pitch = source->GetPitch(plane);
+  const auto* src = source->GetReadPtr(plane);
+  const int center_weight = half_amount * 2;
+  const int outer_weight = 32768 - half_amount;
+  std::vector<std::uint8_t> expected(static_cast<std::size_t>(width) * height);
+  for (int y = 0; y < height; ++y) {
+    const auto* row = src + y * pitch;
+    std::uint8_t left = row[0];
+    for (int x = 0; x < width; ++x) {
+      const int right = x + 1 < width ? row[x + 1] : row[x];
+      const std::uint8_t next =
+          scaled_pixel_clip_u8(static_cast<int>(row[x]) * center_weight +
+                               (static_cast<int>(left) + right) * outer_weight);
+      expected[static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
+               static_cast<std::size_t>(x)] = next;
+      left = row[x];
+    }
+  }
+  return expected;
+}
+
+TEST(AdjustFocusFilter, AppliesHorizontalThreeTapKernelToYv24) {
+  AviSynthEnvironment environment;
+  constexpr double amount = -1.0;
+  auto vi = make_video_info(VideoInfoSpec{6, 4, VideoInfo::CS_YV24, 1, 25, 1});
+  PVideoFrame source = environment.get()->NewVideoFrame(vi);
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    fill_plane_full_pitch(source, static_cast<std::uint8_t>(0x40 + plane * 3), plane);
+    write_frame_plane<std::uint8_t>(source, plane, [plane](int x, int y) {
+      return static_cast<std::uint8_t>(15 + plane * 29 + y * 19 + x * 13);
+    });
+  }
+  const auto source_before = FrameSnapshot::capture(source, vi);
+  auto* source_impl = new StaticFrameClip(vi, source);
+  const PClip clip(source_impl);
+
+  AdjustFocusH filter(amount, clip);
+  EXPECT_EQ(filter.GetVideoInfo().pixel_type, vi.pixel_type);
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+  const int half_amount = static_cast<int>(32768 * std::pow(2.0, amount) + 0.5);
+  ASSERT_EQ(half_amount, 16384);
+  for (const int plane : {PLANAR_Y, PLANAR_U, PLANAR_V}) {
+    const auto expected = adjust_focus_h_reference(source, plane, half_amount);
+    const int out_pitch = output->GetPitch(plane);
+    const int width = output->GetRowSize(plane);
+    const int height = output->GetHeight(plane);
+    const auto* out = output->GetReadPtr(plane);
+    for (int y = 0; y < height; ++y) {
+      for (int x = 0; x < width; ++x) {
+        EXPECT_EQ(out[x + y * out_pitch],
+                  expected[static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
+                           static_cast<std::size_t>(x)])
+            << "plane=" << plane << " x=" << x << " y=" << y;
+      }
+    }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(source_impl->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(source, vi), source_before);
 }
 
 }  // namespace
