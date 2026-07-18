@@ -594,4 +594,39 @@ TEST(EditFrameFilter, InterleavesTwoSourcesInAlternatingOrder) {
   }
 }
 
+TEST(EditFrameFilter, TrimsVideoFrameRangeInLengthMode) {
+  AviSynthEnvironment environment;
+  constexpr int width = 5;
+  constexpr int height = 4;
+  const auto source_vi =
+      make_video_info(VideoInfoSpec{width, height, VideoInfo::CS_YV24, 6, 25, 1});
+  auto source_frames = make_field_source_frames(environment, source_vi, source_vi.num_frames);
+  std::vector<FrameSnapshot> source_snapshots;
+  for (const auto& frame : source_frames) {
+    source_snapshots.push_back(FrameSnapshot::capture(frame, source_vi));
+  }
+  auto* source_impl = new FrameSequenceClip(source_vi, source_frames);
+  const PClip source(source_impl);
+
+  // first=2, length=3 => source frames 2,3,4.
+  Trim filter(2, 3, false, source, Trim::Length, false, environment.get());
+  EXPECT_EQ(filter.GetVideoInfo().num_frames, 3);
+  EXPECT_EQ(filter.GetVideoInfo().width, width);
+  EXPECT_EQ(filter.GetVideoInfo().height, height);
+  EXPECT_EQ(filter.SetCacheHints(CACHE_GET_MTMODE, 0), MT_NICE_FILTER);
+  EXPECT_EQ(filter.SetCacheHints(CACHE_DONT_CACHE_ME, 0), 1);
+
+  for (int n = 0; n < 3; ++n) {
+    const PVideoFrame output = filter.GetFrame(n, environment.get());
+    expect_frame_equal(output, source_frames[static_cast<std::size_t>(n + 2)], "Yv24");
+    EXPECT_NE(output->CheckMemory(), 1) << "output_frame=" << n;
+  }
+
+  EXPECT_EQ(source_impl->frame_requests(), (std::vector<int>{2, 3, 4}));
+  for (std::size_t i = 0; i < source_frames.size(); ++i) {
+    EXPECT_EQ(FrameSnapshot::capture(source_frames[i], source_vi), source_snapshots[i])
+        << "source_frame=" << i;
+  }
+}
+
 }  // namespace
