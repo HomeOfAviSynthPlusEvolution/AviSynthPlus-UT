@@ -22,6 +22,16 @@ jobs:
     outputs:
       ctest_status: ${{ steps.tests.outputs.status }}
     steps:
+      - name: Ensure CPU support
+        run: |
+          if grep -q "avx512f" /proc/cpuinfo; then
+            lscpu
+          else
+            echo "CPU not supporting AVX-512"
+            lscpu
+            exit 1
+          fi
+
       - name: Check out repository
         uses: actions/checkout@v7
         with:
