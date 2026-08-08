@@ -4,11 +4,21 @@
 
 #include <avisynth.h>
 
+#ifdef AVS_WINDOWS
+#include <avs/win.h>
+#define AVSUT_EXPR_FILTER_WINDOWS_CONTEXT
+#define VS_TARGET_OS_WINDOWS
+#endif
+
 #ifndef AVS_UNUSED
 #define AVS_UNUSED(x) (void)(x)
 #define AVSUT_EXPR_FILTER_UNDEF_AVS_UNUSED
 #endif
 #include "filters/exprfilter/exprfilter.h"
+#ifdef AVSUT_EXPR_FILTER_WINDOWS_CONTEXT
+#undef VS_TARGET_OS_WINDOWS
+#undef AVSUT_EXPR_FILTER_WINDOWS_CONTEXT
+#endif
 #ifdef AVSUT_EXPR_FILTER_UNDEF_AVS_UNUSED
 #undef AVS_UNUSED
 #undef AVSUT_EXPR_FILTER_UNDEF_AVS_UNUSED
