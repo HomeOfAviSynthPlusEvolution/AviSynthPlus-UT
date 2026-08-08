@@ -43,7 +43,8 @@ struct PlanarMatrixCase {
   int matrix{};
   bool source_full{};
   bool destination_full{};
-  int bit_depth{8};
+  int source_bit_depth{8};
+  int target_bit_depth{8};
   std::size_t width{};
   std::size_t height{};
   std::size_t source_pitch{};
@@ -94,14 +95,21 @@ inline PlanarMatrixCase make_planar_matrix_case(
     PlanarMatrixDirection direction, int matrix, bool source_full, bool destination_full,
     std::size_t width, std::size_t height, std::size_t source_pitch, std::size_t destination_pitch,
     Variant<PlanarMatrixVariant> variant, std::array<std::string, 3> expected_hashes,
-    int bit_depth = 8) {
+    int source_bit_depth = 8, int target_bit_depth = -1) {
+  if (target_bit_depth < 0) {
+    target_bit_depth = source_bit_depth;
+  }
   PlanarMatrixCase result{
-      direction, matrix, source_full, destination_full, bit_depth, width, height, source_pitch,
-      destination_pitch, std::move(variant), std::move(expected_hashes), {}};
+      direction, matrix, source_full, destination_full, source_bit_depth, target_bit_depth, width,
+      height, source_pitch, destination_pitch, std::move(variant), std::move(expected_hashes), {}};
   std::ostringstream stream;
   stream << planar_direction_name(direction) << '_' << planar_matrix_name(matrix) << "_Src"
          << (source_full ? "Full" : "Limited") << "_Dst" << (destination_full ? "Full" : "Limited")
-         << "_BitDepth" << bit_depth << "_Width" << width << "_Height" << height << "_SrcPitch"
+         << (source_bit_depth == target_bit_depth
+                 ? "_BitDepth" + std::to_string(source_bit_depth)
+                 : "_SrcBits" + std::to_string(source_bit_depth) + "_DstBits" +
+                       std::to_string(target_bit_depth))
+         << "_Width" << width << "_Height" << height << "_SrcPitch"
          << source_pitch << "_DstPitch" << destination_pitch << "_PatternChannelAnchors_"
          << planar_matrix_variant_name(result.variant.name);
   result.name = stream.str();
@@ -231,6 +239,18 @@ inline PlanarMatrixCoefficients make_planar_rgb_to_yuv_coefficients(int matrix, 
   return result;
 }
 
+inline PlanarMatrixCoefficients make_planar_rgb_to_yuv_cross_depth_coefficients(
+    int matrix, bool source_full, bool destination_full, int source_bit_depth,
+    int target_bit_depth) {
+  // The C/SIMD matrix is built at the source depth. Narrow-range conversion
+  // widens that fixed-point result by reducing the final shift; it does not
+  // rebuild and requantize the matrix at the target depth.
+  auto result = make_planar_rgb_to_yuv_coefficients(matrix, source_full, destination_full,
+                                                    source_bit_depth);
+  result.shift -= target_bit_depth - source_bit_depth;
+  return result;
+}
+
 inline PlanarRgbToYuvFloatCoefficients make_planar_rgb_to_yuv_float_coefficients(
     int matrix, bool source_full, bool destination_full, int bit_depth) {
   double kr{};
@@ -275,12 +295,16 @@ inline std::uint16_t planar_round_float_sample(float value, int bit_depth) {
 
 inline std::uint16_t planar_shifted_component(int coefficient_a, int coefficient_b,
                                               int coefficient_c, std::int64_t a, std::int64_t b,
-                                              std::int64_t c, int offset, int shift, int bit_depth) {
+                                              std::int64_t c, int offset, int shift, int bit_depth,
+                                              int offset_shift = -1) {
+  if (offset_shift < 0) {
+    offset_shift = shift;
+  }
   const std::int64_t total = static_cast<std::int64_t>(coefficient_a) * a +
                              static_cast<std::int64_t>(coefficient_b) * b +
                              static_cast<std::int64_t>(coefficient_c) * c +
                              (std::int64_t{1} << (shift - 1)) +
-                             (static_cast<std::int64_t>(offset) << shift);
+                             (static_cast<std::int64_t>(offset) << offset_shift);
   return planar_clip_sample(total >> shift, bit_depth);
 }
 
@@ -427,12 +451,15 @@ inline void fill_planar_matrix_inputs(PlaneView<T> plane0, PlaneView<T> plane1,
   }
 }
 
-template <typename T>
+template <typename SourceT, typename DestinationT>
 inline void make_planar_matrix_reference(const PlanarMatrixCase& test_case,
-                                         PlaneView<const T> source0, PlaneView<const T> source1,
-                                         PlaneView<const T> source2, PlaneView<T> output0,
-                                         PlaneView<T> output1, PlaneView<T> output2) {
-  if (test_case.bit_depth == 32) {
+                                         PlaneView<const SourceT> source0,
+                                         PlaneView<const SourceT> source1,
+                                         PlaneView<const SourceT> source2,
+                                         PlaneView<DestinationT> output0,
+                                         PlaneView<DestinationT> output1,
+                                         PlaneView<DestinationT> output2) {
+  if (test_case.source_bit_depth == 32) {
     const auto source_range = make_planar_float_range(test_case.source_full);
     const auto destination_range = make_planar_float_range(test_case.destination_full);
     double kr{};
@@ -452,9 +479,12 @@ inline void make_planar_matrix_reference(const PlanarMatrixCase& test_case,
           const double g = y - u * (1.0 - kb) * kb / kg - v * (1.0 - kr) * kr / kg;
           const double b = y + u * (1.0 - kb);
           const double r = y + v * (1.0 - kr);
-          output0.row(row)[column] = static_cast<T>(destination_range.offset + destination_range.span * g);
-          output1.row(row)[column] = static_cast<T>(destination_range.offset + destination_range.span * b);
-          output2.row(row)[column] = static_cast<T>(destination_range.offset + destination_range.span * r);
+          output0.row(row)[column] =
+              static_cast<DestinationT>(destination_range.offset + destination_range.span * g);
+          output1.row(row)[column] =
+              static_cast<DestinationT>(destination_range.offset + destination_range.span * b);
+          output2.row(row)[column] =
+              static_cast<DestinationT>(destination_range.offset + destination_range.span * r);
         } else {
           const double g =
               (static_cast<double>(source0.row(row)[column]) - source_range.offset) /
@@ -468,9 +498,10 @@ inline void make_planar_matrix_reference(const PlanarMatrixCase& test_case,
           const double y = kr * r + kg * g + kb * b;
           const double u = b - (kr * r + kg * g) / (1.0 - kb);
           const double v = r - (kg * g + kb * b) / (1.0 - kr);
-          output0.row(row)[column] = static_cast<T>(destination_range.offset + destination_range.span * y);
-          output1.row(row)[column] = static_cast<T>(destination_range.chroma_span * u);
-          output2.row(row)[column] = static_cast<T>(destination_range.chroma_span * v);
+          output0.row(row)[column] =
+              static_cast<DestinationT>(destination_range.offset + destination_range.span * y);
+          output1.row(row)[column] = static_cast<DestinationT>(destination_range.chroma_span * u);
+          output2.row(row)[column] = static_cast<DestinationT>(destination_range.chroma_span * v);
         }
       }
     }
@@ -479,11 +510,14 @@ inline void make_planar_matrix_reference(const PlanarMatrixCase& test_case,
 
   // Exact 16-bit RGB->YUV uses the upstream float workflow to avoid int32 overflow;
   // keep its independent range and rounding semantics in the reference.
-  if (test_case.direction == PlanarMatrixDirection::RgbToYuv && test_case.bit_depth == 16) {
+  if (test_case.direction == PlanarMatrixDirection::RgbToYuv &&
+      test_case.source_bit_depth == 16 && test_case.target_bit_depth == 16) {
     const auto coefficients = make_planar_rgb_to_yuv_float_coefficients(
-        test_case.matrix, test_case.source_full, test_case.destination_full, test_case.bit_depth);
+        test_case.matrix, test_case.source_full, test_case.destination_full,
+        test_case.source_bit_depth);
     const auto input_offset = static_cast<int>(coefficients.input_offset);
-    const float half_pixel = static_cast<float>(std::int64_t{1} << (test_case.bit_depth - 1));
+    const float half_pixel =
+        static_cast<float>(std::int64_t{1} << (test_case.target_bit_depth - 1));
     for (std::size_t row = 0; row < source0.height(); ++row) {
       for (std::size_t column = 0; column < source0.width(); ++column) {
         const float g = static_cast<float>(static_cast<int>(source0.row(row)[column]) + input_offset);
@@ -495,9 +529,12 @@ inline void make_planar_matrix_reference(const PlanarMatrixCase& test_case,
                         half_pixel;
         const float v = coefficients.v_g * g + coefficients.v_b * b + coefficients.v_r * r +
                         half_pixel;
-        output0.row(row)[column] = static_cast<T>(planar_round_float_sample(y, test_case.bit_depth));
-        output1.row(row)[column] = static_cast<T>(planar_round_float_sample(u, test_case.bit_depth));
-        output2.row(row)[column] = static_cast<T>(planar_round_float_sample(v, test_case.bit_depth));
+        output0.row(row)[column] =
+            static_cast<DestinationT>(planar_round_float_sample(y, test_case.target_bit_depth));
+        output1.row(row)[column] =
+            static_cast<DestinationT>(planar_round_float_sample(u, test_case.target_bit_depth));
+        output2.row(row)[column] =
+            static_cast<DestinationT>(planar_round_float_sample(v, test_case.target_bit_depth));
       }
     }
     return;
@@ -506,9 +543,14 @@ inline void make_planar_matrix_reference(const PlanarMatrixCase& test_case,
   const auto coefficients =
       test_case.direction == PlanarMatrixDirection::YuvToRgb
           ? make_planar_yuv_to_rgb_coefficients(test_case.matrix, test_case.source_full,
-                                                test_case.destination_full, test_case.bit_depth)
-          : make_planar_rgb_to_yuv_coefficients(test_case.matrix, test_case.source_full,
-                                                test_case.destination_full, test_case.bit_depth);
+                                                test_case.destination_full, test_case.source_bit_depth)
+          : (test_case.source_bit_depth == test_case.target_bit_depth
+                 ? make_planar_rgb_to_yuv_coefficients(
+                       test_case.matrix, test_case.source_full, test_case.destination_full,
+                       test_case.source_bit_depth)
+                 : make_planar_rgb_to_yuv_cross_depth_coefficients(
+                       test_case.matrix, test_case.source_full, test_case.destination_full,
+                       test_case.source_bit_depth, test_case.target_bit_depth));
   auto adjusted_coefficients = coefficients;
   if (test_case.direction == PlanarMatrixDirection::RgbToYuv && test_case.source_full &&
       test_case.destination_full) {
@@ -516,7 +558,7 @@ inline void make_planar_matrix_reference(const PlanarMatrixCase& test_case,
                           adjusted_coefficients.y_r;
     adjusted_coefficients.y_g += (1 << adjusted_coefficients.shift) - luma_sum;
   }
-  const auto half_pixel = std::int64_t{1} << (test_case.bit_depth - 1);
+  const auto half_pixel = std::int64_t{1} << (test_case.source_bit_depth - 1);
   for (std::size_t row = 0; row < source0.height(); ++row) {
     for (std::size_t column = 0; column < source0.width(); ++column) {
       const int source_a = source0.row(row)[column];
@@ -530,17 +572,17 @@ inline void make_planar_matrix_reference(const PlanarMatrixCase& test_case,
             planar_shifted_component(adjusted_coefficients.y_g, adjusted_coefficients.u_g,
                                      adjusted_coefficients.v_g, y, u, v,
                                      adjusted_coefficients.output_offset, adjusted_coefficients.shift,
-                                     test_case.bit_depth);
+                                     test_case.target_bit_depth);
         output1.row(row)[column] =
             planar_shifted_component(adjusted_coefficients.y_b, adjusted_coefficients.u_b,
                                      adjusted_coefficients.v_b, y, u, v,
                                      adjusted_coefficients.output_offset, adjusted_coefficients.shift,
-                                     test_case.bit_depth);
+                                     test_case.target_bit_depth);
         output2.row(row)[column] =
             planar_shifted_component(adjusted_coefficients.y_r, adjusted_coefficients.u_r,
                                      adjusted_coefficients.v_r, y, u, v,
                                      adjusted_coefficients.output_offset, adjusted_coefficients.shift,
-                                     test_case.bit_depth);
+                                     test_case.target_bit_depth);
       } else {
         const auto g = static_cast<std::int64_t>(source_a) + adjusted_coefficients.input_offset;
         const auto b = static_cast<std::int64_t>(source_b) + adjusted_coefficients.input_offset;
@@ -549,19 +591,21 @@ inline void make_planar_matrix_reference(const PlanarMatrixCase& test_case,
             planar_shifted_component(adjusted_coefficients.y_g, adjusted_coefficients.y_b,
                                      adjusted_coefficients.y_r, g, b, r,
                                      adjusted_coefficients.output_offset, adjusted_coefficients.shift,
-                                     test_case.bit_depth);
+                                     test_case.target_bit_depth, 15);
         output1.row(row)[column] = planar_shifted_component(
             adjusted_coefficients.u_g, adjusted_coefficients.u_b, adjusted_coefficients.u_r, g, b, r,
-            static_cast<int>(half_pixel), adjusted_coefficients.shift, test_case.bit_depth);
+            static_cast<int>(half_pixel),
+            adjusted_coefficients.shift, test_case.target_bit_depth, 15);
         output2.row(row)[column] = planar_shifted_component(
             adjusted_coefficients.v_g, adjusted_coefficients.v_b, adjusted_coefficients.v_r, g, b, r,
-            static_cast<int>(half_pixel), adjusted_coefficients.shift, test_case.bit_depth);
+            static_cast<int>(half_pixel),
+            adjusted_coefficients.shift, test_case.target_bit_depth, 15);
       }
     }
   }
 }
 
-template <typename T, bool LessThan16Bit>
+template <typename SourceT, bool LessThan16Bit>
 inline void call_planar_matrix_kernel_typed(const PlanarMatrixCase& test_case,
                                             BYTE* (&destination)[3], int (&destination_pitch)[3],
                                             const BYTE* (&source)[3],
@@ -571,33 +615,33 @@ inline void call_planar_matrix_kernel_typed(const PlanarMatrixCase& test_case,
   const int height = static_cast<int>(test_case.height);
   if (test_case.direction == PlanarMatrixDirection::YuvToRgb) {
     if (test_case.variant.function == PlanarMatrixVariant::C) {
-      convert_yuv_to_planarrgb_c<ConversionDirection::YUV_TO_RGB, T, LessThan16Bit>(
+      convert_yuv_to_planarrgb_c<ConversionDirection::YUV_TO_RGB, SourceT, LessThan16Bit>(
           destination, destination_pitch, source, source_pitch, width, height, matrix,
-          test_case.bit_depth, test_case.bit_depth, false);
+          test_case.source_bit_depth, test_case.target_bit_depth, false);
     } else if (test_case.variant.function == PlanarMatrixVariant::Sse2) {
-      convert_yuv_to_planarrgb_sse2<ConversionDirection::YUV_TO_RGB, T, LessThan16Bit>(
+      convert_yuv_to_planarrgb_sse2<ConversionDirection::YUV_TO_RGB, SourceT, LessThan16Bit>(
           destination, destination_pitch, source, source_pitch, width, height, matrix,
-          test_case.bit_depth, test_case.bit_depth, false);
+          test_case.source_bit_depth, test_case.target_bit_depth, false);
     } else {
-      convert_yuv_to_planarrgb_avx2<ConversionDirection::YUV_TO_RGB, T, LessThan16Bit>(
+      convert_yuv_to_planarrgb_avx2<ConversionDirection::YUV_TO_RGB, SourceT, LessThan16Bit>(
           destination, destination_pitch, source, source_pitch, width, height, matrix,
-          test_case.bit_depth, test_case.bit_depth, false);
+          test_case.source_bit_depth, test_case.target_bit_depth, false);
     }
     return;
   }
 
   if (test_case.variant.function == PlanarMatrixVariant::C) {
-    convert_yuv_to_planarrgb_c<ConversionDirection::RGB_TO_YUV, T, LessThan16Bit>(
+    convert_yuv_to_planarrgb_c<ConversionDirection::RGB_TO_YUV, SourceT, LessThan16Bit>(
         destination, destination_pitch, source, source_pitch, width, height, matrix,
-        test_case.bit_depth, test_case.bit_depth, false);
+        test_case.source_bit_depth, test_case.target_bit_depth, false);
   } else if (test_case.variant.function == PlanarMatrixVariant::Sse2) {
-    convert_yuv_to_planarrgb_sse2<ConversionDirection::RGB_TO_YUV, T, LessThan16Bit>(
+    convert_yuv_to_planarrgb_sse2<ConversionDirection::RGB_TO_YUV, SourceT, LessThan16Bit>(
         destination, destination_pitch, source, source_pitch, width, height, matrix,
-        test_case.bit_depth, test_case.bit_depth, false);
+        test_case.source_bit_depth, test_case.target_bit_depth, false);
   } else {
-    convert_yuv_to_planarrgb_avx2<ConversionDirection::RGB_TO_YUV, T, LessThan16Bit>(
+    convert_yuv_to_planarrgb_avx2<ConversionDirection::RGB_TO_YUV, SourceT, LessThan16Bit>(
         destination, destination_pitch, source, source_pitch, width, height, matrix,
-        test_case.bit_depth, test_case.bit_depth, false);
+        test_case.source_bit_depth, test_case.target_bit_depth, false);
   }
 }
 
@@ -610,7 +654,7 @@ inline std::size_t planar_matrix_allowed_output_end(const PlanarMatrixCase& test
   const std::size_t block_bytes =
       test_case.variant.function == PlanarMatrixVariant::Sse2
           ? 8 * sizeof(T)
-          : (test_case.bit_depth == 32 ? 64 : 32 * sizeof(T));
+          : (test_case.target_bit_depth == 32 ? 64 : 32 * sizeof(T));
   return ((active_bytes + block_bytes - 1) / block_bytes) * block_bytes;
 }
 
@@ -633,18 +677,25 @@ inline void expect_planar_matrix_output_memory(const PlanarMatrixCase& test_case
       << " modified output padding after the permitted SIMD tail boundary " << allowed_end;
 }
 
-template <typename T>
+template <typename SourceT, typename DestinationT>
 inline void run_planar_matrix_case_typed(const PlanarMatrixCase& test_case) {
-  GuardedVideoBuffer<T> source0(test_case.width, test_case.height, test_case.source_pitch, 64);
-  GuardedVideoBuffer<T> source1(test_case.width, test_case.height, test_case.source_pitch, 64);
-  GuardedVideoBuffer<T> source2(test_case.width, test_case.height, test_case.source_pitch, 64);
-  GuardedVideoBuffer<T> expected0(test_case.width, test_case.height, test_case.destination_pitch, 64);
-  GuardedVideoBuffer<T> expected1(test_case.width, test_case.height, test_case.destination_pitch, 64);
-  GuardedVideoBuffer<T> expected2(test_case.width, test_case.height, test_case.destination_pitch, 64);
-  GuardedVideoBuffer<T> actual0(test_case.width, test_case.height, test_case.destination_pitch, 64);
-  GuardedVideoBuffer<T> actual1(test_case.width, test_case.height, test_case.destination_pitch, 64);
-  GuardedVideoBuffer<T> actual2(test_case.width, test_case.height, test_case.destination_pitch, 64);
-  fill_planar_matrix_inputs(source0.view(), source1.view(), source2.view(), test_case.bit_depth,
+  GuardedVideoBuffer<SourceT> source0(test_case.width, test_case.height, test_case.source_pitch, 64);
+  GuardedVideoBuffer<SourceT> source1(test_case.width, test_case.height, test_case.source_pitch, 64);
+  GuardedVideoBuffer<SourceT> source2(test_case.width, test_case.height, test_case.source_pitch, 64);
+  GuardedVideoBuffer<DestinationT> expected0(test_case.width, test_case.height,
+                                              test_case.destination_pitch, 64);
+  GuardedVideoBuffer<DestinationT> expected1(test_case.width, test_case.height,
+                                              test_case.destination_pitch, 64);
+  GuardedVideoBuffer<DestinationT> expected2(test_case.width, test_case.height,
+                                              test_case.destination_pitch, 64);
+  GuardedVideoBuffer<DestinationT> actual0(test_case.width, test_case.height,
+                                            test_case.destination_pitch, 64);
+  GuardedVideoBuffer<DestinationT> actual1(test_case.width, test_case.height,
+                                            test_case.destination_pitch, 64);
+  GuardedVideoBuffer<DestinationT> actual2(test_case.width, test_case.height,
+                                            test_case.destination_pitch, 64);
+  fill_planar_matrix_inputs(source0.view(), source1.view(), source2.view(),
+                            test_case.source_bit_depth,
                             test_case.direction == PlanarMatrixDirection::YuvToRgb,
                             test_case.source_full);
   const auto source0_snapshot = source0.snapshot_active();
@@ -661,9 +712,9 @@ inline void run_planar_matrix_case_typed(const PlanarMatrixCase& test_case) {
   const bool matrix_built =
       test_case.direction == PlanarMatrixDirection::YuvToRgb
           ? do_BuildMatrix_Yuv2Rgb(test_case.matrix, source_range, destination_range, 13,
-                                   test_case.bit_depth, matrix)
+                                   test_case.source_bit_depth, matrix)
           : do_BuildMatrix_Rgb2Yuv(test_case.matrix, source_range, destination_range, 15,
-                                   test_case.bit_depth, matrix);
+                                   test_case.source_bit_depth, matrix);
   ASSERT_TRUE(matrix_built);
 
   BYTE* destination[3]{reinterpret_cast<BYTE*>(actual0.view().data()),
@@ -678,21 +729,21 @@ inline void run_planar_matrix_case_typed(const PlanarMatrixCase& test_case) {
   const int source_pitch[3]{static_cast<int>(test_case.source_pitch),
                             static_cast<int>(test_case.source_pitch),
                             static_cast<int>(test_case.source_pitch)};
-  if constexpr (sizeof(T) == 1) {
-    call_planar_matrix_kernel_typed<T, true>(test_case, destination, destination_pitch, source,
-                                             source_pitch, matrix);
-  } else if constexpr (std::is_floating_point_v<T>) {
-    call_planar_matrix_kernel_typed<T, false>(test_case, destination, destination_pitch, source,
-                                              source_pitch, matrix);
-  } else if (test_case.bit_depth < 16) {
-    call_planar_matrix_kernel_typed<T, true>(test_case, destination, destination_pitch, source,
-                                             source_pitch, matrix);
+  if constexpr (sizeof(SourceT) == 1) {
+    call_planar_matrix_kernel_typed<SourceT, true>(test_case, destination, destination_pitch,
+                                                    source, source_pitch, matrix);
+  } else if constexpr (std::is_floating_point_v<SourceT>) {
+    call_planar_matrix_kernel_typed<SourceT, false>(test_case, destination, destination_pitch,
+                                                     source, source_pitch, matrix);
+  } else if (test_case.source_bit_depth < 16) {
+    call_planar_matrix_kernel_typed<SourceT, true>(test_case, destination, destination_pitch,
+                                                    source, source_pitch, matrix);
   } else {
-    call_planar_matrix_kernel_typed<T, false>(test_case, destination, destination_pitch, source,
-                                              source_pitch, matrix);
+    call_planar_matrix_kernel_typed<SourceT, false>(test_case, destination, destination_pitch,
+                                                     source, source_pitch, matrix);
   }
 
-  if constexpr (std::is_floating_point_v<T>) {
+  if constexpr (std::is_floating_point_v<DestinationT>) {
     for (std::size_t row = 0; row < test_case.height; ++row) {
       for (std::size_t column = 0; column < test_case.width; ++column) {
         EXPECT_NEAR(expected0.view().row(row)[column], actual0.view().row(row)[column], 6.0e-6F)
@@ -710,12 +761,14 @@ inline void run_planar_matrix_case_typed(const PlanarMatrixCase& test_case) {
         << test_case.name << " output B/U";
     EXPECT_TRUE(compare_exact(expected2.view().as_const(), actual2.view().as_const()))
         << test_case.name << " output R/V";
-    EXPECT_EQ(format_hash(hash_active(actual0.view().as_const())), test_case.expected_hashes[0])
-        << test_case.name << " output G/Y";
-    EXPECT_EQ(format_hash(hash_active(actual1.view().as_const())), test_case.expected_hashes[1])
-        << test_case.name << " output B/U";
-    EXPECT_EQ(format_hash(hash_active(actual2.view().as_const())), test_case.expected_hashes[2])
-        << test_case.name << " output R/V";
+    if (!test_case.expected_hashes[0].empty()) {
+      EXPECT_EQ(format_hash(hash_active(actual0.view().as_const())), test_case.expected_hashes[0])
+          << test_case.name << " output G/Y";
+      EXPECT_EQ(format_hash(hash_active(actual1.view().as_const())), test_case.expected_hashes[1])
+          << test_case.name << " output B/U";
+      EXPECT_EQ(format_hash(hash_active(actual2.view().as_const())), test_case.expected_hashes[2])
+          << test_case.name << " output R/V";
+    }
   }
   EXPECT_TRUE(source0.active_matches(source0_snapshot)) << test_case.name;
   EXPECT_TRUE(source1.active_matches(source1_snapshot)) << test_case.name;
@@ -732,12 +785,20 @@ inline void run_planar_matrix_case_typed(const PlanarMatrixCase& test_case) {
 }
 
 inline void run_planar_matrix_case(const PlanarMatrixCase& test_case) {
-  if (test_case.bit_depth == 8) {
-    run_planar_matrix_case_typed<std::uint8_t>(test_case);
-  } else if (test_case.bit_depth == 32) {
-    run_planar_matrix_case_typed<float>(test_case);
+  if (test_case.source_bit_depth == 8) {
+    if (test_case.target_bit_depth == 8) {
+      run_planar_matrix_case_typed<std::uint8_t, std::uint8_t>(test_case);
+    } else {
+      run_planar_matrix_case_typed<std::uint8_t, std::uint16_t>(test_case);
+    }
+  } else if (test_case.source_bit_depth == 32) {
+    run_planar_matrix_case_typed<float, float>(test_case);
   } else {
-    run_planar_matrix_case_typed<std::uint16_t>(test_case);
+    if (test_case.target_bit_depth == 8) {
+      run_planar_matrix_case_typed<std::uint16_t, std::uint8_t>(test_case);
+    } else {
+      run_planar_matrix_case_typed<std::uint16_t, std::uint16_t>(test_case);
+    }
   }
 }
 

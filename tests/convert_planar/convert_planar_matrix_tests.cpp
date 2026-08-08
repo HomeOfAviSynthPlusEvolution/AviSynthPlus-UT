@@ -11,25 +11,26 @@ namespace {
 void add_planar_matrix_variants(std::vector<PlanarMatrixCase>& cases,
                                 PlanarMatrixDirection direction, int matrix, bool source_full,
                                 bool destination_full, std::array<std::string, 3> expected_hashes,
-                                int bit_depth = 8, std::size_t width = 32,
+                                int source_bit_depth = 8, std::size_t width = 32,
                                 std::size_t source_pitch = 64,
-                                std::size_t destination_pitch = 64) {
+                                std::size_t destination_pitch = 64,
+                                int target_bit_depth = -1) {
   constexpr std::size_t height = 5;
   cases.push_back(make_planar_matrix_case(
       direction, matrix, source_full, destination_full, width, height, source_pitch,
       destination_pitch,
       Variant<PlanarMatrixVariant>{"c", PlanarMatrixVariant::C, IsaRequirement::Scalar},
-      expected_hashes, bit_depth));
+      expected_hashes, source_bit_depth, target_bit_depth));
   cases.push_back(make_planar_matrix_case(
       direction, matrix, source_full, destination_full, width, height, source_pitch,
       destination_pitch,
       Variant<PlanarMatrixVariant>{"sse2", PlanarMatrixVariant::Sse2, IsaRequirement::Sse2},
-      expected_hashes, bit_depth));
+      expected_hashes, source_bit_depth, target_bit_depth));
   cases.push_back(make_planar_matrix_case(
       direction, matrix, source_full, destination_full, width, height, source_pitch,
       destination_pitch,
       Variant<PlanarMatrixVariant>{"avx2", PlanarMatrixVariant::Avx2, IsaRequirement::Avx2},
-      std::move(expected_hashes), bit_depth));
+      std::move(expected_hashes), source_bit_depth, target_bit_depth));
 }
 
 std::vector<PlanarMatrixCase> planar_matrix_cases() {
@@ -75,6 +76,13 @@ std::vector<PlanarMatrixCase> planar_matrix_cases() {
                              true, {}, 32, 17, 128, 128);
   add_planar_matrix_variants(cases, PlanarMatrixDirection::RgbToYuv, AVS_MATRIX_ST240_M, true,
                              false, {}, 32, 19, 128, 128);
+  add_planar_matrix_variants(cases, PlanarMatrixDirection::RgbToYuv, AVS_MATRIX_BT709, true,
+                             false, {}, 8, 33, 64, 128, 10);
+  for (const int source_bit_depth : {8, 10, 12, 14}) {
+    const auto source_pitch = source_bit_depth == 8 ? 64U : 128U;
+    add_planar_matrix_variants(cases, PlanarMatrixDirection::RgbToYuv, AVS_MATRIX_BT709, true,
+                               false, {}, source_bit_depth, 33, source_pitch, 128, 16);
+  }
   return cases;
 }
 
