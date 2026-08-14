@@ -25,11 +25,17 @@ it. gcovr filters the report to `avs_core/` using the AviSynthPlus submodule as
 the report root, so published source paths begin with `avs_core/`.
 
 GitHub Actions runs this profile only for `master` pushes and manual dispatches.
-It publishes the latest CTest status plus line, branch, and function coverage
-to GitHub Pages without a coverage threshold or retained report history. A
-failing CTest run is published as `FAIL`, but does not fail the workflow; its
-coverage result can therefore be partial. Configuration, build, and report-
-generation failures still fail the workflow.
+Each allocation round starts four independent `ubuntu-26.04` matrix jobs. A
+job proceeds with checkout, build, CTest, and `gcovr` only when `/proc/cpuinfo`
+contains the higher-level `avx512_vnni` flag, keeping the CPU probe and native
+AVX-512 execution on the same runner. A complete report is uploaded as an
+attempt artifact; a controller selects the first complete artifact and
+publishes it to GitHub Pages. When no report is produced, the workflow
+dispatches the next round, with a maximum of four rounds (16 runner
+allocations). A failing CTest run is published as `FAIL`, but does not fail the
+coverage report; its result can therefore be partial. Configuration, build,
+and report-generation failures cause that allocation to be retried, and the
+workflow fails after the fourth round if no complete report is available.
 
 The recursive checkout uses complete history and tags. Upstream `VersionGen`
 calls `git describe --tags` and counts commits since that tag, so a shallow

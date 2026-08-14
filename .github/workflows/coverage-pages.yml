@@ -5,61 +5,96 @@ on:
     branches:
       - master
   workflow_dispatch:
+    inputs:
+      round:
+        description: "AVX-512 runner allocation round (1-4)"
+        required: false
+        default: "1"
+        type: string
+      root_run_id:
+        description: "Internal identifier shared by one retry chain"
+        required: false
+        default: ""
+        type: string
 
 concurrency:
-  group: pages
-  cancel-in-progress: true
+  group: coverage-pages-${{ github.ref }}-${{ inputs.root_run_id || github.run_id }}
+  cancel-in-progress: false
 
 permissions:
+  actions: write
   contents: read
   pages: write
   id-token: write
 
 jobs:
   report:
-    name: Build, test, and render report
+    name: AVX-512 attempt ${{ inputs.round || '1' }}/4 (${{ matrix.runner }})
     runs-on: ubuntu-26.04
-    outputs:
-      ctest_status: ${{ steps.tests.outputs.status }}
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        runner: [1, 2, 3, 4]
+    env:
+      ATTEMPT_ROUND: ${{ inputs.round || '1' }}
     steps:
-      - name: Ensure CPU support
+      - name: Check for AVX-512 VNNI support
+        id: cpu
         run: |
-          if grep -q "avx512f" /proc/cpuinfo; then
+          required_flag=avx512_vnni
+          if grep -qw "$required_flag" /proc/cpuinfo; then
+            # Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz
+            # AMD EPYC 9V74 80-Core Processor
+            echo "Found required CPU flag: $required_flag"
+            echo "host_hit=true" >> "$GITHUB_OUTPUT"
             lscpu
           else
-            echo "CPU not supporting AVX-512"
+            # AMD EPYC 7763 64-Core Processor
+            # AMD EPYC 9V74 80-Core Processor
+            echo "CPU does not expose required CPU flag: $required_flag"
+            echo "host_hit=false" >> "$GITHUB_OUTPUT"
             lscpu
-            exit 1
           fi
 
       - name: Check out repository
+        if: steps.cpu.outputs.host_hit == 'true'
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
           submodules: recursive
 
       - name: Set up Python
+        if: steps.cpu.outputs.host_hit == 'true'
         uses: actions/setup-python@v6
         with:
           python-version: "3.14"
 
       - name: Install gcovr
+        if: steps.cpu.outputs.host_hit == 'true'
         run: python -m pip install --disable-pip-version-check --no-cache-dir gcovr==8.6
 
       - name: Configure GCC coverage build
+        if: steps.cpu.outputs.host_hit == 'true'
         run: cmake --preset gcc-coverage
 
       - name: Build test suite
+        if: steps.cpu.outputs.host_hit == 'true'
         run: cmake --build --preset gcc-coverage --parallel 2
 
       - name: Clear old coverage counters
+        if: steps.cpu.outputs.host_hit == 'true'
         run: find "$GITHUB_WORKSPACE/build/gcc-coverage" -name '*.gcda' -delete
 
       - name: Seed zero-count AvsCore coverage data
-        run: "$GITHUB_WORKSPACE/build/gcc-coverage/tests/coverage/avs_coverage_inventory"
+        if: steps.cpu.outputs.host_hit == 'true'
+        shell: bash
+        run: |
+          "$GITHUB_WORKSPACE/build/gcc-coverage/tests/coverage/avs_coverage_inventory"
 
       - name: Run CTest
         id: tests
+        if: steps.cpu.outputs.host_hit == 'true'
         shell: bash
         run: |
           set +e
@@ -74,6 +109,7 @@ jobs:
           printf 'status=%s\n' "$status" >> "$GITHUB_OUTPUT"
 
       - name: Generate full AvsCore coverage report
+        if: steps.cpu.outputs.host_hit == 'true'
         run: |
           mkdir -p site/coverage site/data
           gcovr \
@@ -86,6 +122,7 @@ jobs:
             "$GITHUB_WORKSPACE/build/gcc-coverage"
 
       - name: Render latest-result dashboard
+        if: steps.cpu.outputs.host_hit == 'true'
         env:
           TEST_STATUS: ${{ steps.tests.outputs.status }}
         run: |
@@ -100,17 +137,150 @@ jobs:
             --upstream-sha "$upstream_sha" \
             --run-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 
+      - name: Record attempt result
+        if: always()
+        shell: bash
+        env:
+          HOST_HIT: ${{ steps.cpu.outputs.host_hit }}
+          TEST_STATUS: ${{ steps.tests.outputs.status }}
+          RUNNER_SLOT: ${{ matrix.runner }}
+        run: |
+          set -euo pipefail
+          mkdir -p attempt
+          host_hit="${HOST_HIT:-false}"
+          report_ready=false
+          if [ "$host_hit" = "true" ] && [ -f site/index.html ]; then
+            cp -a site attempt/site
+            report_ready=true
+          fi
+          {
+            printf 'round=%s\n' "$ATTEMPT_ROUND"
+            printf 'runner_slot=%s\n' "$RUNNER_SLOT"
+            printf 'host_hit=%s\n' "$host_hit"
+            printf 'report_ready=%s\n' "$report_ready"
+            printf 'ctest_status=%s\n' "${TEST_STATUS:-NOT_RUN}"
+          } > attempt/result.env
+
+      - name: Upload attempt artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-attempt-${{ inputs.round || '1' }}-${{ matrix.runner }}
+          path: attempt
+          if-no-files-found: error
+          retention-days: 1
+
+  collect:
+    name: Select a generated coverage report
+    if: always()
+    needs: report
+    runs-on: ubuntu-24.04
+    env:
+      ATTEMPT_ROUND: ${{ inputs.round || '1' }}
+    outputs:
+      host_hit: ${{ steps.select.outputs.host_hit }}
+      report_ready: ${{ steps.select.outputs.report_ready }}
+      selected_artifact: ${{ steps.select.outputs.selected_artifact }}
+    steps:
+      - name: Prepare artifact directory
+        run: mkdir -p attempts
+
+      - name: Download attempt artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          pattern: coverage-attempt-${{ inputs.round || '1' }}-*
+          path: attempts
+
+      - name: Select the first complete report
+        id: select
+        shell: bash
+        run: |
+          set -euo pipefail
+          host_hit=false
+          report_ready=false
+          selected_artifact=""
+          shopt -s nullglob
+          for result in "attempts/coverage-attempt-${ATTEMPT_ROUND}-"*/result.env; do
+            if grep -qx 'host_hit=true' "$result"; then
+              host_hit=true
+            fi
+            if [ -z "$selected_artifact" ] && grep -qx 'report_ready=true' "$result"; then
+              selected_artifact="$(basename "$(dirname "$result")")"
+              report_ready=true
+            fi
+          done
+          {
+            printf 'host_hit=%s\n' "$host_hit"
+            printf 'report_ready=%s\n' "$report_ready"
+            printf 'selected_artifact=%s\n' "$selected_artifact"
+          } >> "$GITHUB_OUTPUT"
+          printf 'AVX-512 host hit: %s\n' "$host_hit"
+          printf 'Complete report available: %s\n' "$report_ready"
+
+  publish:
+    name: Publish selected report
+    needs: collect
+    if: needs.collect.outputs.report_ready == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download selected report
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.collect.outputs.selected_artifact }}
+          path: selected
+
+      - name: Verify selected report
+        run: test -f selected/site/index.html
+
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v6
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v5
         with:
-          path: site
+          path: selected/site
+
+  retry:
+    name: Request the next runner allocation round
+    needs: collect
+    if: |
+      always() &&
+      needs.collect.outputs.report_ready != 'true' &&
+      fromJSON(inputs.round || '1') < 4
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Dispatch next round
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT_ROUND: ${{ inputs.round || '1' }}
+          ROOT_RUN_ID: ${{ inputs.root_run_id || github.run_id }}
+        run: |
+          next_round=$((CURRENT_ROUND + 1))
+          gh workflow run coverage-pages.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$GITHUB_REF_NAME" \
+            --field round="$next_round" \
+            --field root_run_id="$ROOT_RUN_ID"
+
+  exhausted:
+    name: Report that AVX-512 allocation was exhausted
+    needs: collect
+    if: |
+      always() &&
+      needs.collect.outputs.report_ready != 'true' &&
+      fromJSON(inputs.round || '1') >= 4
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fail after four rounds
+        run: |
+          echo "No complete AVX-512 coverage report was produced after four runner allocation rounds." >&2
+          exit 1
 
   deploy:
     name: Deploy latest report
-    needs: report
+    needs: publish
+    if: needs.publish.result == 'success'
     runs-on: ubuntu-26.04
     environment:
       name: github-pages
