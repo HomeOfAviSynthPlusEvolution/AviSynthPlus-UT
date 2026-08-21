@@ -45,6 +45,7 @@ jobs:
           required_flag=avx512_vnni
           if grep -qw "$required_flag" /proc/cpuinfo; then
             # Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz
+            # Intel(R) Xeon(R) Platinum 8573C
             # AMD EPYC 9V74 80-Core Processor
             echo "Found required CPU flag: $required_flag"
             echo "host_hit=true" >> "$GITHUB_OUTPUT"

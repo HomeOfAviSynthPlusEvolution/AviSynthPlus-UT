@@ -23,7 +23,7 @@
 namespace avsut::test {
 
 using TextOverlayCompareFunction = void (*)(std::uint32_t, int, const BYTE*, int, const BYTE*, int,
-                                            int, int, int&, int&, int&, int&, double&);
+                                            int, int, std::int64_t&, std::int64_t&, int&, int&, double&);
 
 struct TextOverlayCompareCase {
   std::string format;
@@ -36,8 +36,8 @@ struct TextOverlayCompareCase {
   std::size_t other_pitch{};
   std::size_t source_alignment_offset{};
   std::size_t other_alignment_offset{};
-  int initial_sad{};
-  int initial_sd{};
+  std::int64_t initial_sad{};
+  std::int64_t initial_sd{};
   int initial_pos{};
   int initial_neg{};
   double initial_ssd{};
@@ -156,8 +156,8 @@ inline void fill_text_overlay_compare_inputs(const TextOverlayCompareCase& test_
 }
 
 struct TextOverlayCompareMetrics {
-  int sad{};
-  int sd{};
+  std::int64_t sad{};
+  std::int64_t sd{};
   int pos{};
   int neg{};
   double ssd{};
@@ -199,8 +199,8 @@ inline void run_text_overlay_compare_case(const TextOverlayCompareCase& test_cas
   const auto expected =
       text_overlay_compare_reference(test_case, source.view().as_const(), other.view().as_const());
 
-  int actual_sad = test_case.initial_sad;
-  int actual_sd = test_case.initial_sd;
+  std::int64_t actual_sad = test_case.initial_sad;
+  std::int64_t actual_sd = test_case.initial_sd;
   int actual_pos = test_case.initial_pos;
   int actual_neg = test_case.initial_neg;
   double actual_ssd = test_case.initial_ssd;
