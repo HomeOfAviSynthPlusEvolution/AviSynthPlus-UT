@@ -216,6 +216,9 @@ tbody tr:hover { background: #f8fafb; }
 .status-fail { color: #c52b2f; font-weight: 700; }
 .status-skip { color: #8b5a00; font-weight: 700; }
 
+.failure-list { margin: 0; padding-left: 22px; }
+.failure-list li + li { margin-top: 6px; }
+
 .metadata {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -298,6 +301,10 @@ def detail_from_element(element: ElementTree.Element) -> str:
     return "\n".join(part for part in (message, body) if part)
 
 
+def normalize_test_name(value: str) -> str:
+    return value.split("  # GetParam() = ", 1)[0].strip()
+
+
 def parse_junit(path: Path) -> TestSummary:
     if not path.exists():
         return TestSummary([], "CTest did not produce a JUnit XML file.")
@@ -312,9 +319,13 @@ def parse_junit(path: Path) -> TestSummary:
         if local_name(element.tag) != "testcase":
             continue
 
-        class_name = element.attrib.get("classname", "").strip()
-        case_name = element.attrib.get("name", "unnamed test").strip()
-        name = f"{class_name}.{case_name}" if class_name else case_name
+        class_name = normalize_test_name(element.attrib.get("classname", "").strip())
+        case_name = normalize_test_name(element.attrib.get("name", "unnamed test").strip())
+        name = (
+            f"{class_name}.{case_name}"
+            if class_name and case_name and class_name != case_name
+            else case_name or class_name or "unnamed test"
+        )
         status = "PASS"
         detail = ""
         for child in element:
@@ -445,14 +456,6 @@ def metric_detail(metric: Metric) -> str:
     if not metric.available:
         return "No reported data"
     return f"{metric.covered:,} / {metric.total:,} covered"
-
-
-def format_duration(value: float | None) -> str:
-    if value is None:
-        return "n/a"
-    if value >= 1:
-        return f"{value:.2f} s"
-    return f"{value * 1000:.0f} ms"
 
 
 def navigation(active: str) -> str:
@@ -588,40 +591,19 @@ def overview_page(
 
 
 def tests_page(args: argparse.Namespace, tests: TestSummary, generated_at: str) -> str:
-    failure_details = ""
     failures = [case for case in tests.cases if case.status == "FAIL"]
     if failures:
-        failure_details = "".join(
-            f"""      <details open>
-        <summary>{escape(case.name)}</summary>
-        <pre>{escape(case.detail or 'CTest did not include failure output.')}</pre>
-      </details>"""
+        failure_list = "\n".join(
+            f"        <li><code>{escape(case.name)}</code></li>"
             for case in failures
         )
+        failure_section = f"""      <ul class="failure-list">
+{failure_list}
+      </ul>"""
     elif tests.unavailable_reason:
-        failure_details = f'<p class="empty">{escape(tests.unavailable_reason)}</p>'
+        failure_section = f'<p class="empty">{escape(tests.unavailable_reason)}</p>'
     else:
-        failure_details = '<p class="empty">No failing CTest cases were reported.</p>'
-
-    order = {"FAIL": 0, "SKIP": 1, "PASS": 2}
-    test_rows = "".join(
-        "<tr>"
-        f"<td><code>{escape(case.name)}</code></td>"
-        f"<td class=\"status-{case.status.lower()}\">{escape(case.status)}</td>"
-        f"<td>{format_duration(case.duration)}</td>"
-        "</tr>"
-        for case in sorted(tests.cases, key=lambda case: (order[case.status], case.name))
-    )
-    result_table = (
-        f"""      <div class="table-wrap">
-        <table>
-          <thead><tr><th>CTest case</th><th>Result</th><th>Duration</th></tr></thead>
-          <tbody>{test_rows}</tbody>
-        </table>
-      </div>"""
-        if test_rows
-        else f'<p class="empty">{escape(tests.unavailable_reason or "No CTest cases were reported.")}</p>'
-    )
+        failure_section = '<p class="empty">No failing CTest cases were reported.</p>'
     return page(
         "AviSynthPlus-UT Test Results",
         "tests",
@@ -637,13 +619,8 @@ def tests_page(args: argparse.Namespace, tests: TestSummary, generated_at: str) 
     </div>
 
     <section class="section">
-      <h2>Failure output</h2>
-{failure_details}
-    </section>
-
-    <section class="section">
-      <h2>All CTest cases</h2>
-{result_table}
+      <h2>Failed tests</h2>
+{failure_section}
     </section>
 
     <section class="section">
