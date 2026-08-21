@@ -2054,7 +2054,7 @@ std::uint16_t layer_mul_u16(std::uint16_t base, std::uint16_t overlay,
   constexpr std::uint64_t half = 32767;
   constexpr std::uint64_t opacity = 32768;
   const auto effective_alpha = (static_cast<std::uint64_t>(mask) * opacity + half) / max_value;
-  const auto product = (static_cast<std::uint64_t>(base) * alpha_target) >> 16;
+  const auto product = (static_cast<std::uint64_t>(base) * alpha_target) / max_value;
   return static_cast<std::uint16_t>(
       (static_cast<std::uint64_t>(base) * (max_value - effective_alpha) +
        product * effective_alpha + half) /

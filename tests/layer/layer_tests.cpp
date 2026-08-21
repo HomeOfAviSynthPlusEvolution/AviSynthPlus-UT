@@ -1054,22 +1054,22 @@ std::vector<LayerPlanarRgbMulCase> layer_planarrgb_mul_cases() {
   return {
       make_layer_planarrgb_mul_case(
           true, false, false, 8, width_8, height_8, destination_pitch_8, overlay_pitch_8, 0,
-          opacity_8, "Partial173", seed_8, "4526897b232aa349"),
+          opacity_8, "Partial173", seed_8, "d7d14f69613e8ab7"),
       make_layer_planarrgb_mul_case(
           true, true, false, 8, width_8, height_8, destination_pitch_8, overlay_pitch_8,
-          mask_pitch_8, opacity_8, "Partial173", seed_8, "b4eb9f389ef05d26"),
+          mask_pitch_8, opacity_8, "Partial173", seed_8, "cbde729c940360ea"),
       make_layer_planarrgb_mul_case(
           false, true, true, 8, width_8, height_8, destination_pitch_8, overlay_pitch_8,
-          mask_pitch_8, opacity_8, "Partial173", seed_8, "6d45d21ee6daf4f9"),
+          mask_pitch_8, opacity_8, "Partial173", seed_8, "5da3d80d721eb390"),
       make_layer_planarrgb_mul_case(
           false, false, false, 16, width_16, height_16, destination_pitch_16, overlay_pitch_16, 0,
-          opacity_16, "Partial39321", seed_16, "ad3c8ab8c4db317a"),
+          opacity_16, "Partial39321", seed_16, "22b6fd463dc8a1df"),
       make_layer_planarrgb_mul_case(
           false, true, false, 16, width_16, height_16, destination_pitch_16, overlay_pitch_16,
-          mask_pitch_16, opacity_16, "Partial39321", seed_16, "ac465b016bff2ec2"),
+          mask_pitch_16, opacity_16, "Partial39321", seed_16, "f14bf6c13c9f2146"),
       make_layer_planarrgb_mul_case(
           true, true, true, 16, width_16, height_16, destination_pitch_16, overlay_pitch_16,
-          mask_pitch_16, opacity_16, "Partial39321", seed_16, "923705c83b096da5"),
+          mask_pitch_16, opacity_16, "Partial39321", seed_16, "26015322e993a08b"),
   };
 }
 

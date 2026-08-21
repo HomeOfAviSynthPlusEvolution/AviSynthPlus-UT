@@ -180,19 +180,19 @@ void apply_layer_planarrgb_mul_reference(
         std::uint64_t target = 0;
         if (test_case.chroma) {
           target = (static_cast<std::uint64_t>(overlay[plane]->view().row(y)[x]) *
-                    destination_value) >>
-                   test_case.bits_per_pixel;
+                    destination_value) /
+                   max_value;
         } else if (plane < 3) {
           const auto overlay_luma =
               (kCyb * static_cast<std::uint64_t>(overlay[1]->view().row(y)[x]) +
                kCyg * static_cast<std::uint64_t>(overlay[0]->view().row(y)[x]) +
                kCyr * static_cast<std::uint64_t>(overlay[2]->view().row(y)[x])) >>
               15;
-          target = (overlay_luma * destination_value) >> test_case.bits_per_pixel;
+          target = (overlay_luma * destination_value) / max_value;
         } else {
           target = (static_cast<std::uint64_t>(overlay[3]->view().row(y)[x]) *
-                    destination_value) >>
-                   test_case.bits_per_pixel;
+                    destination_value) /
+                   max_value;
         }
         destination[plane]->view().row(y)[x] = static_cast<T>(
             (destination_value * inverse_alpha + target * alpha + half) / max_value);
