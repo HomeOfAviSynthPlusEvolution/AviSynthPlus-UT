@@ -247,7 +247,7 @@ jobs:
     needs: collect
     if: |
       always() &&
-      needs.collect.outputs.report_ready != 'true' &&
+      needs.collect.outputs.host_hit != 'true' &&
       fromJSON(inputs.round || '1') < 4
     runs-on: ubuntu-24.04
     steps:
@@ -269,7 +269,7 @@ jobs:
     needs: collect
     if: |
       always() &&
-      needs.collect.outputs.report_ready != 'true' &&
+      needs.collect.outputs.host_hit != 'true' &&
       fromJSON(inputs.round || '1') >= 4
     runs-on: ubuntu-24.04
     steps:
