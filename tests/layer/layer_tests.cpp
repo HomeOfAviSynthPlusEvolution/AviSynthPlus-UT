@@ -221,10 +221,10 @@ std::vector<LayerYuvMulCase> layer_yuv_mul_cases() {
   return {
       make_layer_yuv_mul_case("Yv12", false, 420, placement, bits_per_pixel, width_pixels,
                               height_pixels, destination_pitch, overlay_pitch, mask_pitch,
-                              opacity, "Partial39321", variant, "f032e558e3ee6fb2", seed),
+                              opacity, "Partial39321", variant, "f18b7ce631492d6f", seed),
       make_layer_yuv_mul_case("Yv12", true, 420, placement, bits_per_pixel, width_pixels,
                               height_pixels, destination_pitch, overlay_pitch, mask_pitch,
-                              opacity, "Partial39321", chroma_variant, "6b7025922faffa2b", seed),
+                              opacity, "Partial39321", chroma_variant, "89271b963a11b9d3", seed),
   };
 }
 
