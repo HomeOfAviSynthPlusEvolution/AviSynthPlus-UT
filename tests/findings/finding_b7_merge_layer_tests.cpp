@@ -248,6 +248,32 @@ TEST(LayerMul, PreservesIntegerFullScaleEndpoint) {
   EXPECT_EQ(FrameSnapshot::capture(overlay.frame, overlay.video_info), overlay.snapshot);
 }
 
+TEST(LayerMul, AppliesMaskAtPartialOpacity) {
+  AviSynthEnvironment environment;
+  const StaticVideoSource base = make_yuv_source(environment, VideoInfo::CS_YV24, 200, 128, 128);
+  const StaticVideoSource overlay = make_yuv_source(environment, VideoInfo::CS_YV24, 100, 128, 128);
+  const StaticVideoSource mask = make_yuv_source(environment, VideoInfo::CS_YV24, 0, 128, 128);
+
+  Layer filter(base.clip, overlay.clip, mask.clip, "Mul", -1, 0, 0, 0, true, 0.5F, 0,
+               environment.get());
+  const PVideoFrame output = filter.GetFrame(0, environment.get());
+
+  for (int y = 0; y < output->GetHeight(PLANAR_Y); ++y) {
+    const auto* row = output->GetReadPtr(PLANAR_Y) + y * output->GetPitch(PLANAR_Y);
+    for (int x = 0; x < output->GetRowSize(PLANAR_Y); ++x) {
+      EXPECT_EQ(static_cast<int>(row[x]), 200)
+          << "B7 Layer Mul partial opacity with zero mask x=" << x << " y=" << y;
+    }
+  }
+  EXPECT_NE(output->CheckMemory(), 1);
+  EXPECT_EQ(base.clip_impl->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(overlay.clip_impl->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(mask.clip_impl->frame_requests(), std::vector<int>{0});
+  EXPECT_EQ(FrameSnapshot::capture(base.frame, base.video_info), base.snapshot);
+  EXPECT_EQ(FrameSnapshot::capture(overlay.frame, overlay.video_info), overlay.snapshot);
+  EXPECT_EQ(FrameSnapshot::capture(mask.frame, mask.video_info), mask.snapshot);
+}
+
 struct LayerThresholdCase {
   const char* name;
   int threshold;
