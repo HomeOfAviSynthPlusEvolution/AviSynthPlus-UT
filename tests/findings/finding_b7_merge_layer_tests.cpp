@@ -250,11 +250,10 @@ TEST(LayerMul, PreservesIntegerFullScaleEndpoint) {
 
 TEST(LayerMul, AppliesMaskAtPartialOpacity) {
   AviSynthEnvironment environment;
-  const StaticVideoSource base = make_yuv_source(environment, VideoInfo::CS_YV24, 200, 128, 128);
-  const StaticVideoSource overlay = make_yuv_source(environment, VideoInfo::CS_YV24, 100, 128, 128);
-  const StaticVideoSource mask = make_yuv_source(environment, VideoInfo::CS_YV24, 0, 128, 128);
+  const StaticVideoSource base = make_yuv_source(environment, VideoInfo::CS_YUVA444, 200, 128, 128, 255);
+  const StaticVideoSource overlay = make_yuv_source(environment, VideoInfo::CS_YUVA444, 100, 128, 128, 0);
 
-  Layer filter(base.clip, overlay.clip, mask.clip, "Mul", -1, 0, 0, 0, true, 0.5F, 0,
+  Layer filter(base.clip, overlay.clip, PClip(), "Mul", -1, 0, 0, 0, true, 0.5F, 0,
                environment.get());
   const PVideoFrame output = filter.GetFrame(0, environment.get());
 
@@ -268,10 +267,8 @@ TEST(LayerMul, AppliesMaskAtPartialOpacity) {
   EXPECT_NE(output->CheckMemory(), 1);
   EXPECT_EQ(base.clip_impl->frame_requests(), std::vector<int>{0});
   EXPECT_EQ(overlay.clip_impl->frame_requests(), std::vector<int>{0});
-  EXPECT_EQ(mask.clip_impl->frame_requests(), std::vector<int>{0});
   EXPECT_EQ(FrameSnapshot::capture(base.frame, base.video_info), base.snapshot);
   EXPECT_EQ(FrameSnapshot::capture(overlay.frame, overlay.video_info), overlay.snapshot);
-  EXPECT_EQ(FrameSnapshot::capture(mask.frame, mask.video_info), mask.snapshot);
 }
 
 struct LayerThresholdCase {
