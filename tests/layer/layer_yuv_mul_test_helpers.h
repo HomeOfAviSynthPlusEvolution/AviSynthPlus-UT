@@ -144,8 +144,8 @@ void apply_layer_yuv_mul_reference(const LayerYuvMulCase& test_case, PlaneView<T
       const auto overlay_value = static_cast<std::uint32_t>(overlay.row(y)[x]);
       const auto target = test_case.is_chroma
                               ? overlay_value
-                              : (overlay_value * static_cast<std::uint64_t>(base) >>
-                                 test_case.bits_per_pixel);
+                              : (overlay_value * static_cast<std::uint64_t>(base)) /
+                                 max_value;
       const auto result = (static_cast<std::uint64_t>(base) * (max_value - alpha) +
                            static_cast<std::uint64_t>(target) * alpha + max_value / 2U) /
                           max_value;
