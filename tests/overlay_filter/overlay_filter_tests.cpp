@@ -58,7 +58,6 @@ struct OverlayArithmeticCase {
   int height;
   OverlayArithmeticOperation operation;
   float opacity;
-  int opacity_fixed;
   const char* name;
 };
 
@@ -218,22 +217,26 @@ std::vector<PVideoFrame> make_rgbp16_arithmetic_frames(AviSynthEnvironment& envi
   return frames;
 }
 
-int reference_yuv_arithmetic_value(int base, int overlay, bool add, int opacity_fixed) {
-  const bool full_opacity = opacity_fixed == 256;
-  const int weighted_y = full_opacity ? overlay : (opacity_fixed * overlay) >> 8;
+int reference_yuv_arithmetic_value(int base, int overlay, bool add, float opacity) {
+  const bool full_opacity = opacity == 1.0F;
+  const int opacity_i = full_opacity ? 255 : static_cast<int>(opacity * 255.0F + 0.5F);
+  const int weighted_y = full_opacity ? overlay : (overlay * opacity_i + 127) / 255;
   return add ? base + weighted_y : base - weighted_y;
 }
 
-int reference_yuv_chroma(int base, int overlay, bool add, int opacity_fixed, int y_value) {
+int reference_yuv_chroma(int base, int overlay, bool add, float opacity, int y_value) {
   constexpr int kHalfPixel = 128;
   constexpr int kPixelRange = 256;
   constexpr int kOver32 = 32;
   constexpr int kShift = 5;
-  const bool full_opacity = opacity_fixed == 256;
-  const int inv_opacity = 256 - opacity_fixed;
-  const int weighted =
-      full_opacity ? overlay : ((kHalfPixel * inv_opacity) + (opacity_fixed * overlay)) >> 8;
-  int value = add ? base + weighted - kHalfPixel : base - weighted + kHalfPixel;
+  const bool full_opacity = opacity == 1.0F;
+  const int opacity_i = full_opacity ? 255 : static_cast<int>(opacity * 255.0F + 0.5F);
+  const int d_chroma = overlay - kHalfPixel;
+  const int t_chroma =
+      full_opacity ? d_chroma
+                   : (d_chroma >= 0 ? (d_chroma * opacity_i + 127) / 255
+                                    : -((-d_chroma * opacity_i + 127) / 255));
+  int value = add ? base + t_chroma : base - t_chroma;
   if (add && y_value > 255) {
     const int multiplier = std::max(0, kPixelRange + kOver32 - y_value);
     value = ((value * multiplier) + (kHalfPixel * (kOver32 - multiplier))) >> kShift;
@@ -260,11 +263,11 @@ void expect_yuv_arithmetic_reference(const OverlayArithmeticCase& test_case,
         const int y_value = reference_yuv_arithmetic_value(
             base->GetReadPtr(PLANAR_Y)[y * base->GetPitch(PLANAR_Y) + x],
             overlay->GetReadPtr(PLANAR_Y)[y * overlay->GetPitch(PLANAR_Y) + x], add,
-            test_case.opacity_fixed);
+            test_case.opacity);
         const int expected = plane == PLANAR_Y
                                  ? y_value
                                  : reference_yuv_chroma(base_row[x], overlay_row[x], add,
-                                                        test_case.opacity_fixed, y_value);
+                                                        test_case.opacity, y_value);
         EXPECT_EQ(output_row[x], clamp_u8(expected))
             << "case=" << test_case.name << " plane=" << plane << " x=" << x << " y=" << y
             << " base_pitch=" << base->GetPitch(plane)
@@ -657,38 +660,38 @@ TEST_P(OverlayFilterArithmeticTest, MatchesIndependentArithmeticReference) {
 INSTANTIATE_TEST_SUITE_P(
     ArithmeticCases, OverlayFilterArithmeticTest,
     ::testing::Values(
-        OverlayArithmeticCase{VideoInfo::CS_YV24, 7, 3, OverlayArithmeticOperation::Add, 1.0F, 256,
+        OverlayArithmeticCase{VideoInfo::CS_YV24, 7, 3, OverlayArithmeticOperation::Add, 1.0F,
                               "Yv24_Width7_Height3_Add_OpacityFull"},
-        OverlayArithmeticCase{VideoInfo::CS_YV24, 7, 3, OverlayArithmeticOperation::Add, 0.5F, 128,
+        OverlayArithmeticCase{VideoInfo::CS_YV24, 7, 3, OverlayArithmeticOperation::Add, 0.5F,
                               "Yv24_Width7_Height3_Add_OpacityHalf"},
         OverlayArithmeticCase{VideoInfo::CS_YV24, 7, 3, OverlayArithmeticOperation::Subtract, 1.0F,
-                              256, "Yv24_Width7_Height3_Subtract_OpacityFull"},
+                              "Yv24_Width7_Height3_Subtract_OpacityFull"},
         OverlayArithmeticCase{VideoInfo::CS_YV24, 7, 3, OverlayArithmeticOperation::Subtract, 0.5F,
-                              128, "Yv24_Width7_Height3_Subtract_OpacityHalf"},
+                              "Yv24_Width7_Height3_Subtract_OpacityHalf"},
         OverlayArithmeticCase{VideoInfo::CS_RGBP16, 5, 3, OverlayArithmeticOperation::Add, 1.0F,
-                              256, "Rgbp16_Width5_Height3_Add_OpacityFull"},
+                              "Rgbp16_Width5_Height3_Add_OpacityFull"},
         OverlayArithmeticCase{VideoInfo::CS_RGBP16, 5, 3, OverlayArithmeticOperation::Add, 0.5F,
-                              128, "Rgbp16_Width5_Height3_Add_OpacityHalf"},
+                              "Rgbp16_Width5_Height3_Add_OpacityHalf"},
         OverlayArithmeticCase{VideoInfo::CS_RGBP16, 5, 3, OverlayArithmeticOperation::Subtract,
-                              1.0F, 256, "Rgbp16_Width5_Height3_Subtract_OpacityFull"},
+                              1.0F, "Rgbp16_Width5_Height3_Subtract_OpacityFull"},
         OverlayArithmeticCase{VideoInfo::CS_RGBP16, 5, 3, OverlayArithmeticOperation::Subtract,
-                              0.5F, 128, "Rgbp16_Width5_Height3_Subtract_OpacityHalf"},
+                              0.5F, "Rgbp16_Width5_Height3_Subtract_OpacityHalf"},
         OverlayArithmeticCase{VideoInfo::CS_YUV444PS, 7, 3, OverlayArithmeticOperation::Add, 1.0F,
-                              256, "Yuv444ps_Width7_Height3_Add_OpacityFull"},
+                              "Yuv444ps_Width7_Height3_Add_OpacityFull"},
         OverlayArithmeticCase{VideoInfo::CS_YUV444PS, 7, 3, OverlayArithmeticOperation::Add, 0.5F,
-                              128, "Yuv444ps_Width7_Height3_Add_OpacityHalf"},
+                              "Yuv444ps_Width7_Height3_Add_OpacityHalf"},
         OverlayArithmeticCase{VideoInfo::CS_YUV444PS, 7, 3, OverlayArithmeticOperation::Subtract,
-                              1.0F, 256, "Yuv444ps_Width7_Height3_Subtract_OpacityFull"},
+                              1.0F, "Yuv444ps_Width7_Height3_Subtract_OpacityFull"},
         OverlayArithmeticCase{VideoInfo::CS_YUV444PS, 7, 3, OverlayArithmeticOperation::Subtract,
-                              0.5F, 128, "Yuv444ps_Width7_Height3_Subtract_OpacityHalf"},
-        OverlayArithmeticCase{VideoInfo::CS_RGBPS, 5, 3, OverlayArithmeticOperation::Add, 1.0F, 256,
+                              0.5F, "Yuv444ps_Width7_Height3_Subtract_OpacityHalf"},
+        OverlayArithmeticCase{VideoInfo::CS_RGBPS, 5, 3, OverlayArithmeticOperation::Add, 1.0F,
                               "Rgbps_Width5_Height3_Add_OpacityFull"},
-        OverlayArithmeticCase{VideoInfo::CS_RGBPS, 5, 3, OverlayArithmeticOperation::Add, 0.5F, 128,
+        OverlayArithmeticCase{VideoInfo::CS_RGBPS, 5, 3, OverlayArithmeticOperation::Add, 0.5F,
                               "Rgbps_Width5_Height3_Add_OpacityHalf"},
         OverlayArithmeticCase{VideoInfo::CS_RGBPS, 5, 3, OverlayArithmeticOperation::Subtract, 1.0F,
-                              256, "Rgbps_Width5_Height3_Subtract_OpacityFull"},
+                              "Rgbps_Width5_Height3_Subtract_OpacityFull"},
         OverlayArithmeticCase{VideoInfo::CS_RGBPS, 5, 3, OverlayArithmeticOperation::Subtract, 0.5F,
-                              128, "Rgbps_Width5_Height3_Subtract_OpacityHalf"}),
+                              "Rgbps_Width5_Height3_Subtract_OpacityHalf"}),
     [](const ::testing::TestParamInfo<OverlayArithmeticCase>& info) { return info.param.name; });
 
 enum class OverlayThresholdOperation { Lighten, Darken };
@@ -696,7 +699,6 @@ enum class OverlayThresholdOperation { Lighten, Darken };
 struct OverlayThresholdCase {
   OverlayThresholdOperation operation;
   float opacity;
-  int opacity_fixed;
   const char* name;
 };
 
@@ -742,15 +744,15 @@ std::vector<PVideoFrame> make_yuv_threshold_frames(AviSynthEnvironment& environm
 }
 
 std::uint8_t reference_threshold_channel(std::uint8_t base, std::uint8_t overlay, bool select,
-                                         int opacity_fixed) {
+                                         float opacity) {
   if (!select) {
     return base;
   }
-  if (opacity_fixed == 256) {
+  if (opacity == 1.0F) {
     return overlay;
   }
-  const int inv_opacity = 256 - opacity_fixed;
-  return static_cast<std::uint8_t>(((inv_opacity * base) + (opacity_fixed * overlay) + 128) >> 8);
+  const int opacity_i = static_cast<int>(opacity * 255.0F + 0.5F);
+  return static_cast<std::uint8_t>(((255 - opacity_i) * base + opacity_i * overlay + 127) / 255);
 }
 
 void expect_yuv_threshold_reference(const OverlayThresholdCase& test_case,
@@ -781,11 +783,11 @@ void expect_yuv_threshold_reference(const OverlayThresholdCase& test_case,
       const std::uint8_t oy = ov_y[x + y * ov_y_pitch];
       const bool select =
           test_case.operation == OverlayThresholdOperation::Lighten ? oy > by : oy < by;
-      const auto expected_y = reference_threshold_channel(by, oy, select, test_case.opacity_fixed);
+      const auto expected_y = reference_threshold_channel(by, oy, select, test_case.opacity);
       const auto expected_u = reference_threshold_channel(
-          base_u[x + y * base_u_pitch], ov_u[x + y * ov_u_pitch], select, test_case.opacity_fixed);
+          base_u[x + y * base_u_pitch], ov_u[x + y * ov_u_pitch], select, test_case.opacity);
       const auto expected_v = reference_threshold_channel(
-          base_v[x + y * base_v_pitch], ov_v[x + y * ov_v_pitch], select, test_case.opacity_fixed);
+          base_v[x + y * base_v_pitch], ov_v[x + y * ov_v_pitch], select, test_case.opacity);
       EXPECT_EQ(out_y[x + y * y_pitch], expected_y)
           << "mode=" << test_case.name << " x=" << x << " y=" << y << " plane=Y";
       EXPECT_EQ(out_u[x + y * u_pitch], expected_u)
@@ -829,19 +831,18 @@ TEST_P(OverlayFilterThresholdTest, MatchesIndependentYDrivenThresholdReference) 
 
 INSTANTIATE_TEST_SUITE_P(
     ThresholdCases, OverlayFilterThresholdTest,
-    ::testing::Values(OverlayThresholdCase{OverlayThresholdOperation::Lighten, 1.0F, 256,
+    ::testing::Values(OverlayThresholdCase{OverlayThresholdOperation::Lighten, 1.0F,
                                            "Yv24_Width5_Height3_Lighten_OpacityFull"},
-                      OverlayThresholdCase{OverlayThresholdOperation::Lighten, 0.5F, 128,
+                      OverlayThresholdCase{OverlayThresholdOperation::Lighten, 0.5F,
                                            "Yv24_Width5_Height3_Lighten_OpacityHalf"},
-                      OverlayThresholdCase{OverlayThresholdOperation::Darken, 1.0F, 256,
+                      OverlayThresholdCase{OverlayThresholdOperation::Darken, 1.0F,
                                            "Yv24_Width5_Height3_Darken_OpacityFull"},
-                      OverlayThresholdCase{OverlayThresholdOperation::Darken, 0.5F, 128,
+                      OverlayThresholdCase{OverlayThresholdOperation::Darken, 0.5F,
                                            "Yv24_Width5_Height3_Darken_OpacityHalf"}),
     [](const ::testing::TestParamInfo<OverlayThresholdCase>& info) { return info.param.name; });
 
 struct OverlayMultiplyCase {
   float opacity;
-  int opacity_fixed;
   const char* name;
 };
 
@@ -963,8 +964,8 @@ TEST_P(OverlayFilterMultiplyTest, MatchesIndependentLumaDrivenMultiplyReference)
 
 INSTANTIATE_TEST_SUITE_P(
     MultiplyCases, OverlayFilterMultiplyTest,
-    ::testing::Values(OverlayMultiplyCase{1.0F, 256, "Yv24_Width5_Height3_Multiply_OpacityFull"},
-                      OverlayMultiplyCase{0.5F, 128, "Yv24_Width5_Height3_Multiply_OpacityHalf"}),
+    ::testing::Values(OverlayMultiplyCase{1.0F, "Yv24_Width5_Height3_Multiply_OpacityFull"},
+                      OverlayMultiplyCase{0.5F, "Yv24_Width5_Height3_Multiply_OpacityHalf"}),
     [](const ::testing::TestParamInfo<OverlayMultiplyCase>& info) { return info.param.name; });
 
 enum class OverlaySpecialOperation { Difference, Exclusion, SoftLight, HardLight };
@@ -972,7 +973,6 @@ enum class OverlaySpecialOperation { Difference, Exclusion, SoftLight, HardLight
 struct OverlaySpecialCase {
   OverlaySpecialOperation operation;
   float opacity;
-  int opacity_fixed;
   const char* name;
 };
 
@@ -1046,14 +1046,12 @@ void apply_y_uv_compensation(int& y_value, int& u_value, int& v_value) {
   v_value = std::clamp(v_value, 0, max_value);
 }
 
-void reference_special_pixel(OverlaySpecialOperation operation, int opacity_fixed,
+void reference_special_pixel(OverlaySpecialOperation operation, float opacity,
                              std::uint8_t base_y, std::uint8_t base_u, std::uint8_t base_v,
                              std::uint8_t ov_y, std::uint8_t ov_u, std::uint8_t ov_v,
                              std::uint8_t& out_y, std::uint8_t& out_u, std::uint8_t& out_v) {
   constexpr int half = 128;
-  constexpr int max_value = 255;
   constexpr int xor_mask = 255;
-  constexpr int mask_shift = 8;
   int y_value = 0;
   int u_value = 0;
   int v_value = 0;
@@ -1065,12 +1063,9 @@ void reference_special_pixel(OverlaySpecialOperation operation, int opacity_fixe
       break;
     case OverlaySpecialOperation::Exclusion: {
       const int ov = ov_y;
-      y_value =
-          static_cast<int>((((base_y ^ xor_mask) * ov) + ((ov ^ xor_mask) * base_y)) >> mask_shift);
-      u_value =
-          static_cast<int>((((base_u ^ xor_mask) * ov) + ((ov ^ xor_mask) * base_u)) >> mask_shift);
-      v_value =
-          static_cast<int>((((base_v ^ xor_mask) * ov) + ((ov ^ xor_mask) * base_v)) >> mask_shift);
+      y_value = (((base_y ^ xor_mask) * ov) + ((ov ^ xor_mask) * base_y)) / 255;
+      u_value = (((base_u ^ xor_mask) * ov) + ((ov ^ xor_mask) * base_u)) / 255;
+      v_value = (((base_v ^ xor_mask) * ov) + ((ov ^ xor_mask) * base_v)) / 255;
       break;
     }
     case OverlaySpecialOperation::SoftLight:
@@ -1085,11 +1080,24 @@ void reference_special_pixel(OverlaySpecialOperation operation, int opacity_fixe
       break;
   }
 
-  if (opacity_fixed != 256) {
-    const int inv_opacity = 256 - opacity_fixed;
-    y_value = ((y_value * opacity_fixed) + (inv_opacity * base_y)) >> 8;
-    u_value = ((u_value * opacity_fixed) + (inv_opacity * base_u)) >> 8;
-    v_value = ((v_value * opacity_fixed) + (inv_opacity * base_v)) >> 8;
+  if (opacity != 1.0F) {
+    const int opacity_i = static_cast<int>(opacity * 255.0F + 0.5F);
+    if (operation == OverlaySpecialOperation::Difference ||
+        operation == OverlaySpecialOperation::Exclusion) {
+      y_value = (y_value * opacity_i + (255 - opacity_i) * base_y + 127) / 255;
+      u_value = (u_value * opacity_i + (255 - opacity_i) * base_u + 127) / 255;
+      v_value = (v_value * opacity_i + (255 - opacity_i) * base_v + 127) / 255;
+    } else {
+      const int dy = y_value - static_cast<int>(base_y);
+      const int du = u_value - static_cast<int>(base_u);
+      const int dv = v_value - static_cast<int>(base_v);
+      const int ty = (dy >= 0) ? (dy * opacity_i + 127) / 255 : -((-dy * opacity_i + 127) / 255);
+      const int tu = (du >= 0) ? (du * opacity_i + 127) / 255 : -((-du * opacity_i + 127) / 255);
+      const int tv = (dv >= 0) ? (dv * opacity_i + 127) / 255 : -((-dv * opacity_i + 127) / 255);
+      y_value = static_cast<int>(base_y) + ty;
+      u_value = static_cast<int>(base_u) + tu;
+      v_value = static_cast<int>(base_v) + tv;
+    }
   }
 
   apply_y_uv_compensation(y_value, u_value, v_value);
@@ -1126,7 +1134,7 @@ void expect_yuv_special_reference(const OverlaySpecialCase& test_case,
       std::uint8_t expected_u = 0;
       std::uint8_t expected_v = 0;
       reference_special_pixel(
-          test_case.operation, test_case.opacity_fixed, base_y[x + y * base_y_pitch],
+          test_case.operation, test_case.opacity, base_y[x + y * base_y_pitch],
           base_u[x + y * base_u_pitch], base_v[x + y * base_v_pitch], ov_y[x + y * ov_y_pitch],
           ov_u[x + y * ov_u_pitch], ov_v[x + y * ov_v_pitch], expected_y, expected_u, expected_v);
       EXPECT_EQ(out_y[x + y * y_pitch], expected_y)
@@ -1171,21 +1179,21 @@ TEST_P(OverlayFilterSpecialTest, MatchesIndependentSpecialModeReference) {
 
 INSTANTIATE_TEST_SUITE_P(
     SpecialCases, OverlayFilterSpecialTest,
-    ::testing::Values(OverlaySpecialCase{OverlaySpecialOperation::Difference, 1.0F, 256,
+    ::testing::Values(OverlaySpecialCase{OverlaySpecialOperation::Difference, 1.0F,
                                          "Yv24_Width5_Height3_Difference_OpacityFull"},
-                      OverlaySpecialCase{OverlaySpecialOperation::Difference, 0.5F, 128,
+                      OverlaySpecialCase{OverlaySpecialOperation::Difference, 0.5F,
                                          "Yv24_Width5_Height3_Difference_OpacityHalf"},
-                      OverlaySpecialCase{OverlaySpecialOperation::Exclusion, 1.0F, 256,
+                      OverlaySpecialCase{OverlaySpecialOperation::Exclusion, 1.0F,
                                          "Yv24_Width5_Height3_Exclusion_OpacityFull"},
-                      OverlaySpecialCase{OverlaySpecialOperation::Exclusion, 0.5F, 128,
+                      OverlaySpecialCase{OverlaySpecialOperation::Exclusion, 0.5F,
                                          "Yv24_Width5_Height3_Exclusion_OpacityHalf"},
-                      OverlaySpecialCase{OverlaySpecialOperation::SoftLight, 1.0F, 256,
+                      OverlaySpecialCase{OverlaySpecialOperation::SoftLight, 1.0F,
                                          "Yv24_Width5_Height3_SoftLight_OpacityFull"},
-                      OverlaySpecialCase{OverlaySpecialOperation::SoftLight, 0.5F, 128,
+                      OverlaySpecialCase{OverlaySpecialOperation::SoftLight, 0.5F,
                                          "Yv24_Width5_Height3_SoftLight_OpacityHalf"},
-                      OverlaySpecialCase{OverlaySpecialOperation::HardLight, 1.0F, 256,
+                      OverlaySpecialCase{OverlaySpecialOperation::HardLight, 1.0F,
                                          "Yv24_Width5_Height3_HardLight_OpacityFull"},
-                      OverlaySpecialCase{OverlaySpecialOperation::HardLight, 0.5F, 128,
+                      OverlaySpecialCase{OverlaySpecialOperation::HardLight, 0.5F,
                                          "Yv24_Width5_Height3_HardLight_OpacityHalf"}),
     [](const ::testing::TestParamInfo<OverlaySpecialCase>& info) { return info.param.name; });
 
